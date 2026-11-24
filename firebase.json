@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "public": "firebase-hosting",
+    "ignore": ["**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": { "serviceId": "waslah-gateway", "region": "europe-west1" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+.git
+node_modules
+data
+.env
+.env.*
+tests
+public/assets/firebase-auth.js
