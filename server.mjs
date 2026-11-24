@@ -511,7 +511,7 @@ export function makeApp({
   const server = createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
-    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('Referrer-Policy', firebase ? 'strict-origin-when-cross-origin' : 'same-origin');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     const policy = ["default-src 'self'", "img-src 'self' data:", "style-src 'self'", "font-src 'self'",
       "base-uri 'none'", "frame-ancestors 'self'", "form-action 'self'", "object-src 'none'"];
