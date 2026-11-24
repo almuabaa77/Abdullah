@@ -35,6 +35,19 @@ function client(base) {
   };
 }
 
+test('serves the home page and frontend assets from the public folder', async t => {
+  const base = await start(t);
+  const home = await fetch(base + '/');
+  assert.equal(home.status, 200);
+  assert.match(home.headers.get('content-type'), /^text\/html/);
+  assert.match(await home.text(), /وصلة/);
+  for (const file of ['/app.js', '/styles.css', '/assets/waslah.svg', '/assets/lucide.js']) {
+    const asset = await fetch(base + file, { method: 'HEAD' });
+    assert.equal(asset.status, 200, file);
+  }
+  assert.equal((await fetch(base + '/..%2Fserver.mjs')).status, 404);
+});
+
 async function login(account, number, signup = {}) {
   const result = await account('/auth/send', 'POST', { phone: number });
   assert.deepEqual(Object.keys(result), ['phone']);

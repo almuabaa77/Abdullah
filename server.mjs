@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { createHmac, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, createReadStream, statSync } from 'node:fs';
-import { resolve, dirname, extname } from 'node:path';
+import { resolve, dirname, extname, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { statuses } from './public/catalog.js';
 import { createOperations, migrateOperations } from './operations.mjs';
@@ -548,7 +548,9 @@ function serveStatic(req, res, path) {
   const base = resolve(root, 'public');
   const filename = font ? resolve(root, 'node_modules/@fontsource/ibm-plex-sans-arabic/files', font[1])
     : Object.hasOwn(assets, clean) ? resolve(root, assets[clean]) : resolve(base, '.' + clean);
-  if (!font && !Object.hasOwn(assets, clean) && !filename.startsWith(base + '/')) fail(404, 'not_found');
+  const publicPath = relative(base, filename);
+  const outsidePublic = isAbsolute(publicPath) || publicPath === '..' || publicPath.startsWith('..' + sep);
+  if (!font && !Object.hasOwn(assets, clean) && outsidePublic) fail(404, 'not_found');
   const info = statSync(filename, { throwIfNoEntry: false });
   if (!info?.isFile()) fail(404, 'not_found');
   res.writeHead(200, { 'Content-Type': mime[extname(filename)] || 'application/octet-stream', 'Content-Length': info.size,
