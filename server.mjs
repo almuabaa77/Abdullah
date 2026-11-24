@@ -3,6 +3,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, createReadStream, statSync } from 'node:fs';
 import { resolve, dirname, extname, relative, isAbsolute, sep } from 'node:path';
+import { loadEnvFile } from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { statuses } from './public/catalog.js';
 import { createOperations, migrateOperations } from './operations.mjs';
@@ -12,6 +13,14 @@ import { normalizePhone } from './public/phone.js';
 import { createMarketplace, isActive, migrateMarketplace } from './marketplace.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
+const runningDirectly = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+if (runningDirectly) {
+  try {
+    loadEnvFile(resolve(root, '.env'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
 const production = process.env.NODE_ENV === 'production';
 const secret = process.env.SESSION_SECRET || randomBytes(32).toString('hex');
 const sessionAge = 7 * 24 * 60 * 60;
@@ -559,7 +568,7 @@ function serveStatic(req, res, path) {
   createReadStream(filename).pipe(res);
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (runningDirectly) {
   const port = Number(process.env.PORT || 3000);
   makeApp().listen(port, '0.0.0.0', () => console.log(`Waslah is listening on port ${port}`));
 }

@@ -52,6 +52,16 @@ function flash(message, isError = false) {
   toastTimer = setTimeout(() => { toast.hidden = true; }, 4400);
 }
 const report = error => flash(copy[error.message] ? t(error.message) : t('error'), true);
+function showAuthError(error) {
+  const message = app.querySelector('#auth-error');
+  if (!message) {
+    if (error) report(error);
+    return;
+  }
+  message.textContent = error ? t(copy[error.message] ? error.message : 'error') : '';
+  if (error?.providerCode) message.append(' (', error.providerCode, ')');
+  message.hidden = !error;
+}
 function navigation() {
   return [
     ['dashboard', 'layout-dashboard', 'dashboard'],
@@ -412,15 +422,19 @@ function auth() {
   const signup = state.authMode === 'signup';
   const code = state.authStep === 'code';
   const phone = escape(state.login.phone);
+  const localFirebase = state.config.firebase && !code
+    && (location.protocol !== 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname));
   return authFrame(`<span class="tile-icon purple">${icon(code ? 'shield-check' : 'smartphone')}</span><h1>${t(code ? 'enterCode' : state.authMode)}</h1>
     <p>${code ? `${t('codeSent')} <bdi>${phone}</bdi>` : t('authSub')}</p>
     ${state.config.sms === false ? `<p class="auth-status" role="status">${icon('info')}${t('smsSetup')}</p>` : ''}
+    ${localFirebase ? `<p class="auth-status" role="status">${icon('info')}${t('firebasePublishedDomain')}</p>` : ''}
     ${state.config.firebase ? '<div id="firebase-recaptcha"></div>' : ''}
     <form data-form="${code ? 'verify' : 'phone'}" class="form-stack">
       ${code ? `<label>${t('enterCode')}<input class="code-input" name="code" dir="ltr" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" maxlength="6" required></label>`
       : `${signup ? `<label>${t('name')}<input name="name" autocomplete="name" maxlength="72" required value="${escape(state.login.name)}"></label><label>${t('accountType')}<select name="role"><option value="customer">${local(roles.customer)}</option><option value="agent" ${state.login.role === 'agent' ? 'selected' : ''}>${local(roles.agent)}</option></select></label>` : ''}
       <label>${t('phone')}<input name="phone" type="tel" dir="ltr" autocomplete="tel" placeholder="05XXXXXXXX" value="${phone}" required maxlength="28"></label>`}
       <button class="button primary" type="submit" ${state.config.sms === false ? 'disabled' : ''}>${t(code ? 'verify' : 'sendCode')}${arrow()}</button>
+      <p id="auth-error" class="auth-error" role="alert" hidden></p>
     </form>
     ${code ? `<div class="auth-links"><button class="text-button" data-action="change-phone">${t('changePhone')}</button><button class="text-button" data-action="resend" ${Date.now() < (state.login.resend || 0) ? 'disabled' : ''}>${t('resend')}</button></div>`
       : `<button class="text-button auth-switch" data-action="auth-switch">${t(signup ? 'login' : 'signup')}</button>`}`);
@@ -597,12 +611,20 @@ function firebaseError(error) {
     'auth/code-expired': 'invalid_code',
     'auth/too-many-requests': 'rate_limited',
     'auth/quota-exceeded': 'rate_limited',
-    'auth/operation-not-allowed': 'sms_unavailable',
+    'auth/operation-not-allowed': 'firebasePhoneDisabled',
+    'auth/billing-not-enabled': 'firebaseBilling',
     'auth/unauthorized-domain': 'firebaseDomain',
+    'auth/unauthorized-continue-uri': 'firebaseDomain',
+    'auth/app-not-authorized': 'firebaseApp',
+    'auth/invalid-api-key': 'firebaseApp',
+    'auth/invalid-app-credential': 'firebaseCaptcha',
     'auth/captcha-check-failed': 'firebaseCaptcha',
-    'auth/network-request-failed': 'sms_unavailable',
+    'auth/network-request-failed': 'firebaseNetwork',
   };
-  return new Error(codes[error?.code] || 'sms_unavailable');
+  const reason = /sms region policy/i.test(error?.message) ? 'firebaseRegion' : codes[error?.code];
+  const result = new Error(reason || 'sms_unavailable');
+  if (/^auth\/[a-z0-9-]{2,80}$/.test(error?.code)) result.providerCode = error.code;
+  return result;
 }
 async function sendCode(phone) {
   let result;
@@ -865,7 +887,11 @@ document.addEventListener('click', async event => {
       target.disabled = true;
       try {
         if (action === 'check-approval') await sessionCheck();
-        else await sendCode(state.login.phone);
+        else {
+          showAuthError();
+          try { await sendCode(state.login.phone); }
+          catch (error) { showAuthError(error); }
+        }
       } finally { target.disabled = false; }
     }
   } catch (error) { report(error); }
@@ -929,6 +955,8 @@ document.addEventListener('submit', async event => {
   if (button) button.disabled = true;
   const data = new FormData(form);
   const id = form.dataset.id;
+  const authForm = mode === 'phone' || mode === 'verify';
+  if (authForm) showAuthError();
   try {
     if (mode === 'phone') {
       Object.assign(state.login, { name: data.get('name') || '', role: data.get('role') || 'customer' });
@@ -1006,7 +1034,10 @@ document.addEventListener('submit', async event => {
       await openRequest(id);
       flash(t('saved'));
     } else if (mode === 'assistant') await ask(String(data.get('question')));
-  } catch (error) { report(error); }
+  } catch (error) {
+    if (authForm) showAuthError(error);
+    else report(error);
+  }
   finally { if (button) button.disabled = false; }
 });
 

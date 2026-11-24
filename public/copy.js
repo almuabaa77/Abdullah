@@ -182,7 +182,7 @@ Object.assign(copy, {
   customerStartSub: ['ابدأ من الدليل، أو اكتب تفاصيل المعاملة التي تريد إنجازها.', 'Find a service in the catalog or describe the task you need help with.'],
   customerQuote: ['عروضك ومراسلاتك', 'Offers and messages'],
   customerQuoteSub: ['افتح الطلب لمراجعة العروض ومتابعة المراسلات والتحديثات.', 'Open a request to review offers, messages, and updates.'],
-  smsSetup: ['التحقق بالجوال غير متاح حاليًا. تواصل مع إدارة المنصة لتفعيل الرسائل النصية.', 'Mobile verification is currently unavailable. Contact platform administration to activate SMS.'],
+  smsSetup: ['إرسال الرسائل بانتظار إعداد Firebase في ملف .env وإعادة تشغيل وصلة.', 'SMS delivery is waiting for Firebase settings in .env and a Waslah restart.'],
   assistant: ['مساعد وصلة', 'Waslah assistant'],
   assistantIntro: ['هلا! وش تحب تنجز اليوم؟ أقدر أساعدك تختار خدمة، أو أطلع لك آخر حالة مسجلة إذا أعطيتني رقم الطلب.', 'Hi! What are you trying to get done? I can help you find a service or look up the latest status if you share a request number.'],
   assistantModeAi: ['مساعد افتراضي مدعوم بالذكاء الاصطناعي', 'AI-powered virtual assistant'],
@@ -198,3 +198,9 @@ copy.assistantIntroAgent = ['هلا! أقدر أساعدك في متابعة ط�
 copy.assistantIntroAdmin = ['مرحبًا. أقدر أساعدك في متابعة الطلبات أو أوضح خطوات إدارة الحسابات والخدمات.', 'Hi. I can help you follow requests or explain how to manage accounts and services.'];
 copy.firebaseDomain = ['أضف نطاق المنصة إلى النطاقات المصرّح بها في Firebase Authentication.', 'Add the site domain to the authorized domains in Firebase Authentication.'];
 copy.firebaseCaptcha = ['تعذّر إكمال فحص التحقق. أعد المحاولة من الصفحة نفسها.', 'The verification check could not complete. Try again from this page.'];
+copy.firebasePublishedDomain = ['لإرسال رمز حقيقي، افتح وصلة من نطاق منشور عبر HTTPS ومصرّح به في Firebase.', 'To send a real code, open the hosted Waslah site on an HTTPS domain authorized in Firebase.'];
+copy.firebasePhoneDisabled = ['فعّل Phone من Sign-in method في Firebase Authentication، ثم جرّب الإرسال مجددًا.', 'Enable Phone under Sign-in method in Firebase Authentication and retry.'];
+copy.firebaseBilling = ['تحقّق من تفعيل خطة Blaze والفوترة في مشروع Firebase لإرسال الرسائل.', 'Check that Blaze billing is enabled for SMS delivery in this Firebase project.'];
+copy.firebaseRegion = ['اسمح بالدولة المطلوبة في سياسة مناطق الرسائل SMS region policy في Firebase Authentication.', 'Allow the destination country in the Firebase Authentication SMS region policy.'];
+copy.firebaseApp = ['راجع مفتاح تطبيق الويب ونطاقه في إعدادات مشروع Firebase.', 'Check the web app key and domain in Firebase project settings.'];
+copy.firebaseNetwork = ['تعذّر الاتصال بخدمة Firebase. تحقّق من اتصال المتصفح بالإنترنت وأعد المحاولة.', 'The browser could not reach Firebase. Check your internet connection and retry.'];

@@ -484,6 +484,7 @@ input[type=file]::file-selector-button { border: 0; border-radius: 6px; color: v
   display: flex; align-items: flex-start; gap: 7px; font-size: 13px;
 }
 .auth-status svg { width: 16px; height: 16px; margin-block-start: 2px; }
+.auth-error { color: #9b294d; font-size: 13px; margin: 0; overflow-wrap: anywhere; }
 .assistant-privacy { display: flex; justify-content: space-between; align-items: start; gap: 10px; color: var(--muted); font-size: 12px; margin-block-end: 7px; }
 .assistant-privacy button { flex: 0 0 auto; }
 .assistant-turn { min-width: 0; }
