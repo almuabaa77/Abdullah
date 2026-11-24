@@ -1,0 +1,40 @@
+services:
+  waslah:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      AUTH_PROVIDER: firebase
+      DATABASE_PATH: /data/waslah.sqlite
+      PORT: "3000"
+    volumes:
+      - waslah-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => { if (!r.ok) process.exitCode = 1; }).catch(() => { process.exitCode = 1; });"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      waslah:
+        condition: service_healthy
+    environment:
+      WASLAH_DOMAIN: ${WASLAH_DOMAIN:?Set WASLAH_DOMAIN in .env}
+      NO_PROXY: waslah,localhost,127.0.0.1
+      no_proxy: waslah,localhost,127.0.0.1
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  waslah-data:
+  caddy-data:
+  caddy-config:

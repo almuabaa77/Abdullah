@@ -12,7 +12,9 @@
     "test": "node --test tests/*.test.mjs",
     "build:firebase": "esbuild firebase-browser.js --bundle --format=esm --platform=browser --minify --outfile=public/assets/firebase-auth.js",
     "prestart": "npm run build:firebase",
-    "predev": "npm run build:firebase"
+    "predev": "npm run build:firebase",
+    "check:firebase": "node check-firebase.mjs",
+    "backup": "node --env-file-if-exists=.env backup.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.8",
@@ -20,7 +22,8 @@
     "lucide": "^0.468.0"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2",
-    "firebase": "^13.4.0"
+    "@firebase/app": "0.16.7",
+    "@firebase/auth": "1.13.11",
+    "esbuild": "^0.28.2"
   }
 }

@@ -11,8 +11,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --chown=node:node *.mjs ./
 COPY --chown=node:node public ./public
 COPY --from=build --chown=node:node /app/public/assets/firebase-auth.js ./public/assets/firebase-auth.js
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/waslah-entrypoint
 RUN mkdir /data && chown node:node /data
 ENV NODE_ENV=production DATABASE_PATH=/data/waslah.sqlite PORT=3000
-USER node
 EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/waslah-entrypoint"]
 CMD ["node", "server.mjs"]

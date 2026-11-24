@@ -1,5 +1,5 @@
-import { getApp, getApps, initializeApp } from 'firebase/app';
-import { getAuth, initializeAuth, inMemoryPersistence, RecaptchaVerifier, signInWithPhoneNumber, signOut } from 'firebase/auth';
+import { getApp, getApps, initializeApp } from '@firebase/app';
+import { getAuth, initializeAuth, inMemoryPersistence, RecaptchaVerifier, signInWithPhoneNumber, signOut } from '@firebase/auth';
 
 export async function requestFirebaseCode(config, phone, lang, container) {
   const name = 'waslah-phone';

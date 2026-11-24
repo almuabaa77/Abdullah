@@ -35,6 +35,8 @@ node setup-firebase.mjs PROJECT_ID PROJECT_ID.firebaseapp.com WEB_APP_ID WEB_API
 
 ## تشغيل خادم وصلة على تخزين دائم
 
+تتضمن الحزمة إعداد Docker Compose مع Caddy وتخزينًا دائمًا وفحصًا لنطاق Firebase ونسخ SQLite احتياطية. [دليل النشر والتشغيل](DEPLOY.md)
+
 على خادم Linux أو استضافة تدعم Docker وتخزينًا دائمًا، انسخ المشروع وأضف المتغيرات إلى ملف خاص مثل `.env`. ابنِ الصورة وشغّلها مع وحدة تخزين لقاعدة البيانات.
 
 ```sh

@@ -254,7 +254,10 @@ export function makeApp({
     const { pathname } = url;
     const method = req.method;
     if (!['GET', 'HEAD'].includes(method) && req.headers['sec-fetch-site'] === 'cross-site') fail(403, 'forbidden');
-    if (method === 'GET' && pathname === '/api/health') return send(res, 200, { ok: true });
+    if (method === 'GET' && pathname === '/api/health') {
+      get('SELECT id FROM users LIMIT 1');
+      return send(res, 200, { ok: true });
+    }
     if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), firebase, ai: !!assistantKey, market: true });
     if (pathname === '/api/demo') fail(404, 'not_found');
     if (method === 'POST' && pathname === '/api/auth/send') {
