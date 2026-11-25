@@ -59,7 +59,12 @@ function showAuthError(error) {
     return;
   }
   message.textContent = error ? t(copy[error.message] ? error.message : 'error') : '';
-  if (error?.providerCode) message.append(' (', error.providerCode, ')');
+  if (error?.providerCode) {
+    const code = document.createElement('bdi');
+    code.dir = 'ltr';
+    code.textContent = `(${error.providerCode})`;
+    message.append(' ', code);
+  }
   message.hidden = !error;
 }
 function navigation() {
@@ -604,6 +609,7 @@ async function ask(question) {
 
 let resendTimer;
 let firebaseChallenge;
+let firebaseCaptchaVisible = false;
 function firebaseError(error) {
   const codes = {
     'auth/invalid-phone-number': 'invalid_phone',
@@ -632,10 +638,18 @@ async function sendCode(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) throw new Error('invalid_phone');
     try {
-      const { requestFirebaseCode } = await import('/assets/firebase-auth.js');
-      firebaseChallenge = await requestFirebaseCode(state.config.firebase, normalized, state.lang, document.querySelector('#firebase-recaptcha'));
+      const { requestFirebaseCode } = await import('/assets/firebase-auth.js?v=2');
+      firebaseChallenge = await requestFirebaseCode(
+        state.config.firebase, normalized, state.lang, document.querySelector('#firebase-recaptcha'),
+        { visible: firebaseCaptchaVisible },
+      );
+      firebaseCaptchaVisible = false;
       result = { phone: normalized };
-    } catch (error) { throw firebaseError(error); }
+    } catch (error) {
+      const failure = firebaseError(error);
+      if (failure.message === 'firebaseCaptcha') firebaseCaptchaVisible = true;
+      throw failure;
+    }
   } else {
     result = await api('/auth/send', 'POST', { phone });
   }
