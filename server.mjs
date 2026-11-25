@@ -19,6 +19,7 @@ import { createMarketplace, isActive, migrateMarketplace } from './marketplace.m
 const root = dirname(fileURLToPath(import.meta.url));
 const publicDirectory = resolve(root, 'public');
 const sessionAge = 7 * 24 * 60 * 60;
+const reviewSessionAge = 30 * 24 * 60 * 60;
 
 class StartupConfigurationError extends Error {}
 
@@ -115,6 +116,13 @@ function openDatabase(path) {
       user_id INTEGER PRIMARY KEY REFERENCES users(id), iv BLOB NOT NULL, tag BLOB NOT NULL, data BLOB NOT NULL,
       reviewed INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS registration_invites (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id), digest BLOB, expires INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0, used INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS registration_tracking (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id), reference TEXT NOT NULL UNIQUE, submitted TEXT, decided TEXT
+    );
     CREATE TABLE IF NOT EXISTS requests (
       id INTEGER PRIMARY KEY, service TEXT NOT NULL, customer_id INTEGER NOT NULL REFERENCES users(id),
       agent_id INTEGER REFERENCES users(id), status TEXT NOT NULL DEFAULT 'new',
@@ -140,6 +148,9 @@ function openDatabase(path) {
     if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'needs_registration')) {
       db.exec('ALTER TABLE users ADD COLUMN needs_registration INTEGER NOT NULL DEFAULT 0');
     }
+    if (!db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'account_expires')) {
+      db.exec('ALTER TABLE sessions ADD COLUMN account_expires INTEGER');
+    }
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -157,7 +168,7 @@ export function makeApp({
   adminPhone = process.env.ADMIN_PHONE, assistantKey = process.env.OPENAI_API_KEY,
   firebase,
   verifyFirebase, confirmFirebase = exchangeFirebaseCode, verificationClock = Date.now,
-  geocodingKey = process.env.GOOGLE_GEOCODING_API_KEY, reverseAddress = lookupAddress,
+  geocodingKey = process.env.GOOGLE_GEOCODING_API_KEY, placesKey = process.env.GOOGLE_PLACES_API_KEY, reverseAddress = lookupAddress,
 } = {}) {
   const production = process.env.NODE_ENV === 'production';
   const provider = process.env.AUTH_PROVIDER;
@@ -250,9 +261,15 @@ export function makeApp({
   }
   function setSession(res, user) {
     const token = randomBytes(32).toString('hex');
-    run('INSERT INTO sessions(token,user_id,expires) VALUES(?,?,?)', digest(token), user.id, Date.now() + sessionAge * 1000);
-    res.setHeader('Set-Cookie', cookie(token, sessionAge));
-    return publicUser(user);
+    const age = user.approval === 'pending' ? reviewSessionAge : sessionAge;
+    const time = Date.now();
+    run('INSERT INTO sessions(token,user_id,expires,account_expires) VALUES(?,?,?,?)', digest(token), user.id, time + age * 1000, time + sessionAge * 1000);
+    res.setHeader('Set-Cookie', cookie(token, age));
+    return registrationUser(user);
+  }
+  function registrationUser(user, reviewOnly = false) {
+    const view = reviewOnly ? { approval: user.approval, needsRegistration: !!user.needs_registration } : publicUser(user);
+    return { ...view, reviewOnly, tracking: registration.tracking(user), invitationPending: registration.invitationPending(user.id) };
   }
   function cookie(token, age) {
     return `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${production ? '; Secure' : ''}`;
@@ -375,40 +392,52 @@ export function makeApp({
       res.setHeader('Set-Cookie', cookie('', 0));
       return send(res, 200, { ok: true });
     }
-    const user = token && get('SELECT u.* FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.token = ? AND s.expires > ?', token, Date.now());
-    if (method === 'GET' && pathname === '/api/me') return send(res, 200, { user: user ? publicUser(user) : null });
+    const user = token && get('SELECT u.*,COALESCE(s.account_expires,s.expires) AS account_expires FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires>?', token, Date.now());
+    const reviewOnly = user && user.account_expires <= Date.now();
+    if (method === 'GET' && pathname === '/api/me') return send(res, 200, { user: user ? registrationUser(user, reviewOnly) : null });
     if (!user) fail(401, 'unauthorized');
+    if (reviewOnly) fail(403, 'review_session_only');
+    if (method === 'POST' && pathname === '/api/registration/invitation') {
+      const { code } = await body(req);
+      if (typeof code !== 'string' || !/^\d{8}$/.test(code)) fail(400, 'invalid_invitation');
+      registration.redeemInvitation(user.id, code);
+      return send(res, 200, registrationUser(user));
+    }
     if (method === 'POST' && pathname === '/api/registration/address') {
       if (user.approval !== 'pending' || !user.needs_registration) fail(403, 'forbidden');
+      if (registration.invitationPending(user.id)) fail(403, 'invitation_unavailable');
       if (!geocodingKey) fail(503, 'address_lookup_unavailable');
       const { location, lang } = await body(req);
       if (!preciseLocation(location)) fail(400, 'invalid_location');
       rate('registration-address:' + user.id, 12, 3_600_000);
-      let address;
-      try { address = await reverseAddress(geocodingKey, location, lang === 'en' ? 'en' : 'ar'); }
+      let result;
+      try { result = await reverseAddress(geocodingKey, location, lang === 'en' ? 'en' : 'ar', placesKey); }
       catch { fail(503, 'address_lookup_unavailable'); }
-      return send(res, 200, { address });
+      return send(res, 200, result);
     }
     if (method === 'POST' && pathname === '/api/registration') {
       if (user.approval !== 'pending') fail(403, 'forbidden');
+      if (registration.invitationPending(user.id)) fail(403, 'invitation_unavailable');
       if (!user.needs_registration) {
-        if (get('SELECT 1 FROM registration_evidence WHERE user_id=?', user.id)) return send(res, 200, publicUser(user));
+        if (get('SELECT 1 FROM registration_evidence WHERE user_id=?', user.id)) return send(res, 200, registrationUser(user));
         fail(403, 'forbidden');
       }
       const packet = registrationPacket(await body(req, 2_820_000), fail);
       return send(res, 200, transaction(() => {
         const current = get('SELECT * FROM users WHERE id=?', user.id);
         if (current.approval !== 'pending') fail(409, 'invalid_transition');
-        if (!current.needs_registration) return publicUser(current);
+        if (!current.needs_registration) return registrationUser(current);
+        registration.tracking(current);
         registration.saveEvidence(user.id, packet);
         run('UPDATE users SET needs_registration=0 WHERE id=?', user.id);
-        return publicUser({ ...current, needs_registration: 0 });
+        run('UPDATE registration_tracking SET submitted=? WHERE user_id=?', now(), user.id);
+        return registrationUser({ ...current, needs_registration: 0 });
       }));
     }
     if (user.approval !== 'approved') fail(403, 'approval_required');
     const actionBody = async limit => {
       const data = await body(req, limit);
-      if (!get("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.approval='approved'", token, Date.now())) fail(403, 'approval_required');
+      if (!get("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND COALESCE(s.account_expires,s.expires)>? AND u.approval='approved'", token, Date.now())) fail(403, 'approval_required');
       return data;
     };
     if (method === 'PATCH' && pathname === '/api/me') {
@@ -551,7 +580,38 @@ export function makeApp({
     }
     if (method === 'GET' && pathname === '/api/admin/users') {
       if (user.role !== 'admin') fail(403, 'forbidden');
-      return send(res, 200, market.directory());
+      const pendingInvites = new Set(all('SELECT user_id FROM registration_invites WHERE used IS NULL').map(row => row.user_id));
+      const references = new Map(all('SELECT user_id,reference FROM registration_tracking').map(row => [row.user_id, row.reference]));
+      return send(res, 200, market.directory().map(account => ({
+        ...account, invitationPending: pendingInvites.has(account.id), trackingReference: references.get(account.id) || null,
+      })));
+    }
+    if (method === 'POST' && pathname === '/api/admin/users') {
+      if (user.role !== 'admin') fail(403, 'forbidden');
+      const data = await actionBody();
+      const phone = phoneNumber(data.phone);
+      const name = registrationName(data.name);
+      if (!name) fail(400, 'invalid_registration_name');
+      if (!['customer', 'agent'].includes(data.role)) fail(400, 'invalid_input');
+      return send(res, 201, transaction(() => {
+        if (byPhone(phone)) fail(409, 'phone_in_use');
+        const { lastInsertRowid: id } = createUser(phone, name, data.role, 'pending', 1);
+        const invitation = registration.issueInvitation(id);
+        ops.audit(id, user.id, 'invitation', null, 'issued');
+        return { user: registrationUser(byPhone(phone)), ...invitation };
+      }));
+    }
+    const inviteMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/invitation$/);
+    if (inviteMatch && method === 'POST') {
+      if (user.role !== 'admin') fail(403, 'forbidden');
+      await actionBody();
+      const id = Number(inviteMatch[1]);
+      return send(res, 200, transaction(() => {
+        const account = get("SELECT * FROM users WHERE id=? AND role<>'admin' AND approval='pending'", id);
+        if (!account || !registration.invitationPending(id)) fail(409, 'invitation_unavailable');
+        ops.audit(id, user.id, 'invitation', 'issued', 'reissued');
+        return { user: registrationUser(account), ...registration.issueInvitation(id) };
+      }));
     }
     const userMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
     const evidenceMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/registration$/);
@@ -585,7 +645,9 @@ export function makeApp({
               ops.audit(id, user.id, 'registration', null, 'reviewed');
             }
           }
+          registration.tracking(account);
           run('UPDATE users SET approval=? WHERE id=?', data.approval, id);
+          run('UPDATE registration_tracking SET decided=? WHERE user_id=?', now(), id);
           if (data.approval === 'blocked') run('DELETE FROM sessions WHERE user_id=?', id);
           ops.audit(id, user.id, 'approval', account.approval, data.approval);
         }

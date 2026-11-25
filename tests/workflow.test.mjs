@@ -1,11 +1,16 @@
 import { once } from 'node:events';
 import { strict as assert } from 'node:assert';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { makeApp } from '../server.mjs';
+import { lookupAddress } from '../geocoding.mjs';
 
 const testPin = '637592';
 const adminPhone = '0550001017';
-async function start(t, { sms = true, marketClock, verificationClock, geocodingKey, reverseAddress } = {}) {
+async function start(t, { sms = true, database = ':memory:', marketClock, verificationClock, geocodingKey, reverseAddress } = {}) {
   const pending = new Set();
   const verifySms = sms ? async (operation, values) => {
     if (operation === 'Verifications') {
@@ -15,7 +20,7 @@ async function start(t, { sms = true, marketClock, verificationClock, geocodingK
     const approved = values.Code === testPin && pending.delete(values.To);
     return { status: approved ? 'approved' : 'pending' };
   } : undefined;
-  const server = makeApp({ database: ':memory:', adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, geocodingKey, reverseAddress, assistantKey: '' });
+  const server = makeApp({ database, adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, geocodingKey, reverseAddress, assistantKey: '' });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
@@ -172,7 +177,8 @@ test('address lookup is limited to an incomplete registration and keeps the map 
     assert.equal(key, 'private-map-key');
     assert.deepEqual(location, evidence.location);
     assert.equal(lang, 'ar');
-    return 'طريق الملك عبدالعزيز، الرياض';
+    return { address: 'طريق الملك عبدالعزيز، الرياض', city: 'الرياض', street: 'طريق الملك عبدالعزيز', distance: 20,
+      landmark: { name: 'حديقة الحي', distance: 85 } };
   } });
   const account = client(base);
   const config = await account('/config');
@@ -182,10 +188,48 @@ test('address lookup is limited to an incomplete registration and keeps the map 
   await login(account, '0550001088', { name: 'سعد ناصر الشمري', role: 'customer' });
   await account('/registration/address', 'POST', { location: { ...evidence.location, accuracy: 99 } }, 400);
   assert.deepEqual(await account('/registration/address', 'POST', { location: evidence.location, lang: 'ar' }), {
-    address: 'طريق الملك عبدالعزيز، الرياض',
+    address: 'طريق الملك عبدالعزيز، الرياض', city: 'الرياض', street: 'طريق الملك عبدالعزيز', distance: 20,
+    landmark: { name: 'حديقة الحي', distance: 85 },
   });
   await account('/registration', 'POST', evidence);
   await account('/registration/address', 'POST', { location: evidence.location }, 403);
+});
+
+test('administrator invitations bind a unique phone and can be redeemed only once after mobile verification', async t => {
+  const base = await start(t);
+  const admin = client(base);
+  const invited = client(base);
+  const other = client(base);
+  const details = { name: 'محمد وليد الشمري', phone: '0550001068', role: 'agent' };
+  await admin('/admin/users', 'POST', details, 401);
+  await login(admin, adminPhone);
+  const first = await admin('/admin/users', 'POST', details, 201);
+  assert.match(first.code, /^\d{8}$/);
+  assert.equal(first.user.invitationPending, true);
+  assert.match(first.user.tracking.reference, /^WSR-[A-F0-9]{16}$/);
+  const conflict = await admin('/admin/users', 'POST', { ...details, phone: '+966550001068' }, 409);
+  assert.equal(conflict.error, 'phone_in_use');
+  await invited('/registration/invitation', 'POST', { code: first.code }, 401);
+  const account = await login(invited, details.phone);
+  await login(other, '0550001069', { name: 'صالح راشد الحربي', role: 'customer' });
+  await other('/registration/invitation', 'POST', { code: first.code }, 400);
+  assert.equal(account.id, first.user.id);
+  assert.equal(account.tracking.reference, first.user.tracking.reference);
+  await invited('/registration', 'POST', evidence, 403);
+  const replacement = await admin('/admin/users/' + account.id + '/invitation', 'POST', {});
+  const invalid = replacement.code === '00000000' ? '00000001' : '00000000';
+  await invited('/registration/invitation', 'POST', { code: invalid }, 400);
+  const redeemed = await invited('/registration/invitation', 'POST', { code: replacement.code });
+  assert.equal(redeemed.invitationPending, false);
+  await invited('/registration/invitation', 'POST', { code: replacement.code }, 400);
+  await admin('/admin/users/' + account.id + '/invitation', 'POST', {}, 409);
+  const saved = await invited('/registration', 'POST', evidence);
+  assert.equal(saved.tracking.reference, account.tracking.reference);
+  assert.ok(saved.tracking.submitted);
+  await admin('/admin/users/' + account.id, 'PATCH', { approval: 'approved', registrationReviewed: true });
+  const me = (await invited('/me')).user;
+  assert.equal(me.approval, 'approved');
+  assert.ok(me.tracking.decided);
 });
 
 test('runtime never exposes test accounts or codes and reports unavailable SMS accurately', async t => {
@@ -447,4 +491,55 @@ test('verification expires after two minutes and locks the number on three wrong
   await account('/auth/check', 'POST', { phone: second.phone }, 429);
   now = locked.retryAt;
   assert.deepEqual(await account('/auth/check', 'POST', { phone: second.phone }), { ok: true });
+});
+
+test('an older pending-session credential retains tracking without giving account access', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'waslah-review-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const database = join(directory, 'review.sqlite');
+  const base = await start(t, { database });
+  const admin = client(base);
+  const account = client(base);
+  await login(admin, adminPhone);
+  const user = await login(account, '0550001067', { name: 'مازن عمر العتيبي', role: 'customer' });
+  const saved = await account('/registration', 'POST', evidence);
+  const sqlite = new DatabaseSync(database);
+  const session = sqlite.prepare('SELECT expires,account_expires FROM sessions WHERE user_id=?').get(user.id);
+  assert.equal(session.expires - session.account_expires, 23 * 86_400_000);
+  sqlite.prepare('UPDATE sessions SET account_expires=? WHERE user_id=?').run(Date.now() - 1, user.id);
+  sqlite.close();
+  const review = (await account('/me')).user;
+  assert.equal(review.reviewOnly, true);
+  assert.equal(review.tracking.reference, saved.tracking.reference);
+  assert.ok(!Object.hasOwn(review, 'phone'));
+  await admin('/admin/users/' + user.id, 'PATCH', { approval: 'approved', registrationReviewed: true });
+  assert.equal((await account('/me')).user.approval, 'approved');
+  assert.equal((await account('/requests', 'GET', undefined, 403)).error, 'review_session_only');
+});
+
+test('map lookup provides the street and measures distance to the nearest returned landmark', async t => {
+  const origin = { latitude: 24.7, longitude: 46.68 };
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const endpoint = new URL(url);
+    calls.push(endpoint.hostname);
+    if (endpoint.hostname === 'places.googleapis.com') {
+      assert.equal(options.headers['X-Goog-Api-Key'], 'places-fixture');
+      assert.equal(JSON.parse(options.body).rankPreference, 'DISTANCE');
+      return Response.json({ places: [{ displayName: { text: 'حديقة الحي' }, location: { latitude: 24.701, longitude: 46.68 } }] });
+    }
+    assert.equal(endpoint.searchParams.get('key'), 'address-fixture');
+    return Response.json({ status: 'OK', results: [{
+      types: ['street_address'], formatted_address: 'شارع الملك، حي الندى، الرياض',
+      address_components: [
+        { types: ['locality'], long_name: 'الرياض' }, { types: ['route'], long_name: 'شارع الملك' },
+      ],
+      geometry: { location: { lat: 24.7001, lng: 46.68 } },
+    }] });
+  });
+  assert.deepEqual(await lookupAddress('address-fixture', origin, 'ar', 'places-fixture'), {
+    address: 'شارع الملك، حي الندى، الرياض', city: 'الرياض', street: 'شارع الملك', distance: 11,
+    landmark: { name: 'حديقة الحي', distance: 111 },
+  });
+  assert.equal(calls.length, 2);
 });

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { preciseLocation, validNationalId } from './public/registration-fields.js';
 
 export const codeLifetime = 120_000;
@@ -67,7 +67,49 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
     decipher.setAuthTag(row.tag);
     return JSON.parse(Buffer.concat([decipher.update(row.data), decipher.final()]).toString('utf8'));
   }
-  return { check, issue, reserve, finish, saveEvidence, evidence };
+  function invitationPending(userId) {
+    return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND used IS NULL', userId);
+  }
+  function inviteDigest(userId, code) {
+    return createHmac('sha256', key).update(`invite:${userId}:${code}`).digest();
+  }
+  function issueInvitation(userId) {
+    const code = String(randomInt(100_000_000)).padStart(8, '0');
+    const expiresAt = clock() + 86_400_000;
+    run(`INSERT INTO registration_invites(user_id,digest,expires,attempts) VALUES(?,?,?,0)
+      ON CONFLICT(user_id) DO UPDATE SET digest=excluded.digest, expires=excluded.expires, attempts=0`,
+    userId, inviteDigest(userId, code), expiresAt);
+    return { code, expiresAt };
+  }
+  function redeemInvitation(userId, code) {
+    const outcome = transaction(() => {
+      const row = get('SELECT * FROM registration_invites WHERE user_id=? AND used IS NULL', userId);
+      const account = get('SELECT approval FROM users WHERE id=?', userId);
+      if (!row || account?.approval !== 'pending') return 'invitation_unavailable';
+      const time = clock();
+      if (row.expires <= time || row.attempts >= 5) return 'invitation_expired';
+      if (!timingSafeEqual(row.digest, inviteDigest(userId, code))) {
+        run('UPDATE registration_invites SET attempts=attempts+1 WHERE user_id=?', userId);
+        return row.attempts >= 4 ? 'invitation_expired' : 'invalid_invitation';
+      }
+      run('UPDATE registration_invites SET used=?, digest=NULL WHERE user_id=?', time, userId);
+      return null;
+    });
+    if (outcome) fail(400, outcome);
+  }
+  function tracking(user) {
+    let row = get('SELECT reference,submitted,decided FROM registration_tracking WHERE user_id=?', user.id);
+    if (!row && user.approval === 'pending') {
+      const reference = 'WSR-' + randomBytes(8).toString('hex').toUpperCase();
+      if (!run('INSERT OR IGNORE INTO registration_tracking(user_id,reference,submitted) VALUES(?,?,?)',
+        user.id, reference, user.needs_registration ? null : user.created).changes) {
+        return get('SELECT reference,submitted,decided FROM registration_tracking WHERE user_id=?', user.id);
+      }
+      row = { reference, submitted: user.needs_registration ? null : user.created, decided: null };
+    }
+    return row || null;
+  }
+  return { check, issue, reserve, finish, saveEvidence, evidence, invitationPending, issueInvitation, redeemInvitation, tracking };
 }
 
 export function registrationPacket(data, fail) {

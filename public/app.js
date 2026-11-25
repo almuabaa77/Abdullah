@@ -108,23 +108,25 @@ function languageBtn() {
 }
 let installPrompt;
 let installationComplete = false;
+const appDisplay = () => navigator.standalone || matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
 function installControl() {
-  if (installationComplete || matchMedia('(display-mode: standalone)').matches || navigator.standalone) return '';
-  return `<button class="language-button" data-action="install" aria-label="${t('installApp')}">${icon('download')} <span>${t('installApp')}</span></button>`;
+  if (installationComplete || appDisplay()) return '';
+  return `<button class="language-button" data-action="install" aria-label="${t('installApp')}" ${installPrompt ? '' : 'hidden'}>${icon('download')} <span>${t('installApp')}</span></button>`;
 }
-window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; });
+function fullscreenControl() {
+  return document.fullscreenEnabled && !appDisplay() ? `<button class="icon-button" data-action="fullscreen" aria-label="${t('fullScreen')}">${icon('maximize')}</button>` : '';
+}
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+  app.querySelectorAll('[data-action="install"]').forEach(button => { button.hidden = false; });
+});
 window.addEventListener('appinstalled', () => {
   installPrompt = undefined;
   installationComplete = true;
   app.querySelectorAll('[data-action="install"]').forEach(button => button.remove());
 });
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
-function installationHelp() {
-  if (!window.isSecureContext) return 'installSecure';
-  if (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'installIos';
-  if (/Android/i.test(navigator.userAgent)) return 'installAndroid';
-  return 'installDesktop';
-}
 function header() {
   const current = state.route === 'dashboard' ? 'dashboardTitle' : navigation().find(([route]) => route === state.route)?.[2] || (state.route === 'settings' ? 'profile' : state.route);
   const unread = state.events.some(event => !event.seen);
@@ -132,7 +134,7 @@ function header() {
     <div class="top-start"><button class="icon-button mobile-menu" data-action="drawer" aria-label="${t('menu')}" aria-expanded="${state.drawer}">${icon('menu')}</button>
       <div class="breadcrumb">${icon('panels-top-left')}<span>${t(current)}</span></div></div>
     <div class="top-actions">
-      ${installControl()}${languageBtn()}
+      ${installControl()}${fullscreenControl()}${languageBtn()}
       <div class="menu-wrap"><button class="icon-button bell" data-action="notifications" aria-label="${t('notifications')}" aria-expanded="${state.menu === 'notifications'}">${icon('bell')}${unread ? '<i class="unread-dot"></i>' : ''}</button>
       ${state.menu === 'notifications' ? notificationMenu() : ''}</div>
       <div class="header-divider"></div>
@@ -235,16 +237,30 @@ function requestsPage() {
     </select></div><div id="results">${requestResults()}</div>`;
 }
 function usersPage() {
-  return `${sectionHeader(t('users'), t('userIntro'))}<div class="list-tools"><div class="chips">
+  return `${sectionHeader(t('users'), t('userIntro'), `<button class="button primary" data-action="admin-create-user">${icon('user-plus')}${t('adminCreateAccount')}</button>`)}<div class="list-tools"><div class="chips">
     ${['all', 'pending', 'approved', 'suspended', 'blocked', 'rejected'].map(key => `<button class="chip ${state.userFilter === key ? 'selected' : ''}" data-userfilter="${key}" aria-pressed="${state.userFilter === key}">${t(approvalLabel[key] || key)}</button>`).join('')}
     </div><label class="search-box">${icon('search')}<input type="search" data-user-search aria-label="${t('searchUsers')}" value="${escape(state.userQuery)}" placeholder="${t('searchUsers')}"></label>
     <select id="user-role-filter" class="filter-select" aria-label="${t('filterPeople')}">${[['all', t('all')], ...Object.entries(roles).map(([key, label]) => [key, local(label)])].map(([key, label]) => `<option value="${key}" ${state.userRole === key ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div id="user-results">${userResults()}</div>`;
+}
+function adminCreateForm() {
+  openDialog(`${modalHeading(t('adminCreateAccount'))}<form class="form-stack" data-form="admin-create-user">
+    <label>${t('registrationName')}<input name="name" maxlength="72" required></label>
+    <label>${t('phone')}<input type="tel" name="phone" dir="ltr" autocomplete="tel" maxlength="28" required></label>
+    ${selectedChoice('role', t('accountType'), [['customer', local(roles.customer)], ['agent', local(roles.agent)]], 'customer')}
+    <button type="submit" class="button primary">${t('adminIssueInvitation')}</button>
+  </form>`);
+}
+function invitationReceipt(result) {
+  openDialog(`${modalHeading(t('invitationCreated'), t('invitationShare'))}<p><bdi>${escape(result.user.phone)}</bdi></p>
+    <p class="invitation-code"><bdi>${escape(result.code)}</bdi></p>
+    <p class="muted">${t('invitationExpires')} ${localeTime(result.expiresAt)}</p>
+    <button class="button primary" data-action="copy-reference" data-reference="${escape(result.code)}">${icon('copy')}${t('copyInvitation')}</button>`);
 }
 function userResults() {
     const query = state.userQuery.trim().toLowerCase();
   const all = state.users.filter(user => (state.userFilter === 'all' || user.approval === state.userFilter)
     && (state.userRole === 'all' || user.role === state.userRole)
-    && [user.name, user.phone].some(value => value.toLowerCase().includes(query)));
+    && [user.name, user.phone, user.trackingReference].filter(Boolean).some(value => value.toLowerCase().includes(query)));
   return `${all.length ? `<div class="table-box user-table"><table><thead><tr><th>${t('name')}</th><th>${t('phone')}</th><th>${t('accountType')}</th><th>${t('status')}</th><th>${t('registrationDate')}</th><th></th></tr></thead><tbody>
     ${all.map(user => `<tr><td class="table-service">${escape(displayName(user.name))}</td><td class="table-phone"><bdi>${escape(user.phone)}</bdi></td><td class="table-role">${local(roles[user.role])}</td>
       <td class="table-status"><span class="status-pill approval-${user.approval}"><i></i>${t(approvalLabel[user.approval])}</span></td><td class="table-date">${date(user.created)}</td>
@@ -358,6 +374,7 @@ async function manageUser(id) {
   }[account.approval];
   if (account.approval !== 'blocked') actions.push(['blocked', t('block')]);
   openDialog(`${modalHeading(t('userManage'), '<bdi>' + escape(account.phone) + '</bdi>')}
+    ${account.trackingReference ? `<p class="muted">${t('trackingReference')} <bdi>${escape(account.trackingReference)}</bdi></p>` : ''}
     <form class="form-stack" data-form="manage-user" data-id="${id}" data-agent="${account.role === 'agent'}">
     <label>${t('accountName')}<input name="name" value="${escape(account.name)}" maxlength="72" required></label>
     ${selectedChoice('city', t('city'), [['none', '—'], ...cityOptions()], account.city || 'none')}
@@ -372,6 +389,7 @@ async function manageUser(id) {
       ${account.approval !== 'approved' ? `<label class="review-check"><input type="checkbox" name="registrationReviewed">${t('registrationReviewed')}</label>` : ''}
     </fieldset>` : ''}
     <p class="muted fine-print">${t('blockHint')}</p>${agentFields}
+    ${account.invitationPending && account.approval === 'pending' ? `<button type="button" class="button secondary" data-action="admin-renew-invite" data-id="${account.id}">${t('renewInvitation')}</button>` : ''}
     <button class="button primary">${t('save')}</button></form>
     <section class="timeline-section"><h3>${t('audit')}</h3>
       ${audit.length ? `<ol class="request-timeline">${audit.map(entry => `<li>
@@ -456,7 +474,7 @@ function helpPage() {
     <section class="settings-card"><div class="tile-icon teal">${icon('file-text')}</div><h2>${t('helpFollow')}</h2><p>${t('emptySub')}</p><button class="button secondary" data-route="requests">${t('viewAll')}${arrow()}</button></section></div>`;
 }
 function authFrame(content) {
-  return `<div class="auth-layout"><header class="auth-header"><div class="brand">${brand()}</div><div class="auth-tools">${installControl()}${languageBtn()}</div></header><div class="auth-body"><div class="auth-card">${content}</div><div class="auth-art" aria-hidden="true"></div></div></div>`;
+  return `<div class="auth-layout"><header class="auth-header"><div class="brand">${brand()}</div><div class="auth-tools">${installControl()}${fullscreenControl()}${languageBtn()}</div></header><div class="auth-body"><div class="auth-card">${content}</div><div class="auth-art" aria-hidden="true"></div></div></div>`;
 }
 function auth() {
   const signup = state.authMode === 'signup';
@@ -483,6 +501,18 @@ function auth() {
       : `<button class="text-button auth-switch" data-action="auth-switch">${t(signup ? 'login' : 'signup')}</button>`}`);
 }
 function pending() {
+  if (state.user.reviewOnly && (state.user.approval === 'approved' || state.user.needsRegistration)) {
+    return authFrame(`<h1>${t(state.user.approval === 'approved' ? 'reviewApproved' : 'resumeRegistration')}</h1>
+      ${trackingDetails()}<p>${t('reviewSignInAgain')}</p><button class="button primary" data-action="logout">${t('login')}</button>`);
+  }
+  if (state.user.approval === 'pending' && state.user.invitationPending) {
+    return authFrame(`<h1>${t('invitationTitle')}</h1><p>${t('invitationUse')}</p>
+      <form class="form-stack" data-form="invitation">
+        <label>${t('invitationCode')}<input class="code-input" name="invitation" dir="ltr" inputmode="numeric" maxlength="8" required></label>
+        <button class="button primary" type="submit">${t('verify')}</button>
+        <p id="auth-error" class="auth-error" role="alert" hidden></p>
+      </form><button class="text-button auth-switch" data-action="logout">${t('logout')}</button>`);
+  }
   if (state.user.approval === 'pending' && state.user.needsRegistration) return registrationForm();
   if (state.user.approval === 'pending') {
     return authFrame(`<section class="review-state" aria-labelledby="review-heading">
@@ -493,6 +523,7 @@ function pending() {
         <li>${icon('check')}<span>${t('reviewReceived')}</span></li>
         <li aria-current="step">${icon('hourglass')}<strong>${t('reviewActive')}</strong></li>
       </ol>
+      ${trackingDetails()}
       <p class="review-connection" data-review-status role="status"></p>
       <div class="pending-actions"><button class="button primary" data-action="check-approval">${icon('refresh-cw')}${t('checkApproval')}</button><button class="button secondary" data-action="logout">${t('logout')}</button></div>
     </section>`);
@@ -501,7 +532,18 @@ function pending() {
   const suspended = state.user.approval === 'suspended';
   return authFrame(`<span class="tile-icon ${rejected || suspended ? 'amber' : 'purple'}">${icon(rejected || suspended ? 'circle-alert' : 'clock-3')}</span>
     <h1>${t(suspended ? 'suspendedTitle' : rejected ? 'rejectedTitle' : 'pendingTitle')}</h1><p>${t(suspended ? 'suspendedSub' : rejected ? 'rejectedSub' : 'pendingSub')}</p>
+    ${trackingDetails()}
     <div class="pending-actions"><button class="button primary" data-action="check-approval">${icon('refresh-cw')}${t('checkApproval')}</button><button class="button secondary" data-action="logout">${t('logout')}</button></div>`);
+}
+
+function trackingDetails() {
+  const tracking = state.user.tracking;
+  if (!tracking) return '';
+  return `<dl class="tracking-details"><div><dt>${t('trackingReference')}</dt><dd><bdi>${escape(tracking.reference)}</bdi>
+    <button class="icon-button" data-action="copy-reference" data-reference="${escape(tracking.reference)}" aria-label="${t('copyTracking')}">${icon('copy')}</button></dd></div>
+    ${tracking.submitted ? `<div><dt>${t('trackingSubmitted')}</dt><dd>${localeTime(tracking.submitted)}</dd></div>` : ''}
+    ${tracking.decided ? `<div><dt>${t('trackingDecided')}</dt><dd>${localeTime(tracking.decided)}</dd></div>` : ''}
+  </dl>`;
 }
 
 let registrationDraft = {};
@@ -522,7 +564,9 @@ async function refreshRegistrationStatus() {
     if (state.user !== account) return;
     reviewCheckedAt = Date.now();
     reviewDisconnected = false;
-    if (!user || user.approval !== account.approval || user.needsRegistration !== account.needsRegistration) {
+    if (!user || user.approval !== account.approval || user.needsRegistration !== account.needsRegistration
+        || user.invitationPending !== account.invitationPending || user.reviewOnly !== account.reviewOnly
+        || user.tracking?.reference !== account.tracking?.reference || user.tracking?.decided !== account.tracking?.decided) {
       state.user = user;
       if (!user?.needsRegistration) registrationDraft = {};
       if (user) await refresh();
@@ -538,7 +582,7 @@ function stopRegistrationCamera() {
   registrationCamera = undefined;
 }
 function registrationForm() {
-  const { location, addressStatus } = registrationDraft;
+  const { location, addressStatus, addressDetails } = registrationDraft;
   return authFrame(`<h1>${t('registrationEvidence')}</h1><p>${t('registrationPrivacy')}</p>
     <form class="form-stack" data-form="registration" novalidate>
       <label>${t('nationalId')}<input name="nationalId" inputmode="numeric" dir="ltr" minlength="10" maxlength="10" value="${escape(registrationDraft.nationalId)}" required></label>
@@ -547,6 +591,12 @@ function registrationForm() {
       ${state.config.addressLookup ? `<p class="muted fine-print">${t('addressLookupPrivacy')}</p>` : ''}
       ${location ? `<p class="muted" role="status">${t('locationAccuracy')} <bdi>±${Math.round(location.accuracy)} m</bdi></p>` : ''}
       ${addressStatus ? `<p class="muted" role="status">${t(addressStatus)}</p>` : ''}
+      ${addressDetails ? `<dl class="tracking-details address-details">
+        ${addressDetails.city ? `<div><dt>${t('city')}</dt><dd>${escape(addressDetails.city)}</dd></div>` : ''}
+        ${addressDetails.street ? `<div><dt>${t('addressStreet')}</dt><dd>${escape(addressDetails.street)}</dd></div>` : ''}
+        ${addressDetails.distance != null ? `<div><dt>${t('addressDistance')}</dt><dd>${digit(addressDetails.distance)} ${t('meters')}</dd></div>` : ''}
+        ${addressDetails.landmark ? `<div><dt>${t('nearestLandmark')}</dt><dd>${escape(addressDetails.landmark.name)} · ${digit(addressDetails.landmark.distance)} ${t('meters')}</dd></div>` : ''}
+      </dl>` : ''}
       <div class="registration-images">${[['selfie', 'selfie'], ['identity', 'identityPhoto']].map(([kind, label]) => `<figure>
         ${registrationDraft[kind] ? `<img alt="${t(label)}" src="data:image/jpeg;base64,${registrationDraft[kind]}">` : ''}
         <button type="button" class="button secondary" data-action="registration-camera" data-photo="${kind}">${icon('camera')}${t(label)}</button>
@@ -624,11 +674,14 @@ async function captureRegistrationLocation() {
   if (draft !== registrationDraft) return;
   const { latitude, longitude, accuracy } = coords;
   draft.location = { latitude, longitude, accuracy };
+  draft.addressDetails = null;
   draft.addressStatus = 'address_enter_manually';
   const previousAddress = draft.address;
   if (state.config.addressLookup) {
     try {
-      const { address } = await api('/registration/address', 'POST', { location: draft.location, lang: state.lang });
+      const details = await api('/registration/address', 'POST', { location: draft.location, lang: state.lang });
+      const { address } = details;
+      if (details.city || details.street || details.distance != null || details.landmark) draft.addressDetails = details;
       if (address && draft.address === previousAddress && (!draft.address?.trim() || draft.address === draft.autoAddress)) {
         draft.address = address;
         draft.autoAddress = address;
@@ -669,7 +722,7 @@ function render() {
   document.title = t('brand') + ' | ' + t('platform');
   if (!state.ready) app.innerHTML = `<div class="boot-screen">${brand()}<span>${t('loading')}</span></div>`;
   else if (!state.user) app.innerHTML = auth();
-  else if (state.user.approval !== 'approved') app.innerHTML = pending();
+  else if (state.user.approval !== 'approved' || state.user.reviewOnly) app.innerHTML = pending();
   else {
     const pages = { dashboard, services: catalog, 'services-admin': servicesAdmin, live: livePage, requests: requestsPage, users: usersPage, help: helpPage, settings: settingsPage };
     app.innerHTML = `<div class="shell">${sidebar()}${state.drawer ? '<button class="drawer-scrim" data-action="drawer" aria-label="' + t('close') + '"></button>' : ''}<div class="work-area">${header()}<div class="content">${pages[state.route]()}</div></div></div>`;
@@ -689,7 +742,7 @@ function navigate(route, filter = 'all') {
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 async function refresh() {
-  if (state.user?.approval !== 'approved') return;
+  if (state.user?.approval !== 'approved' || state.user.reviewOnly) return;
   const identity = state.user.id;
   const hasMarket = specialist() && state.config.market;
   const [requests, events, users, marketProfile, live, services, adminServices] = await Promise.all([
@@ -944,7 +997,7 @@ async function refreshVisiblePage() {
   if (refreshingPage || marketBusy || !state.user || document.hidden || state.drawer || state.menu) return;
   refreshingPage = true;
   try {
-    if (state.user.approval !== 'approved') {
+    if (state.user.approval !== 'approved' || state.user.reviewOnly) {
       await refreshRegistrationStatus();
       return;
     }
@@ -975,7 +1028,7 @@ async function refreshVisiblePage() {
     }
     if (!dialog.open && await refresh()) refreshResults();
   } catch (error) {
-    if (error.message === 'approval_required' || error.message === 'unauthorized') {
+    if (['approval_required', 'unauthorized', 'review_session_only'].includes(error.message)) {
       if (dialog.open) dialog.close();
       await sessionCheck();
     } else if (error.message === 'not_found' && dialog.open && dialog.dataset.request) {
@@ -1081,8 +1134,28 @@ document.addEventListener('click', async event => {
     }
     if (!action) return;
     if (action === 'install') {
-      if (installPrompt) { const prompt = installPrompt; installPrompt = undefined; await prompt.prompt(); }
-      else openDialog(`${modalHeading(t('installApp'))}<p>${t(installationHelp())}</p>`);
+      if (!installPrompt) return;
+      const prompt = installPrompt;
+      installPrompt = undefined;
+      target.hidden = true;
+      await prompt.prompt();
+      return;
+    }
+    if (action === 'fullscreen') {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+      return;
+    }
+    if (action === 'admin-create-user') return adminCreateForm();
+    if (action === 'admin-renew-invite') {
+      target.disabled = true;
+      try { invitationReceipt(await api('/admin/users/' + id + '/invitation', 'POST', {})); }
+      finally { target.disabled = false; }
+      return;
+    }
+    if (action === 'copy-reference') {
+      await navigator.clipboard.writeText(target.dataset.reference);
+      flash(t('copied'));
       return;
     }
     if (action === 'registration-camera' || action === 'registration-location') {
@@ -1223,7 +1296,7 @@ document.addEventListener('submit', async event => {
   if (button) { button.disabled = true; button.dataset.waiting = '1'; }
   const data = new FormData(form);
   const id = form.dataset.id;
-  const authForm = ['phone', 'verify', 'edit-phone'].includes(mode);
+  const authForm = ['phone', 'verify', 'edit-phone', 'invitation'].includes(mode);
   if (authForm) showAuthError();
   try {
     if (mode === 'phone') {
@@ -1244,6 +1317,16 @@ document.addEventListener('submit', async event => {
       state.authStep = 'phone';
       await refresh();
       render();
+    } else if (mode === 'invitation') {
+      state.user = await api('/registration/invitation', 'POST', { code: translatedDigits(String(data.get('invitation')).trim()) });
+      render();
+    } else if (mode === 'admin-create-user') {
+      const name = registrationName(data.get('name'));
+      if (!name) throw new Error('invalid_registration_name');
+      const result = await api('/admin/users', 'POST', { name, phone: data.get('phone'), role: data.get('role') });
+      await refresh();
+      render();
+      invitationReceipt(result);
     } else if (mode === 'registration') {
       registrationError(form);
       const nationalId = translatedDigits(String(data.get('nationalId')).trim());
