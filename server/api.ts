@@ -421,7 +421,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
     throw new ApiError('حدث تحديث متزامن، أعد المحاولة',409)
   } catch (error) {
     const expected = error instanceof ApiError || error instanceof SyntaxError || error instanceof Error && /[\u0600-\u06ff]/.test(error.message)
-    if (!expected) console.error('workspace request failed', error)
+    if (!expected) console.error('workspace request failed',error instanceof Error ? error.name : 'UnknownError')
     return Response.json({ error: expected && error instanceof Error ? error.message : 'تعذر الاتصال ببيانات الحلقة' }, { status: error instanceof ApiError ? error.status : expected ? 400 : 500, headers })
   }
 }

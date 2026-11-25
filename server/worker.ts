@@ -1,5 +1,5 @@
 import { api, type Env, type Repository } from './api'
-import { assetList } from './generated-assets'
+import { serveAsset } from './assets'
 type Prepared = {
   bind(...values: (string | number)[]): Prepared
   first<T>(): Promise<T | null>
@@ -19,13 +19,6 @@ export default {
       }
       return api(request,repository,env)
     }
-    const entry = assetList[url.pathname]
-    if (!entry) return new Response('Not found',{status:404})
-    const [type, data] = entry
-    const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0))
-    return new Response(request.method === 'HEAD' ? null : bytes, {headers:{
-      'Content-Type':type,'X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin',
-      'Cache-Control':url.pathname === '/' || url.pathname === '/sw.js' || url.pathname === '/manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600',
-    }})
+    return serveAsset(request)
   },
 }

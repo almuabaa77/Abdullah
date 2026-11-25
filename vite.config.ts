@@ -1,6 +1,5 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import tailwind from '@tailwindcss/vite'
-import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { api, type Repository } from './server/api'
 
@@ -8,7 +7,8 @@ function previewApi(): Plugin {
   return {
     name: 'workspace-preview',
     apply: 'serve',
-    configureServer(server) {
+    async configureServer(server) {
+      const { DatabaseSync } = await import('node:sqlite')
       mkdirSync('.preview', { recursive: true })
       const db = new DatabaseSync('.preview/workspaces.sqlite')
       db.exec(readFileSync('drizzle/0000_workspace.sql','utf8').replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'))

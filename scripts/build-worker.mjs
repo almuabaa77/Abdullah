@@ -20,11 +20,20 @@ const preload = Object.keys(assets).filter(route => !/\/assets\/index-.*?\.js$/.
 for (const route of Object.keys(assets)) if (route.endsWith('.js') && !/firebase|phone/.test(route)) preload.push(route)
 serviceWorker = serviceWorker.replace('__BUILD_VERSION__',version).replace("'__PRECACHE_FILES__'",JSON.stringify([...new Set(preload)]))
 assets['/sw.js'] = [types['.js'],Buffer.from(serviceWorker).toString('base64')]
-await build({entryPoints:['server/worker.ts'],outfile:'dist/server/index.js',bundle:true,platform:'browser',format:'esm',target:'es2022',
-  plugins:[{name:'embed-assets',setup(p){
-    p.onResolve({filter:/generated-assets$/}, () => ({path:'assets',namespace:'embedded'}))
-    p.onLoad({filter:/.*/,namespace:'embedded'}, () => ({contents:'export const assetList = ' + JSON.stringify(assets),loader:'js'}))
-  }}]})
+const embedAssets = {
+  name:'embed-assets',
+  setup(plugin) {
+    plugin.onResolve({filter:/generated-assets$/}, () => ({path:'assets',namespace:'embedded'}))
+    plugin.onLoad({filter:/.*/,namespace:'embedded'}, () => ({
+      contents:'export const assetList = ' + JSON.stringify(assets),
+      loader:'js',
+    }))
+  },
+}
+await Promise.all([
+  build({entryPoints:['server/worker.ts'],outfile:'dist/server/index.js',bundle:true,platform:'browser',format:'esm',target:'es2022',plugins:[embedAssets]}),
+  build({entryPoints:['server/hostinger.ts'],outfile:'dist/hostinger/index.js',bundle:true,platform:'node',format:'esm',target:'node22',packages:'external',plugins:[embedAssets]}),
+])
 await mkdir('dist/.openai',{recursive:true})
 await copyFile('.openai/hosting.json','dist/.openai/hosting.json')
 await cp('drizzle','dist/drizzle',{recursive:true})
