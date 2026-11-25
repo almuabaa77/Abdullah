@@ -27,7 +27,8 @@
 
 يدعم المشروع استضافة Node.js بإصدار 22 أو أحدث على خطة تتيح تطبيقات Node.js. اربط فرع `halaqat-al-khair` من مستودع `almuabaa77/Abdullah` بإعدادات Express في hPanel.
 
-- أمر البناء هو `npm run build`، وملف الدخول هو `server.js`، وأمر التشغيل هو `npm start`.
+- عند الرفع من GitHub، استخدم `npm run build` للبناء و`start.cjs` لملف الدخول. يعمل `server.js` أيضًا، وأمر التشغيل هو `npm start`.
+- للرفع اليدوي من قسم Node.js، أنشئ حزمة التشغيل باستخدام `npm run package:hostinger -- /path/to/halaqat.zip`. ارفع الملف المضغوط وحدد `start.cjs` في مجلد الجذر `./`. الحزمة تضم التطبيق مبنيًا، ويمكن تشغيل أمر البناء الافتراضي للتحقق من ملفاتها.
 - اربط قاعدة MySQL مخصصة للتطبيق. اضبط `DATABASE_URL` أو القيم `DB_HOST` و`DB_PORT` و`DB_NAME` و`DB_USER` و`DB_PASSWORD`. ينشئ التطبيق جدول `halaqat_workspaces` عند بدء التشغيل.
 - اضبط `FIREBASE_WEB_CONFIG` و`BOOTSTRAP_UID` في متغيرات تشغيل Hostinger. يستخدم تطبيق Hostinger تسجيل الدخول الفعلي عبر Firebase.
 - استخدم `/api/health` للتحقق من بدء الخادم واتصال MySQL. نسخة Hostinger تخزّن بياناتها في MySQL، ونسخة Sites تخزّن بياناتها في D1.
