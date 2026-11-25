@@ -497,3 +497,13 @@ input[type=file]::file-selector-button { border: 0; border-radius: 6px; color: v
   .admin-overview, .customer-overview, .profile-layout { grid-template-columns: minmax(0, 1fr); }
   .operation-tile { padding: 13px; }
 }
+
+.auth-tools{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+[data-verification-time]{font-variant-numeric:tabular-nums;font-weight:700}
+.registration-images{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr));gap:.75rem}
+.registration-images figure{margin:0;display:grid;align-content:start;gap:.5rem}
+.registration-images img,.registration-preview video{display:block;width:100%;max-height:24rem;object-fit:contain;border-radius:var(--radius)}
+.registration-preview .auth-links{margin-block-start:.5rem;flex-wrap:wrap}
+.registration-review{min-inline-size:0;overflow-wrap:anywhere}
+.registration-review .review-check{display:flex;gap:.5rem;align-items:center;margin-block-start:.75rem}
+.registration-review .review-check input{width:auto}

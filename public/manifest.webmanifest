@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "وصلة | Waslah",
+  "short_name": "وصلة",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f8fc",
+  "theme_color": "#6334d4",
+  "icons": [
+    {"src": "/assets/waslah-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/assets/waslah-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}

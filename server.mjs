@@ -8,8 +8,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { statuses } from './public/catalog.js';
 import { createOperations, migrateOperations } from './operations.mjs';
 import { answerConversation, prepareConversation } from './assistant.mjs';
-import { readFirebaseConfig, verifiedPhone, verifierFor } from './firebase-provider.mjs';
+import { exchangeFirebaseCode, readFirebaseConfig, verifiedPhone, verifierFor } from './firebase-provider.mjs';
 import { normalizePhone } from './public/phone.js';
+import { registrationName } from './public/registration-name.js';
+import { createRegistration, registrationPacket } from './registration.mjs';
 import { createMarketplace, isActive, migrateMarketplace } from './marketplace.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -19,16 +21,20 @@ const sessionAge = 7 * 24 * 60 * 60;
 class StartupConfigurationError extends Error {}
 
 class HttpError extends Error {
-  constructor(status, code) {
+  constructor(status, code, details) {
     super(code);
     this.status = status;
+    this.details = details;
   }
 }
-const fail = (status, code) => { throw new HttpError(status, code); };
-const publicUser = ({ id, phone, name, role, approval, city, created }) => ({ id, phone, name, role, approval, city, created });
+const fail = (status, code, details) => { throw new HttpError(status, code, details); };
+const publicUser = ({ id, phone, name, role, approval, city, created, needs_registration }) => ({
+  id, phone, name, role, approval, city, created, needsRegistration: !!needs_registration,
+});
 const mime = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2', '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
 };
 const nextStatuses = {
   new: ['in_progress', 'needs_info', 'rejected'], in_progress: ['needs_info', 'completed', 'rejected'],
@@ -89,6 +95,7 @@ function openDatabase(path) {
   db.exec(`
     PRAGMA foreign_keys = ON;
     PRAGMA secure_delete = ON;
+    PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -96,6 +103,15 @@ function openDatabase(path) {
     );
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS phone_challenges (
+      phone TEXT PRIMARY KEY, id TEXT NOT NULL, provider_session TEXT, expires INTEGER NOT NULL,
+      attempts INTEGER NOT NULL, locked INTEGER NOT NULL, busy INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS phone_provider_sessions (token TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS registration_evidence (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id), iv BLOB NOT NULL, tag BLOB NOT NULL, data BLOB NOT NULL,
+      reviewed INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS requests (
       id INTEGER PRIMARY KEY, service TEXT NOT NULL, customer_id INTEGER NOT NULL REFERENCES users(id),
@@ -117,6 +133,17 @@ function openDatabase(path) {
     CREATE INDEX IF NOT EXISTS requests_agent ON requests(agent_id);
     CREATE INDEX IF NOT EXISTS events_user ON events(user_id, id);
   `);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'needs_registration')) {
+      db.exec('ALTER TABLE users ADD COLUMN needs_registration INTEGER NOT NULL DEFAULT 0');
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    db.close();
+    throw error;
+  }
   migrateMarketplace(db);
   migrateOperations(db);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -127,7 +154,7 @@ export function makeApp({
   database, marketClock = Date.now, verifySms,
   adminPhone = process.env.ADMIN_PHONE, assistantKey = process.env.OPENAI_API_KEY,
   firebase,
-  verifyFirebase,
+  verifyFirebase, confirmFirebase = exchangeFirebaseCode, verificationClock = Date.now,
 } = {}) {
   const production = process.env.NODE_ENV === 'production';
   const provider = process.env.AUTH_PROVIDER;
@@ -171,8 +198,8 @@ export function makeApp({
   const get = (sql, ...args) => db.prepare(sql).get(...args);
   const all = (sql, ...args) => db.prepare(sql).all(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
-  const createUser = (phone, name, role, approval) => run(
-    'INSERT OR IGNORE INTO users(phone,name,role,approval,created) VALUES(?,?,?,?,?)', phone, name, role, approval, now());
+  const createUser = (phone, name, role, approval, needsRegistration = 0) => run(
+    'INSERT OR IGNORE INTO users(phone,name,role,approval,created,needs_registration) VALUES(?,?,?,?,?,?)', phone, name, role, approval, now(), needsRegistration);
   const byPhone = phone => get('SELECT * FROM users WHERE phone = ?', phone);
   const transaction = action => {
     db.exec('BEGIN IMMEDIATE');
@@ -190,6 +217,7 @@ export function makeApp({
   };
   const market = createMarketplace({ get, all, run, transaction, notice, fail, input, clock: marketClock });
   const ops = createOperations({ get, all, run, input, fail, stamp: now });
+  const registration = createRegistration({ get, run, transaction, fail, secret: process.env.REGISTRATION_SECRET || sessionSecret, clock: verificationClock });
   if (phone) {
     createUser(phone, process.env.ADMIN_NAME || 'إدارة وصلة', 'admin', 'approved');
     if (byPhone(phone).role !== 'admin') {
@@ -202,6 +230,8 @@ export function makeApp({
     const time = Date.now();
     for (const [key, entry] of limits) if (entry.until < time) limits.delete(key);
     run('DELETE FROM sessions WHERE expires < ?', time);
+    run('DELETE FROM phone_challenges WHERE expires < ? AND locked < ?', time - 3_600_000, time);
+    run('DELETE FROM phone_provider_sessions WHERE expires < ?', time);
   }, 300000);
   cleanup.unref();
 
@@ -260,7 +290,9 @@ export function makeApp({
     if (user?.approval === 'blocked') fail(403, 'account_blocked');
     if (!user) {
       if (!['customer', 'agent'].includes(data.role)) fail(400, 'invalid_input');
-      createUser(phone, input(data.name, 72, true), data.role, 'pending');
+      const name = registrationName(data.name);
+      if (!name) fail(400, 'invalid_registration_name');
+      createUser(phone, name, data.role, 'pending', 1);
       user = byPhone(phone);
     }
     const token = tokenFrom(req);
@@ -278,40 +310,62 @@ export function makeApp({
     }
     if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), firebase, ai: !!assistantKey, market: true });
     if (pathname === '/api/demo') fail(404, 'not_found');
+    if (method === 'POST' && pathname === '/api/auth/check') {
+      const phone = phoneNumber((await body(req)).phone);
+      registration.check(phone);
+      return send(res, 200, { ok: true });
+    }
+    if (method === 'POST' && pathname === '/api/auth/challenge') {
+      if (!verifyIdentity) fail(404, 'not_found');
+      const data = await body(req);
+      const phone = phoneNumber(data.phone);
+      const session = input(data.session, 4096, true);
+      registration.check(phone);
+      rate('send:' + phone, 1, 55000);
+      rate('send-hour:' + phone, 6, 3600000);
+      return send(res, 200, registration.issue(phone, session));
+    }
     if (method === 'POST' && pathname === '/api/auth/send') {
       if (!sms) fail(503, 'sms_unavailable');
       const phone = phoneNumber((await body(req)).phone);
+      registration.check(phone);
       rate('send:' + phone, 1, 55000);
       rate('send-hour:' + phone, 6, 3600000);
       await sms('Verifications', { To: phone, Channel: 'sms' });
-      return send(res, 200, { phone });
+      return send(res, 200, registration.issue(phone));
     }
     if (method === 'POST' && pathname === '/api/auth/verify') {
       const data = await body(req);
       const phone = phoneNumber(data.phone);
-      if (!sms) fail(503, 'sms_unavailable');
+      if (!sms && !verifyIdentity) fail(503, 'sms_unavailable');
       const code = input(data.code, 6, true);
       if (!/^\d{6}$/.test(code)) fail(400, 'invalid_code');
-      rate('verify:' + phone, 10, 300000);
-      const check = await sms('VerificationCheck', { To: phone, Code: code });
-      if (check.status !== 'approved') fail(400, 'invalid_code');
-      return completePhoneLogin(phone, data, req, res);
-    }
-    if (method === 'POST' && pathname === '/api/auth/firebase') {
-      if (!verifyIdentity) fail(404, 'not_found');
-      const data = await body(req);
-      const proof = input(data.idToken, 6000, true);
-      rate('firebase-verify:' + req.socket.remoteAddress, 300, 300000);
-      let claims;
-      try { claims = await verifyIdentity(proof); }
-      catch (error) {
-        if (error?.code === 'auth/internal-error' || error?.code === 'app/network-error') fail(503, 'sms_unavailable');
-        fail(400, 'invalid_code');
+      const challenge = input(data.challenge, 48, true);
+      const session = registration.reserve(phone, challenge);
+      let valid;
+      try {
+        if (session && verifyIdentity) {
+          const proof = await confirmFirebase(firebase, session, code, req.headers.origin);
+          valid = !!proof && verifiedPhone(await verifyIdentity(proof), firebase.projectId) === phone;
+        } else if (!session && sms) {
+          const check = await sms('VerificationCheck', { To: phone, Code: code });
+          valid = check.status === 'approved';
+        }
       }
-      const phone = verifiedPhone(claims, firebase.projectId);
-      if (!phone) fail(400, 'invalid_code');
+      catch (error) {
+        if (error instanceof HttpError && error.message === 'invalid_code') valid = false;
+        else {
+          registration.finish(phone, challenge, 'unavailable');
+          fail(503, 'sms_unavailable');
+        }
+      }
+      const { locked, accepted } = registration.finish(phone, challenge, valid ? 'accepted' : 'invalid');
+      if (!valid && locked) fail(429, 'verification_locked', { retryAt: locked, serverTime: verificationClock() });
+      if (!valid) fail(400, 'invalid_code');
+      if (!accepted) fail(400, 'verification_expired');
       return completePhoneLogin(phone, data, req, res);
     }
+    if (pathname === '/api/auth/firebase') fail(404, 'not_found');
     const token = tokenFrom(req);
     if (method === 'POST' && pathname === '/api/auth/logout') {
       if (token) run('DELETE FROM sessions WHERE token = ?', token);
@@ -321,6 +375,17 @@ export function makeApp({
     const user = token && get('SELECT u.* FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.token = ? AND s.expires > ?', token, Date.now());
     if (method === 'GET' && pathname === '/api/me') return send(res, 200, { user: user ? publicUser(user) : null });
     if (!user) fail(401, 'unauthorized');
+    if (method === 'POST' && pathname === '/api/registration') {
+      if (user.approval !== 'pending' || !user.needs_registration) fail(403, 'forbidden');
+      const packet = registrationPacket(await body(req, 2_820_000), fail);
+      return send(res, 200, transaction(() => {
+        const current = get('SELECT * FROM users WHERE id=?', user.id);
+        if (current.approval !== 'pending' || !current.needs_registration) fail(409, 'invalid_transition');
+        registration.saveEvidence(user.id, packet);
+        run('UPDATE users SET needs_registration=0 WHERE id=?', user.id);
+        return publicUser({ ...current, needs_registration: 0 });
+      }));
+    }
     if (user.approval !== 'approved') fail(403, 'approval_required');
     const actionBody = async limit => {
       const data = await body(req, limit);
@@ -470,6 +535,11 @@ export function makeApp({
       return send(res, 200, market.directory());
     }
     const userMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
+    const evidenceMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/registration$/);
+    if (evidenceMatch && method === 'GET') {
+      if (user.role !== 'admin') fail(403, 'forbidden');
+      return send(res, 200, registration.evidence(Number(evidenceMatch[1])));
+    }
     if (userMatch && method === 'GET') {
       if (user.role !== 'admin') fail(403, 'forbidden');
       return send(res, 200, ops.auditFor(Number(userMatch[1])));
@@ -487,6 +557,15 @@ export function makeApp({
             suspended: ['approved', 'blocked'], rejected: ['approved', 'blocked'], blocked: ['approved'],
           };
           if (!allowed[account.approval].includes(data.approval)) fail(409, 'invalid_transition');
+          if (data.approval === 'approved') {
+            if (account.needs_registration) fail(409, 'registration_review_required');
+            const evidence = get('SELECT reviewed FROM registration_evidence WHERE user_id=?', id);
+            if (evidence && !evidence.reviewed) {
+              if (data.registrationReviewed !== true) fail(409, 'registration_review_required');
+              run('UPDATE registration_evidence SET reviewed=1 WHERE user_id=?', id);
+              ops.audit(id, user.id, 'registration', null, 'reviewed');
+            }
+          }
           run('UPDATE users SET approval=? WHERE id=?', data.approval, id);
           if (data.approval === 'blocked') run('DELETE FROM sessions WHERE user_id=?', id);
           ops.audit(id, user.id, 'approval', account.approval, data.approval);
@@ -547,6 +626,7 @@ function createWebServer(firebase, api) {
   const production = process.env.NODE_ENV === 'production';
   return createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(self), microphone=()');
     if (production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     res.setHeader('Referrer-Policy', firebase ? 'strict-origin-when-cross-origin' : 'same-origin');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -568,7 +648,7 @@ function createWebServer(firebase, api) {
       serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
     } catch (error) {
       if (!(error instanceof HttpError)) console.error('[waslah] Request failed:', error);
-      if (!res.headersSent) send(res, error.status || 500, { error: error.status ? error.message : 'server_error' });
+      if (!res.headersSent) send(res, error.status || 500, { error: error.status ? error.message : 'server_error', ...error.details });
       else res.end();
     }
   });

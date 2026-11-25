@@ -5,7 +5,7 @@ import { makeApp } from '../server.mjs';
 
 const testPin = '637592';
 const adminPhone = '0550001017';
-async function start(t, { sms = true, marketClock } = {}) {
+async function start(t, { sms = true, marketClock, verificationClock } = {}) {
   const pending = new Set();
   const verifySms = sms ? async (operation, values) => {
     if (operation === 'Verifications') {
@@ -15,7 +15,7 @@ async function start(t, { sms = true, marketClock } = {}) {
     const approved = values.Code === testPin && pending.delete(values.To);
     return { status: approved ? 'approved' : 'pending' };
   } : undefined;
-  const server = makeApp({ database: ':memory:', adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, assistantKey: '' });
+  const server = makeApp({ database: ':memory:', adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, assistantKey: '' });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
@@ -46,6 +46,12 @@ test('serves the home page and frontend assets from the public folder', async t 
     assert.equal(asset.status, 200, file);
   }
   assert.equal((await fetch(base + '/..%2Fserver.mjs')).status, 404);
+  const manifest = await fetch(base + '/manifest.webmanifest');
+  assert.match(manifest.headers.get('content-type'), /^application\/manifest\+json/);
+  const metadata = await manifest.json();
+  assert.equal(metadata.display, 'standalone');
+  for (const icon of metadata.icons) assert.equal((await fetch(base + icon.src, { method: 'HEAD' })).status, 200);
+  assert.equal((await fetch(base + '/sw.js', { method: 'HEAD' })).status, 200);
 });
 
 test('serves the app shell for HTML navigation without masking missing APIs or assets', async t => {
@@ -76,14 +82,20 @@ test('serves the app shell for HTML navigation without masking missing APIs or a
 
 async function login(account, number, signup = {}) {
   const result = await account('/auth/send', 'POST', { phone: number });
-  assert.deepEqual(Object.keys(result), ['phone']);
-  return account('/auth/verify', 'POST', { phone: result.phone, code: testPin, ...signup });
+  assert.equal(result.expiresAt - result.serverTime, 120_000);
+  return account('/auth/verify', 'POST', { phone: result.phone, challenge: result.challenge, code: testPin, ...signup });
 }
 async function register(account, admin, number, name, role = 'customer', profile = {}) {
   const user = await login(account, number, { name, role });
-  await admin('/admin/users/' + user.id, 'PATCH', { approval: 'approved', ...profile });
+  await account('/registration', 'POST', evidence);
+  await admin('/admin/users/' + user.id, 'PATCH', { approval: 'approved', registrationReviewed: true, ...profile });
   return user;
 }
+const image = Buffer.from('ffd8ffdb0004ffd9', 'hex').toString('base64');
+const evidence = {
+  nationalId: '1000000008', address: '123 Main Street Riyadh 12345',
+  location: { latitude: 24.7, longitude: 46.68, accuracy: 19 }, selfie: image, identity: image,
+};
 const serviceFields = {
   name_ar: 'تمديد الزيارة العائلية', name_en: 'Family visit extension',
   description_ar: 'مراجعة طلب تمديد الزيارة العائلية', description_en: 'Review of a family visit extension request',
@@ -101,16 +113,22 @@ test('mobile signup, approval, scoped service delivery and bilingual assistant',
   const specialist = client(base);
   const outsider = client(base);
   await login(admin, adminPhone);
-  const otherId = (await register(outsider, admin, '0550001021', 'طلب آخر')).id;
-  const assigned = await register(specialist, admin, '0550001022', 'معقّب اختبار', 'agent', { city: 'riyadh', specialties: ['passports'] });
-  const { phone } = await customer('/auth/send', 'POST', { phone: '0550001023' });
-  await customer('/auth/verify', 'POST', { phone, name: 'عميل اختبار', role: 'customer', code: '000000' }, 400);
-  const registered = await customer('/auth/verify', 'POST', { phone, name: 'عميل اختبار', role: 'customer', code: testPin });
+  const otherId = (await register(outsider, admin, '0550001021', 'عمر علي الزهراني')).id;
+  const assigned = await register(specialist, admin, '0550001022', 'سالم سعد العتيبي', 'agent', { city: 'riyadh', specialties: ['passports'] });
+  const { phone, challenge } = await customer('/auth/send', 'POST', { phone: '0550001023' });
+  await customer('/auth/verify', 'POST', { phone, challenge, name: 'محمد سالم العتيبي', role: 'customer', code: '000000' }, 400);
+  const registered = await customer('/auth/verify', 'POST', { phone, challenge, name: 'محمد سالم العتيبي', role: 'customer', code: testPin });
   assert.equal(registered.approval, 'pending');
   assert.notEqual(registered.id, otherId);
   await customer('/requests', 'GET', undefined, 403);
   assert.ok((await admin('/admin/users')).some(user => user.id === registered.id && user.approval === 'pending'));
-  await admin('/admin/users/' + registered.id, 'PATCH', { approval: 'approved' });
+  await admin('/admin/users/' + registered.id, 'PATCH', { approval: 'approved' }, 409);
+  await customer('/registration', 'POST', { ...evidence, location: { ...evidence.location, accuracy: 100 } }, 400);
+  await customer('/registration', 'POST', evidence);
+  assert.deepEqual(await admin('/admin/users/' + registered.id + '/registration'), evidence);
+  await customer('/admin/users/' + registered.id + '/registration', 'GET', undefined, 403);
+  await admin('/admin/users/' + registered.id, 'PATCH', { approval: 'approved' }, 409);
+  await admin('/admin/users/' + registered.id, 'PATCH', { approval: 'approved', registrationReviewed: true });
   assert.equal((await customer('/me')).user.approval, 'approved');
 
   const { id: service } = await publish(admin);
@@ -160,10 +178,10 @@ async function marketClients(base) {
   const [customer, admin, riyadh, jeddah, chamber] = Array.from({ length: 5 }, () => client(base));
   await login(admin, adminPhone);
   const [, riyadhUser, jeddahUser, chamberUser] = await Promise.all([
-    register(customer, admin, '0550001030', 'Customer'),
-    register(riyadh, admin, '0550001031', 'Riyadh specialist', 'agent', { city: 'riyadh', specialties: ['passports', 'insurance'] }),
-    register(jeddah, admin, '0550001032', 'Jeddah specialist', 'agent', { city: 'jeddah', specialties: ['passports', 'translation'] }),
-    register(chamber, admin, '0550001033', 'Chamber specialist', 'agent', { city: 'riyadh', specialties: ['chamber'] }),
+    register(customer, admin, '0550001030', 'Omar Rami Salim'),
+    register(riyadh, admin, '0550001031', 'Khalid Amar Hassan', 'agent', { city: 'riyadh', specialties: ['passports', 'insurance'] }),
+    register(jeddah, admin, '0550001032', 'Jamal Ziad Nasser', 'agent', { city: 'jeddah', specialties: ['passports', 'translation'] }),
+    register(chamber, admin, '0550001033', 'Ramzi Adel Mansour', 'agent', { city: 'riyadh', specialties: ['chamber'] }),
   ]);
   return { customer, admin, riyadh, jeddah, chamber, riyadhUser, jeddahUser, chamberUser };
 }
@@ -300,8 +318,8 @@ test('published catalog, profile changes, conversational context and account blo
   await login(admin, adminPhone);
   assert.deepEqual(await admin('/admin/services'), []);
   assert.equal((await admin('/admin/users')).length, 1);
-  const account = await register(customer, admin, '0550001040', 'عميل');
-  await register(outsider, admin, '0550001041', 'عميل آخر');
+  const account = await register(customer, admin, '0550001040', 'حسن وليد الشمري');
+  await register(outsider, admin, '0550001041', 'ماجد عبدون الحربي');
   assert.deepEqual(await customer('/services'), []);
   await customer('/admin/services', 'POST', serviceFields, 403);
   const service = await publish(admin, { active: false });
@@ -349,6 +367,7 @@ test('Firebase phone sign-in trusts the verified phone and preserves approvals a
   };
   const server = makeApp({
     database: ':memory:', adminPhone: identities.admin, assistantKey: '', firebase,
+    confirmFirebase: async (_config, session, code) => code === testPin ? session : null,
     verifyFirebase: async proof => {
       const phone = identities[proof] ?? identities.customer;
       if (proof === 'invalid') throw new Error('Signature rejected');
@@ -369,20 +388,40 @@ test('Firebase phone sign-in trusts the verified phone and preserves approvals a
   const customer = client(base);
   assert.deepEqual((await customer('/config')).firebase, firebase);
   await customer('/auth/send', 'POST', { phone: identities.customer }, 503);
-  for (const proof of ['invalid', 'other-project', 'stale', 'email']) {
-    await customer('/auth/firebase', 'POST', { idToken: proof, name: 'Customer', role: 'customer' }, 400);
-  }
-  await customer('/auth/firebase', 'POST', { idToken: 'customer', phone: identities.admin, name: 'Customer', role: 'admin' }, 400);
-  const account = await customer('/auth/firebase', 'POST', {
-    idToken: 'customer', phone: identities.admin, name: 'Customer', role: 'customer',
+  await customer('/auth/firebase', 'POST', { idToken: 'customer' }, 404);
+  const first = await customer('/auth/challenge', 'POST', { phone: '+966550001097', session: 'other-project' });
+  await customer('/auth/verify', 'POST', { ...first, code: testPin }, 400);
+
+  const registration = await customer('/auth/challenge', 'POST', { phone: identities.customer, session: 'customer' });
+  const account = await customer('/auth/verify', 'POST', {
+    ...registration, name: 'Ali Faisal Khalid', role: 'customer', code: testPin,
   });
   assert.equal(account.phone, identities.customer);
   assert.equal(account.approval, 'pending');
   await customer('/requests', 'GET', undefined, 403);
-  assert.equal((await admin('/auth/firebase', 'POST', { idToken: 'admin' })).role, 'admin');
-  await admin('/admin/users/' + account.id, 'PATCH', { approval: 'approved' });
+  await customer('/registration', 'POST', evidence);
+  const adminChallenge = await admin('/auth/challenge', 'POST', { phone: identities.admin, session: 'admin' });
+  assert.equal((await admin('/auth/verify', 'POST', { ...adminChallenge, code: testPin })).role, 'admin');
+  await admin('/admin/users/' + account.id, 'PATCH', { approval: 'approved', registrationReviewed: true });
   assert.deepEqual(await customer('/requests'), []);
   await admin('/admin/users/' + account.id, 'PATCH', { approval: 'blocked' });
   assert.equal((await customer('/me')).user, null);
-  await customer('/auth/firebase', 'POST', { idToken: 'customer' }, 403);
+});
+
+test('verification expires after two minutes and locks the number on three wrong codes', async t => {
+  let now = Date.now();
+  const base = await start(t, { verificationClock: () => now });
+  const account = client(base);
+  const first = await account('/auth/send', 'POST', { phone: '0550001055' });
+  now += 120_000;
+  assert.equal((await account('/auth/verify', 'POST', { ...first, code: testPin }, 400)).error, 'verification_expired');
+  const second = await account('/auth/send', 'POST', { phone: '0550001056' });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await account('/auth/verify', 'POST', { ...second, code: '000000' }, 400);
+  }
+  const locked = await account('/auth/verify', 'POST', { ...second, code: '000000' }, 429);
+  assert.equal(locked.retryAt - locked.serverTime, 31 * 60_000);
+  await account('/auth/check', 'POST', { phone: second.phone }, 429);
+  now = locked.retryAt;
+  assert.deepEqual(await account('/auth/check', 'POST', { phone: second.phone }), { ok: true });
 });

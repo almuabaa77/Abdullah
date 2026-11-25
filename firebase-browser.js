@@ -1,5 +1,5 @@
 import { getApp, getApps, initializeApp } from '@firebase/app';
-import { getAuth, initializeAuth, inMemoryPersistence, RecaptchaVerifier, signInWithPhoneNumber, signOut } from '@firebase/auth';
+import { getAuth, initializeAuth, inMemoryPersistence, RecaptchaVerifier, signInWithPhoneNumber } from '@firebase/auth';
 
 export async function requestFirebaseCode(config, phone, lang, container, { visible = false } = {}) {
   const name = 'waslah-phone';
@@ -13,14 +13,7 @@ export async function requestFirebaseCode(config, phone, lang, container, { visi
   try {
     verifier = new RecaptchaVerifier(auth, widget, { size: visible ? 'compact' : 'invisible' });
     const confirmation = await signInWithPhoneNumber(auth, phone, verifier);
-    return async code => {
-      const result = await confirmation.confirm(code);
-      try {
-        return await result.user.getIdToken();
-      } finally {
-        await signOut(auth).catch(() => {});
-      }
-    };
+    return confirmation.verificationId;
   } finally {
     try {
       verifier?.clear();

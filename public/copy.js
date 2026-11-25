@@ -204,3 +204,31 @@ copy.firebaseBilling = ['تحقّق من تفعيل خطة Blaze والفوتر�
 copy.firebaseRegion = ['اسمح بالدولة المطلوبة في سياسة مناطق الرسائل SMS region policy في Firebase Authentication.', 'Allow the destination country in the Firebase Authentication SMS region policy.'];
 copy.firebaseApp = ['راجع مفتاح تطبيق الويب ونطاقه في إعدادات مشروع Firebase.', 'Check the web app key and domain in Firebase project settings.'];
 copy.firebaseNetwork = ['تعذّر الاتصال بخدمة Firebase. تحقّق من اتصال المتصفح بالإنترنت وأعد المحاولة.', 'The browser could not reach Firebase. Check your internet connection and retry.'];
+
+Object.assign(copy, {
+  verificationCountdown: ['صلاحية الرمز', 'Code expires in'],
+  verification_expired: ['انتهت صلاحية الرمز. اطلب رمزًا جديدًا.', 'This code expired. Request a new one.'],
+  verification_locked: ['تم إيقاف المحاولات لهذا الرقم مؤقتًا. حاول بعد', 'Attempts for this phone are temporarily locked. Try again in'],
+  verification_busy: ['يجري التحقق من محاولة أخرى. انتظر قليلًا.', 'Another verification attempt is in progress.'],
+  registrationName: ['الاسم الثلاثي', 'Three-part name'],
+  invalid_registration_name: ['اكتب الاسم في ثلاث كلمات بحروف عربية أو لاتينية فقط.', 'Enter exactly three name words using Arabic or Latin letters.'],
+  registrationEvidence: ['الهوية والعنوان', 'Identity and address'],
+  registrationPrivacy: ['تراجع الإدارة رقم الهوية والصور والعنوان قبل تفعيل حسابك.', 'An administrator reviews your ID number, photos, and address before activation.'],
+  nationalId: ['رقم الهوية الوطنية أو الإقامة', 'Saudi national ID or residency number'],
+  registrationAddress: ['العنوان بالتفصيل', 'Full address'],
+  captureLocation: ['تحديد موقعي الآن', 'Use my precise location'],
+  locationAccuracy: ['دقة الموقع الملتقط', 'Captured location accuracy'],
+  invalid_location: ['اكتب عنوانك وحدّد موقعك بدقة 50 مترًا أو أفضل.', 'Enter your address and capture a location accurate to 50 metres or better.'],
+  location_permission: ['اسمح بالوصول للموقع، وفعّل الموقع الدقيق على جهازك.', 'Allow location access and enable precise location on your device.'],
+  selfie: ['صورة سلفي بالكاميرا الأمامية', 'Front-camera selfie'],
+  identityPhoto: ['صورة الهوية', 'ID photo'],
+  capturePhoto: ['التقاط الصورة', 'Take photo'],
+  registration_camera_unavailable: ['تعذّر فتح الكاميرا المطلوبة. تحقّق من الإذن وتوفّر الكاميرا على جهازك.', 'The requested camera could not open. Check camera permission and availability.'],
+  registration_photo_required: ['التقط صورة السلفي وصورة الهوية من هذه الصفحة.', 'Capture the selfie and ID photo on this page.'],
+  invalid_national_id: ['أدخل رقم هوية سعودية أو إقامة صحيحًا من 10 أرقام.', 'Enter a valid 10-digit Saudi ID or residency number.'],
+  submitRegistration: ['إرسال للمراجعة', 'Submit for review'],
+  registration_review_required: ['يمكن قبول الحساب بعد رفع المستندات ومراجعتها من نافذة إدارة المستخدم.', 'Approve from Manage user after the registration documents are submitted and reviewed.'],
+  registrationReviewed: ['راجعت الهوية والصورتين والعنوان المسجّل', 'I reviewed the ID, both photos, and the recorded address'],
+  installApp: ['تثبيت وصلة', 'Install Waslah'],
+  installHelp: ['على iPhone افتح وصلة في Safari، ثم اختر مشاركة وإضافة إلى الشاشة الرئيسية. في Chrome أو Edge استخدم تثبيت التطبيق من قائمة المتصفح.', 'On iPhone, open Waslah in Safari, choose Share, then Add to Home Screen. In Chrome or Edge, choose Install app from the browser menu.'],
+});

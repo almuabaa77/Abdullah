@@ -33,3 +33,19 @@ export function verifiedPhone(claims, projectId, time = Date.now()) {
       || typeof claims.phone_number !== 'string' || !/^\+[1-9]\d{7,14}$/.test(claims.phone_number)) return null;
   return claims.phone_number;
 }
+
+export async function exchangeFirebaseCode(config, sessionInfo, code, origin) {
+  const endpoint = new URL('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber');
+  endpoint.searchParams.set('key', config.apiKey);
+  const headers = { 'Content-Type': 'application/json' };
+  if (/^https:\/\/[a-z\d.-]+(?::\d+)?$/i.test(origin || '')) headers.Referer = origin + '/';
+  const response = await fetch(endpoint, {
+    method: 'POST', headers, body: JSON.stringify({ sessionInfo, code }),
+    redirect: 'error', signal: AbortSignal.timeout(10_000),
+  });
+  const result = await response.json();
+  if (response.ok && typeof result.idToken === 'string') return result.idToken;
+  const message = result.error?.message?.split(' : ')[0];
+  if (['INVALID_CODE', 'INVALID_SESSION_INFO', 'SESSION_EXPIRED', 'CODE_EXPIRED'].includes(message)) return null;
+  throw new Error('Firebase phone code exchange failed.');
+}
