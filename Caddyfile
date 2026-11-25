@@ -1,0 +1,3 @@
+{$WASLAH_DOMAIN} {
+	reverse_proxy waslah:3000
+}

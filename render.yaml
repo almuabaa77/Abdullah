@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: waslah
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    branch: waslah-firebase-delivery
+    autoDeployTrigger: "off"
+    healthCheckPath: /api/health
+    disk:
+      name: waslah-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_PROVIDER
+        value: firebase
+      - key: DATABASE_PATH
+        value: /data/waslah.sqlite
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FIREBASE_WEB_CONFIG
+        sync: false
+      - key: ADMIN_PHONE
+        sync: false
