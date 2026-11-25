@@ -1,0 +1,8 @@
+{
+  "project_id": "appgprj_6b069d4d69348191b2d40f99791ba72c",
+  "d1": {
+    "binding": "DB",
+    "migrations_dir": "db/migrations"
+  },
+  "r2": null
+}
