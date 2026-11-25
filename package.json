@@ -3,17 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "server.mjs",
+  "main": "start.cjs",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.mjs",
-    "dev": "node --env-file-if-exists=.env --watch server.mjs",
+    "start": "node start.cjs",
+    "dev": "node --watch start.cjs",
     "test": "node --test tests/*.test.mjs",
     "build": "npm run build:firebase",
     "build:firebase": "esbuild firebase-browser.js --bundle --format=esm --platform=browser --minify --outfile=public/assets/firebase-auth.js",
-    "prestart": "npm run build:firebase",
     "predev": "npm run build:firebase",
     "check:firebase": "node check-firebase.mjs",
     "backup": "node --env-file-if-exists=.env backup.mjs"

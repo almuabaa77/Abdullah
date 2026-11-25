@@ -14,22 +14,9 @@ import { createMarketplace, isActive, migrateMarketplace } from './marketplace.m
 
 const root = dirname(fileURLToPath(import.meta.url));
 const publicDirectory = resolve(root, 'public');
-const runningDirectly = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
-if (runningDirectly) {
-  try {
-    loadEnvFile(resolve(root, '.env'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-}
-const production = process.env.NODE_ENV === 'production';
-const secret = process.env.SESSION_SECRET || randomBytes(32).toString('hex');
 const sessionAge = 7 * 24 * 60 * 60;
-const cookieName = process.env.FIREBASE_HOSTING === '1' ? '__session' : 'waslah_session';
-const dbPath = process.env.DATABASE_PATH || resolve(root, production ? 'data/production.sqlite' : 'data/waslah.sqlite');
-const twilio = Boolean(process.env.TWILIO_VERIFY_SERVICE_SID && (
-  process.env.TWILIO_VERIFY_AUTHORIZATION || (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
-));
+
+class StartupConfigurationError extends Error {}
 
 class HttpError extends Error {
   constructor(status, code) {
@@ -38,7 +25,6 @@ class HttpError extends Error {
   }
 }
 const fail = (status, code) => { throw new HttpError(status, code); };
-const digest = value => createHmac('sha256', secret).update(value).digest('hex');
 const publicUser = ({ id, phone, name, role, approval, city, created }) => ({ id, phone, name, role, approval, city, created });
 const mime = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -138,21 +124,50 @@ function openDatabase(path) {
 }
 
 export function makeApp({
-  database = dbPath, marketClock = Date.now, verifySms,
+  database, marketClock = Date.now, verifySms,
   adminPhone = process.env.ADMIN_PHONE, assistantKey = process.env.OPENAI_API_KEY,
-  firebase = process.env.AUTH_PROVIDER === 'twilio' ? null : readFirebaseConfig(process.env.FIREBASE_WEB_CONFIG),
+  firebase,
   verifyFirebase,
 } = {}) {
-  if (process.env.AUTH_PROVIDER && !['firebase', 'twilio'].includes(process.env.AUTH_PROVIDER)) {
-    throw new Error('AUTH_PROVIDER must be firebase or twilio.');
+  const production = process.env.NODE_ENV === 'production';
+  const provider = process.env.AUTH_PROVIDER;
+  if (provider && !['firebase', 'twilio'].includes(provider)) {
+    throw new StartupConfigurationError('AUTH_PROVIDER must be firebase or twilio.');
   }
-  if (process.env.AUTH_PROVIDER === 'firebase' && !firebase) throw new Error('Firebase sign-in requires FIREBASE_WEB_CONFIG.');
-  const verifyIdentity = firebase ? (verifyFirebase ?? verifierFor(firebase.projectId)) : null;
+  if (firebase === undefined) {
+    try {
+      firebase = provider === 'twilio' ? null : readFirebaseConfig(process.env.FIREBASE_WEB_CONFIG);
+    } catch (error) {
+      throw new StartupConfigurationError(error.message, { cause: error });
+    }
+  }
+  const twilio = Boolean(process.env.TWILIO_VERIFY_SERVICE_SID && (
+    process.env.TWILIO_VERIFY_AUTHORIZATION || (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ));
   const sms = firebase ? null : (verifySms ?? (twilio ? verifyService : null));
-  if (production && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32 || !(verifyIdentity || sms) || !adminPhone)) {
-    throw new Error('Production requires SESSION_SECRET (32+ characters), ADMIN_PHONE, and Firebase Phone Auth or Twilio Verify configuration.');
+  const secret = process.env.SESSION_SECRET;
+  const missing = [];
+  if (provider === 'firebase' && !firebase) missing.push('FIREBASE_WEB_CONFIG');
+  else if (production && !firebase && !sms) missing.push('FIREBASE_WEB_CONFIG or Twilio Verify settings');
+  if (production && (!secret || secret.length < 32)) missing.push('SESSION_SECRET (32+ characters)');
+  if (production && !adminPhone) missing.push('ADMIN_PHONE');
+  if (missing.length) throw new StartupConfigurationError(`Set ${missing.join(', ')}.`);
+
+  const phone = normalizePhone(adminPhone);
+  if (adminPhone && !phone) throw new StartupConfigurationError('ADMIN_PHONE must contain a valid phone number.');
+  let verifyIdentity = null;
+  if (firebase) {
+    try {
+      verifyIdentity = verifyFirebase ?? verifierFor(firebase.projectId);
+    } catch (error) {
+      throw new StartupConfigurationError(error.message, { cause: error });
+    }
   }
-  const db = openDatabase(database);
+  const sessionSecret = secret || randomBytes(32).toString('hex');
+  const digest = value => createHmac('sha256', sessionSecret).update(value).digest('hex');
+  const cookieName = process.env.FIREBASE_HOSTING === '1' ? '__session' : 'waslah_session';
+  const dbPath = database ?? (process.env.DATABASE_PATH || resolve(root, production ? 'data/production.sqlite' : 'data/waslah.sqlite'));
+  const db = openDatabase(dbPath);
   const get = (sql, ...args) => db.prepare(sql).get(...args);
   const all = (sql, ...args) => db.prepare(sql).all(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
@@ -175,10 +190,12 @@ export function makeApp({
   };
   const market = createMarketplace({ get, all, run, transaction, notice, fail, input, clock: marketClock });
   const ops = createOperations({ get, all, run, input, fail, stamp: now });
-  if (adminPhone) {
-    const phone = phoneNumber(adminPhone);
+  if (phone) {
     createUser(phone, process.env.ADMIN_NAME || 'إدارة وصلة', 'admin', 'approved');
-    if (byPhone(phone).role !== 'admin') throw new Error('ADMIN_PHONE already belongs to a non-admin account.');
+    if (byPhone(phone).role !== 'admin') {
+      db.close();
+      throw new StartupConfigurationError('ADMIN_PHONE already belongs to a non-admin account.');
+    }
   }
   const limits = new Map();
   const cleanup = setInterval(() => {
@@ -521,7 +538,14 @@ export function makeApp({
     fail(404, 'not_found');
   }
 
-  const server = createServer(async (req, res) => {
+  const server = createWebServer(firebase, api);
+  server.on('close', () => { clearInterval(cleanup); db.close(); });
+  return server;
+}
+
+function createWebServer(firebase, api) {
+  const production = process.env.NODE_ENV === 'production';
+  return createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     res.setHeader('Referrer-Policy', firebase ? 'strict-origin-when-cross-origin' : 'same-origin');
@@ -543,13 +567,11 @@ export function makeApp({
       if (!['GET', 'HEAD'].includes(req.method)) fail(405, 'invalid_input');
       serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
     } catch (error) {
-      if (!(error instanceof HttpError)) console.error(error);
+      if (!(error instanceof HttpError)) console.error('[waslah] Request failed:', error);
       if (!res.headersSent) send(res, error.status || 500, { error: error.status ? error.message : 'server_error' });
       else res.end();
     }
   });
-  server.on('close', () => { clearInterval(cleanup); db.close(); });
-  return server;
 }
 
 function serveStatic(req, res, path) {
@@ -582,7 +604,54 @@ function serveStatic(req, res, path) {
   createReadStream(filename).pipe(res);
 }
 
-if (runningDirectly) {
-  const port = Number(process.env.PORT || 3000);
-  makeApp().listen(port, '0.0.0.0', () => console.log(`Waslah is listening on port ${port}`));
+export function startServer() {
+  try {
+    loadEnvFile(resolve(root, '.env'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  const configuredPort = process.env.PORT || '3000';
+  const port = Number(configuredPort);
+  if (!/^\d+$/.test(configuredPort) || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
+  if (!statSync(resolve(publicDirectory, 'index.html'), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error('Missing public/index.html. Deploy the complete source archive.');
+  }
+  if (!statSync(resolve(publicDirectory, 'assets/firebase-auth.js'), { throwIfNoEntry: false })?.isFile()) {
+    console.warn('[waslah] Missing public/assets/firebase-auth.js. Run npm run build:firebase before using Firebase sign-in.');
+  }
+
+  let server;
+  try {
+    server = makeApp();
+  } catch (error) {
+    if (!(error instanceof StartupConfigurationError)) throw error;
+    console.error(`[waslah] Serving public pages only. ${error.message}`);
+    server = createWebServer(null, (req, res, url) => {
+      if (req.method === 'GET' && url.pathname === '/api/config') {
+        return send(res, 200, { sms: false, firebase: null, ai: false, market: false });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/me') return send(res, 200, { user: null });
+      if (req.method === 'GET' && url.pathname === '/api/health') {
+        return send(res, 503, { ok: false, error: 'configuration_required' });
+      }
+      fail(503, 'configuration_required');
+    });
+  }
+  server.on('error', error => {
+    console.error('[waslah] HTTP server error:', error);
+    process.exitCode = 1;
+  });
+  return server.listen(port, '0.0.0.0', () => {
+    console.log(`[waslah] Listening on 0.0.0.0:${server.address()?.port ?? port}`);
+  });
+}
+
+if (import.meta.main ?? (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)) {
+  try {
+    startServer();
+  } catch (error) {
+    console.error('[waslah] Startup failed:', error);
+    process.exitCode = 1;
+  }
 }

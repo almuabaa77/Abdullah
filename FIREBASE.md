@@ -27,7 +27,7 @@ SESSION_SECRET=YOUR_RANDOM_SESSION_KEY
 node setup-firebase.mjs PROJECT_ID PROJECT_ID.firebaseapp.com WEB_APP_ID WEB_API_KEY
 ```
 
-شغّل `npm start` لتحميل الإعدادات. إذا كان ملف `.env` موجودًا، أدخل القيم اللازمة يدويًا فيه مع الاحتفاظ بمفتاح الجلسات الحالي. للمستخدمين الذين أضافوا ملف الإعداد إلى نسخة أقدم، يمكن تشغيل `node --env-file=.env server.mjs` بعد بناء الواجهة عبر `npm run build:firebase`.
+ابنِ ملفات الواجهة باستخدام `npm run build:firebase`، ثم شغّل `npm start` لتحميل الإعدادات. إذا كان ملف `.env` موجودًا، أدخل القيم اللازمة يدويًا فيه مع الاحتفاظ بمفتاح الجلسات الحالي.
 
 ظهور شاشة الدخول محليًا يتحقق من تحميل إعدادات وصلة. لاختبار وصول رمز حقيقي، افتح واجهة وصلة من نطاق HTTPS مضاف إلى **Authorized domains** واختر رقمًا حقيقيًا تسمح به سياسة مناطق الرسائل في Firebase.
 
