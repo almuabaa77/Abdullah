@@ -268,14 +268,15 @@ Object.assign(copy, {
   invitationExpires: ['صالح حتى', 'Valid until'],
   copyInvitation: ['نسخ رمز التفعيل', 'Copy activation code'],
   renewInvitation: ['إصدار رمز تفعيل جديد', 'Reissue activation code'],
-  invitationTitle: ['تفعيل حساب أنشأته الإدارة', 'Activate your administrator-created account'],
+  invitationTitle: ['الدخول برمز الإدارة', 'Sign in with an administrator code'],
   invitationUse: ['أدخل رمز التفعيل الذي حصلت عليه من الإدارة للرقم', 'Enter the activation code the administrator gave you for'],
   phoneContinue: ['متابعة برقم الجوال', 'Continue with mobile number'],
-  invitation_required: ['هذا الحساب يستخدم رمز الإدارة عند التفعيل. أدخل رقم الجوال مجددًا لفتح شاشة الرمز.', 'This account uses an administrator code for activation. Enter the phone number again to open the code screen.'],
+  invitation_required: ['هذا الحساب يستخدم رمز الإدارة. أدخل رقم الجوال مجددًا لفتح شاشة الرمز.', 'This account uses an administrator code. Enter the phone number again to open the code screen.'],
   reviewInviteConfirmed: ['تفعيل الحساب برمز الإدارة', 'Account activated with administrator code'],
   invitationCode: ['رمز التفعيل', 'Activation code'],
   invalid_invitation: ['رمز التفعيل غير صحيح. تحقّق من الأرقام وحاول مرة أخرى.', 'The activation code is incorrect. Check the digits and try again.'],
   invitation_expired: ['انتهت صلاحية الرمز أو تجاوزت عدد المحاولات. اطلب رمزًا جديدًا من الإدارة.', 'The code expired or has no attempts left. Ask the administrator for a new code.'],
+  invitation_used: ['استُخدم هذا الرمز. اطلب من الإدارة إصدار رمز جديد للدخول.', 'The code was already used. Ask the administrator to issue a new sign-in code.'],
   invitation_unavailable: ['تحقّق من حالة رمز التفعيل مع الإدارة قبل المتابعة.', 'Check the activation code status with the administrator before continuing.'],
   phone_in_use: ['يوجد حساب مرتبط برقم الجوال هذا بالفعل.', 'This mobile number is already linked to an account.'],
   trackingReference: ['رقم متابعة التسجيل', 'Registration reference'],
@@ -305,4 +306,13 @@ Object.assign(copy, {
   accountDeletedSyncQueued: ['حُذف الحساب من وصلة وأُضيف حذفه من Firestore إلى قائمة المزامنة.', 'The Waslah account was deleted and Firestore deletion was queued.'],
   accountDeletedLocal: ['حُذف الحساب من وصلة. مزامنة Firestore غير مفعّلة.', 'The Waslah account was deleted. Firestore sync is disabled.'],
   account_removal_pending: ['يجري إنهاء حذف هذا الرقم من Firebase. حاول مجددًا بعد اكتمال المزامنة.', 'Deletion for this number is pending in Firebase. Try again after sync completes.'],
+});
+
+Object.assign(copy, {
+  address_lookup_disabled: ['تم التقاط الموقع. تعبئة الشارع والعنوان تلقائيًا تحتاج تفعيل خدمة الخرائط لدى الإدارة. يمكنك كتابة العنوان هنا.', 'Location captured. Automatic street and address lookup requires maps to be configured. You can enter your address here.'],
+  landmark_lookup_unavailable: ['تعذّر جلب أقرب معلم الآن. يمكنك فتح الموقع على الخريطة.', 'A nearby landmark could not be retrieved. You can open the location on the map.'],
+  locationCoordinates: ['إحداثيات الموقع', 'Location coordinates'],
+  nearestCatalogCity: ['أقرب مدينة في دليل وصلة والمسافة إلى مركزها', 'Closest Waslah city and distance to its center'],
+  addressNeighborhood: ['الحي', 'Neighborhood'],
+  openLocationMap: ['فتح الموقع على الخريطة', 'Open location on the map'],
 });

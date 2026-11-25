@@ -103,7 +103,7 @@ export function createAccountSync({ get, run, transaction, store, interval }) {
           } else {
             const user = get('SELECT * FROM users WHERE phone=?', job.phone);
             if (user) {
-              const invite = get('SELECT digest,expires,used FROM registration_invites WHERE user_id=?', user.id);
+              const invite = get('SELECT digest,expires,used,activated FROM registration_invites WHERE user_id=?', user.id);
               await store.upsert(job.phone, {
                 accountId: user.id, phone: user.phone, name: user.name, role: user.role,
                 approval: user.approval, city: user.city || null, createdAt: user.created,
@@ -111,6 +111,7 @@ export function createAccountSync({ get, run, transaction, store, interval }) {
                 invitation: invite ? {
                   codeHash: invite.digest ? Buffer.from(invite.digest).toString('hex') : null,
                   expiresAt: new Date(invite.expires), usedAt: invite.used ? new Date(invite.used) : null,
+                  activatedAt: invite.activated ? new Date(invite.activated) : null,
                 } : null,
               });
             }

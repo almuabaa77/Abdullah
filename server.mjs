@@ -151,6 +151,15 @@ function openDatabase(path) {
       db.exec('ALTER TABLE users ADD COLUMN needs_registration INTEGER NOT NULL DEFAULT 0');
     }
     if (!userColumns.has('firebase_uid')) db.exec('ALTER TABLE users ADD COLUMN firebase_uid TEXT');
+    const inviteColumns = new Set(db.prepare('PRAGMA table_info(registration_invites)').all().map(column => column.name));
+    if (!inviteColumns.has('activated')) {
+      db.exec('ALTER TABLE registration_invites ADD COLUMN activated INTEGER');
+      db.exec('UPDATE registration_invites SET activated=used WHERE used IS NOT NULL');
+    }
+    if (!inviteColumns.has('last_digest')) {
+      db.exec('ALTER TABLE registration_invites ADD COLUMN last_digest BLOB');
+      db.exec('UPDATE registration_invites SET last_digest=digest');
+    }
     if (!db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'account_expires')) {
       db.exec('ALTER TABLE sessions ADD COLUMN account_expires INTEGER');
     }
@@ -349,7 +358,7 @@ export function makeApp({
   }
 
   function requireSmsAccess(phone) {
-    if (registration.activeInvitationAccount(phone)) fail(409, 'invitation_required');
+    if (registration.adminCodeAccount(phone)) fail(409, 'invitation_required');
   }
 
   function invitationCode(value) {
@@ -365,13 +374,16 @@ export function makeApp({
       get('SELECT id FROM users LIMIT 1');
       return send(res, 200, { ok: true });
     }
-    if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), invitationSignIn: true, firebase, ai: !!assistantKey, market: true, addressLookup: !!geocodingKey });
+    if (method === 'GET' && pathname === '/api/config') return send(res, 200, {
+      sms: !!(sms || verifyIdentity), invitationSignIn: true, firebase, ai: !!assistantKey, market: true,
+      addressLookup: !!geocodingKey, landmarkLookup: !!placesKey,
+    });
     if (pathname === '/api/demo') fail(404, 'not_found');
     if (method === 'POST' && pathname === '/api/auth/check') {
       rate('auth-lookup:' + req.socket.remoteAddress, 180, 60_000);
       const phone = phoneNumber((await body(req)).phone);
       checkPendingRemoval(phone);
-      if (registration.activeInvitationAccount(phone)) return send(res, 200, { method: 'invitation' });
+      if (registration.adminCodeAccount(phone)) return send(res, 200, { method: 'invitation' });
       registration.check(phone);
       return send(res, 200, { method: 'sms' });
     }
@@ -380,7 +392,7 @@ export function makeApp({
       const data = await body(req);
       const phone = phoneNumber(data.phone);
       const code = invitationCode(data.code);
-      const account = registration.activeInvitationAccount(phone);
+      const account = registration.adminCodeAccount(phone);
       if (!account) fail(400, 'invalid_invitation');
       const session = registration.redeemInvitation(account.id, code, () => {
         const token = tokenFrom(req);
@@ -460,6 +472,7 @@ export function makeApp({
     if (!user) fail(401, 'unauthorized');
     if (reviewOnly) fail(403, 'review_session_only');
     if (method === 'POST' && pathname === '/api/registration/invitation') {
+      if (!registration.invitationPending(user.id)) fail(400, 'invitation_unavailable');
       const code = invitationCode((await body(req)).code);
       registration.redeemInvitation(user.id, code);
       return send(res, 200, registrationUser(user));
@@ -467,7 +480,7 @@ export function makeApp({
     if (method === 'POST' && pathname === '/api/registration/address') {
       if (user.approval !== 'pending' || !user.needs_registration) fail(403, 'forbidden');
       if (registration.invitationPending(user.id)) fail(403, 'invitation_unavailable');
-      if (!geocodingKey) fail(503, 'address_lookup_unavailable');
+      if (!geocodingKey && !placesKey) fail(503, 'address_lookup_unavailable');
       const { location, lang } = await body(req);
       if (!preciseLocation(location)) fail(400, 'invalid_location');
       rate('registration-address:' + user.id, 12, 3_600_000);
@@ -641,11 +654,11 @@ export function makeApp({
     }
     if (method === 'GET' && pathname === '/api/admin/users') {
       if (user.role !== 'admin') fail(403, 'forbidden');
-      const pendingInvites = new Set(all('SELECT user_id FROM registration_invites WHERE used IS NULL').map(row => row.user_id));
+      const invitations = new Set(all('SELECT user_id FROM registration_invites').map(row => row.user_id));
       const references = new Map(all('SELECT user_id,reference FROM registration_tracking').map(row => [row.user_id, row.reference]));
       const queued = new Map(all('SELECT phone,failures FROM account_sync').map(row => [row.phone, row.failures]));
       return send(res, 200, market.directory().map(account => ({
-        ...account, invitationPending: pendingInvites.has(account.id), trackingReference: references.get(account.id) || null,
+        ...account, adminCodeAccount: invitations.has(account.id), trackingReference: references.get(account.id) || null,
         firebaseSync: !cloudAccounts ? 'disabled' : queued.has(account.phone) ? (queued.get(account.phone) ? 'retrying' : 'queued') : 'synced',
       })));
     }
@@ -672,8 +685,9 @@ export function makeApp({
       await actionBody();
       const id = Number(inviteMatch[1]);
       const reissued = transaction(() => {
-        const account = get("SELECT * FROM users WHERE id=? AND role<>'admin' AND approval='pending'", id);
-        if (!account || !registration.invitationPending(id)) fail(409, 'invitation_unavailable');
+        const account = get('SELECT * FROM users WHERE id=?', id);
+        const adminCodeAccount = account && registration.adminCodeAccount(account.phone);
+        if (!adminCodeAccount || !['pending', 'approved'].includes(account.approval)) fail(409, 'invitation_unavailable');
         ops.audit(id, user.id, 'invitation', 'issued', 'reissued');
         return { user: registrationUser(account), ...registration.issueInvitation(id) };
       });

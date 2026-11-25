@@ -2,7 +2,7 @@ import { categories, legacyServiceNames, statuses, roles } from './catalog.js';
 import { copy } from './copy.js';
 import { normalizePhone } from './phone.js';
 import { registrationName } from './registration-name.js';
-import { preciseLocation, validNationalId } from './registration-fields.js';
+import { nearestRegistrationCity, preciseLocation, validNationalId } from './registration-fields.js';
 import { activeLimit, cities, specialties, suggestedSpecialty } from './market.js';
 
 const app = document.querySelector('#app');
@@ -401,7 +401,7 @@ async function manageUser(id) {
       ${account.approval !== 'approved' ? `<label class="review-check"><input type="checkbox" name="registrationReviewed">${t('registrationReviewed')}</label>` : ''}
     </fieldset>` : ''}
     <p class="muted fine-print">${t('blockHint')}</p>${agentFields}
-    ${account.invitationPending && account.approval === 'pending' ? `<button type="button" class="button secondary" data-action="admin-renew-invite" data-id="${account.id}">${t('renewInvitation')}</button>` : ''}
+    ${account.adminCodeAccount && ['pending', 'approved'].includes(account.approval) ? `<button type="button" class="button secondary" data-action="admin-renew-invite" data-id="${account.id}">${t('renewInvitation')}</button>` : ''}
     <div class="auth-links"><button class="button primary">${t('save')}</button>
     <button class="button secondary" type="button" data-action="admin-delete-user" data-id="${id}">${icon('trash-2')}${t('deleteAccount')}</button></div></form>
     <section class="timeline-section"><h3>${t('audit')}</h3>
@@ -600,20 +600,27 @@ function stopRegistrationCamera() {
 }
 function registrationForm() {
   const { location, addressStatus, addressDetails } = registrationDraft;
+  const nearby = location && !addressDetails?.city ? nearestRegistrationCity(location) : null;
+  const mapEnabled = state.config.addressLookup || state.config.landmarkLookup;
+  const coordinates = location ? `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}` : '';
   return authFrame(`<h1>${t('registrationEvidence')}</h1><p>${t('registrationPrivacy')}</p>
     <form class="form-stack" data-form="registration" novalidate>
       <label>${t('nationalId')}<input name="nationalId" inputmode="numeric" dir="ltr" minlength="10" maxlength="10" value="${escape(registrationDraft.nationalId)}" required></label>
       <label>${t('registrationAddress')}<textarea name="address" minlength="10" maxlength="240" required>${escape(registrationDraft.address)}</textarea></label>
-      <button type="button" class="button secondary" data-action="registration-location">${icon('map-pin')}${t(state.config.addressLookup ? 'captureLocationAndAddress' : 'captureLocation')}</button>
-      ${state.config.addressLookup ? `<p class="muted fine-print">${t('addressLookupPrivacy')}</p>` : ''}
-      ${location ? `<p class="muted" role="status">${t('locationAccuracy')} <bdi>±${Math.round(location.accuracy)} m</bdi></p>` : ''}
+      <button type="button" class="button secondary" data-action="registration-location">${icon('map-pin')}${t(mapEnabled ? 'captureLocationAndAddress' : 'captureLocation')}</button>
+      ${mapEnabled ? `<p class="muted fine-print">${t('addressLookupPrivacy')}</p>` : ''}
       ${addressStatus ? `<p class="muted" role="status">${t(addressStatus)}</p>` : ''}
-      ${addressDetails ? `<dl class="tracking-details address-details">
-        ${addressDetails.city ? `<div><dt>${t('city')}</dt><dd>${escape(addressDetails.city)}</dd></div>` : ''}
-        ${addressDetails.street ? `<div><dt>${t('addressStreet')}</dt><dd>${escape(addressDetails.street)}</dd></div>` : ''}
-        ${addressDetails.distance != null ? `<div><dt>${t('addressDistance')}</dt><dd>${digit(addressDetails.distance)} ${t('meters')}</dd></div>` : ''}
-        ${addressDetails.landmark ? `<div><dt>${t('nearestLandmark')}</dt><dd>${escape(addressDetails.landmark.name)} · ${digit(addressDetails.landmark.distance)} ${t('meters')}</dd></div>` : ''}
-      </dl>` : ''}
+      ${location ? `<dl class="tracking-details address-details">
+        <div><dt>${t('locationAccuracy')}</dt><dd><bdi>±${Math.round(location.accuracy)} m</bdi></dd></div>
+        <div><dt>${t('locationCoordinates')}</dt><dd><bdi>${coordinates}</bdi></dd></div>
+        ${addressDetails?.city ? `<div><dt>${t('city')}</dt><dd>${escape(addressDetails.city)}</dd></div>` : ''}
+        ${nearby ? `<div><dt>${t('nearestCatalogCity')}</dt><dd>${local(cities[nearby.key].name)} · ${digit(nearby.distance)} ${t('meters')}</dd></div>` : ''}
+        ${addressDetails?.neighborhood ? `<div><dt>${t('addressNeighborhood')}</dt><dd>${escape(addressDetails.neighborhood)}</dd></div>` : ''}
+        ${addressDetails?.street ? `<div><dt>${t('addressStreet')}</dt><dd>${escape(addressDetails.street)}</dd></div>` : ''}
+        ${addressDetails?.distance != null ? `<div><dt>${t('addressDistance')}</dt><dd>${digit(addressDetails.distance)} ${t('meters')}</dd></div>` : ''}
+        ${addressDetails?.landmark ? `<div><dt>${t('nearestLandmark')}</dt><dd>${escape(addressDetails.landmark.name)} · ${digit(addressDetails.landmark.distance)} ${t('meters')}</dd></div>` : ''}
+      </dl><a href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(coordinates)}" target="_blank" rel="noopener noreferrer">${t('openLocationMap')}</a>` : ''}
+      ${addressDetails?.landmarkUnavailable ? `<p class="muted" role="status">${t('landmark_lookup_unavailable')}</p>` : ''}
       <div class="registration-images">${[['selfie', 'selfie'], ['identity', 'identityPhoto']].map(([kind, label]) => `<figure>
         ${registrationDraft[kind] ? `<img alt="${t(label)}" src="data:image/jpeg;base64,${registrationDraft[kind]}">` : ''}
         <button type="button" class="button secondary" data-action="registration-camera" data-photo="${kind}">${icon('camera')}${t(label)}</button>
@@ -692,13 +699,15 @@ async function captureRegistrationLocation() {
   const { latitude, longitude, accuracy } = coords;
   draft.location = { latitude, longitude, accuracy };
   draft.addressDetails = null;
-  draft.addressStatus = 'address_enter_manually';
+  const mapEnabled = state.config.addressLookup || state.config.landmarkLookup;
+  draft.addressStatus = state.config.addressLookup ? 'address_enter_manually' : 'address_lookup_disabled';
   const previousAddress = draft.address;
-  if (state.config.addressLookup) {
+  if (mapEnabled) {
     try {
       const details = await api('/registration/address', 'POST', { location: draft.location, lang: state.lang });
       const { address } = details;
-      if (details.city || details.street || details.distance != null || details.landmark) draft.addressDetails = details;
+      draft.addressDetails = details;
+      if (details.addressUnavailable) draft.addressStatus = 'address_lookup_unavailable';
       if (address && draft.address === previousAddress && (!draft.address?.trim() || draft.address === draft.autoAddress)) {
         draft.address = address;
         draft.autoAddress = address;

@@ -1,3 +1,5 @@
+import { cities } from './market.js';
+
 export const maxLocationAccuracy = 50;
 
 export function validNationalId(value) {
@@ -14,4 +16,27 @@ export function preciseLocation(location) {
   return Number.isFinite(latitude) && Math.abs(latitude) <= 90
     && Number.isFinite(longitude) && Math.abs(longitude) <= 180
     && Number.isFinite(accuracy) && accuracy > 0 && accuracy <= maxLocationAccuracy;
+}
+
+export function distanceMeters(origin, point) {
+  const { latitude, longitude } = point || {};
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const radians = degrees => degrees * Math.PI / 180;
+  const deltaLat = radians(latitude - origin.latitude);
+  const deltaLng = radians(longitude - origin.longitude);
+  const h = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(radians(origin.latitude)) * Math.cos(radians(latitude)) * Math.sin(deltaLng / 2) ** 2;
+  return Math.round(12_742_000 * Math.asin(Math.sqrt(Math.min(1, h))));
+}
+
+export function nearestRegistrationCity(location) {
+  if (!preciseLocation(location)) return null;
+  let nearest = null;
+  for (const [key, { coordinates }] of Object.entries(cities)) {
+    if (!coordinates) continue;
+    const [latitude, longitude] = coordinates;
+    const distance = distanceMeters(location, { latitude, longitude });
+    if (distance <= 30_000 && (!nearest || distance < nearest.distance)) nearest = { key, distance };
+  }
+  return nearest;
 }

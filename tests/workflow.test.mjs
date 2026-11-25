@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { makeApp } from '../server.mjs';
 import { lookupAddress } from '../geocoding.mjs';
+import { nearestRegistrationCity } from '../public/registration-fields.js';
 
 const testPin = '637592';
 const adminPhone = '0550001017';
@@ -196,7 +197,7 @@ test('address lookup is limited to an incomplete registration and keeps the map 
   await account('/registration/address', 'POST', { location: evidence.location }, 403);
 });
 
-test('administrator invitations activate a unique phone without SMS, with an atomic one-time session', async t => {
+test('administrator accounts use one-time codes for activation and future sign-ins without SMS', async t => {
   const base = await start(t);
   const admin = client(base);
   const invited = client(base);
@@ -232,9 +233,9 @@ test('administrator invitations activate a unique phone without SMS, with an ato
   assert.equal(account.id, first.user.id);
   assert.equal(account.tracking.reference, first.user.tracking.reference);
   assert.equal((await invited('/me')).user.id, account.id);
-  await other('/auth/invitation', 'POST', { phone: details.phone, code: replacement.code }, 400);
-  assert.deepEqual(await other('/auth/check', 'POST', { phone: details.phone }), { method: 'sms' });
-  await admin('/admin/users/' + account.id + '/invitation', 'POST', {}, 409);
+  assert.equal((await other('/auth/invitation', 'POST', { phone: details.phone, code: replacement.code }, 400)).error, 'invitation_used');
+  assert.deepEqual(await other('/auth/check', 'POST', { phone: details.phone }), { method: 'invitation' });
+  assert.equal((await other('/auth/send', 'POST', { phone: details.phone }, 409)).error, 'invitation_required');
   const saved = await invited('/registration', 'POST', evidence);
   assert.equal(saved.tracking.reference, account.tracking.reference);
   assert.ok(saved.tracking.submitted);
@@ -242,6 +243,19 @@ test('administrator invitations activate a unique phone without SMS, with an ato
   const me = (await invited('/me')).user;
   assert.equal(me.approval, 'approved');
   assert.ok(me.tracking.decided);
+  const signIn = await admin('/admin/users/' + account.id + '/invitation', 'POST', {});
+  assert.notEqual(signIn.code, replacement.code);
+  assert.equal(signIn.user.invitationActivated, true);
+  assert.equal(signIn.user.invitationPending, false);
+  await other('/auth/invitation', 'POST', { phone: details.phone, code: replacement.code }, 400);
+  await invited('/registration/invitation', 'POST', { code: signIn.code }, 400);
+  const returning = await other('/auth/invitation', 'POST', { phone: details.phone, code: signIn.code });
+  assert.equal(returning.approval, 'approved');
+  assert.equal(returning.tracking.reference, saved.tracking.reference);
+  assert.deepEqual(await other('/requests'), []);
+  await admin('/admin/users/' + account.id, 'PATCH', { approval: 'blocked' });
+  assert.deepEqual(await other('/auth/check', 'POST', { phone: details.phone }), { method: 'invitation' });
+  await admin('/admin/users/' + account.id + '/invitation', 'POST', {}, 409);
 });
 
 test('runtime never exposes test accounts or codes and reports unavailable SMS accurately', async t => {
@@ -543,17 +557,24 @@ test('map lookup provides the street and measures distance to the nearest return
     assert.equal(endpoint.searchParams.get('key'), 'address-fixture');
     return Response.json({ status: 'OK', results: [{
       types: ['street_address'], formatted_address: 'شارع الملك، حي الندى، الرياض',
-      address_components: [
-        { types: ['locality'], long_name: 'الرياض' }, { types: ['route'], long_name: 'شارع الملك' },
-      ],
+      address_components: [{ types: ['route'], long_name: 'شارع الملك' }, { types: ['neighborhood'], long_name: 'الندى' }],
       geometry: { location: { lat: 24.7001, lng: 46.68 } },
+    }, {
+      types: ['locality'], address_components: [{ types: ['locality'], long_name: 'الرياض' }],
     }] });
   });
   assert.deepEqual(await lookupAddress('address-fixture', origin, 'ar', 'places-fixture'), {
-    address: 'شارع الملك، حي الندى، الرياض', city: 'الرياض', street: 'شارع الملك', distance: 11,
+    address: 'شارع الملك، حي الندى، الرياض', city: 'الرياض', street: 'شارع الملك', neighborhood: 'الندى', distance: 11,
     landmark: { name: 'حديقة الحي', distance: 111 },
   });
   assert.equal(calls.length, 2);
+});
+
+test('GPS can identify a nearby catalog city without inventing an address outside its coverage', () => {
+  const location = { latitude: 24.7136, longitude: 46.6753, accuracy: 23 };
+  assert.deepEqual(nearestRegistrationCity(location), { key: 'riyadh', distance: 0 });
+  assert.equal(nearestRegistrationCity({ ...location, accuracy: 80 }), null);
+  assert.equal(nearestRegistrationCity({ latitude: 51.48, longitude: 0, accuracy: 10 }), null);
 });
 
 async function until(check, description) {

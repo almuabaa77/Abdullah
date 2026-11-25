@@ -68,38 +68,45 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
     return JSON.parse(Buffer.concat([decipher.update(row.data), decipher.final()]).toString('utf8'));
   }
   function invitationPending(userId) {
-    return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND used IS NULL', userId);
+    return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND activated IS NULL', userId);
   }
-  function activeInvitationAccount(phone) {
+  function adminCodeAccount(phone) {
     return get(`SELECT u.* FROM users u JOIN registration_invites i ON i.user_id=u.id
-      WHERE u.phone=? AND u.role IN ('customer','agent') AND u.approval='pending' AND i.used IS NULL`, phone);
+      WHERE u.phone=? AND u.role IN ('customer','agent')`, phone);
   }
   function invitationActivated(userId) {
-    return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND used IS NOT NULL', userId);
+    return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND activated IS NOT NULL', userId);
   }
   function inviteDigest(userId, code) {
     return createHmac('sha256', key).update(`invite:${userId}:${code}`).digest();
   }
   function issueInvitation(userId) {
-    const code = String(randomInt(1_000_000)).padStart(6, '0');
+    const previous = get('SELECT last_digest FROM registration_invites WHERE user_id=?', userId)?.last_digest;
+    let code;
+    let digest;
+    do {
+      code = String(randomInt(1_000_000)).padStart(6, '0');
+      digest = inviteDigest(userId, code);
+    } while (previous && timingSafeEqual(previous, digest));
     const expiresAt = clock() + 86_400_000;
-    run(`INSERT INTO registration_invites(user_id,digest,expires,attempts) VALUES(?,?,?,0)
-      ON CONFLICT(user_id) DO UPDATE SET digest=excluded.digest, expires=excluded.expires, attempts=0`,
-    userId, inviteDigest(userId, code), expiresAt);
+    run(`INSERT INTO registration_invites(user_id,digest,expires,attempts,last_digest) VALUES(?,?,?,0,?)
+      ON CONFLICT(user_id) DO UPDATE SET digest=excluded.digest, expires=excluded.expires, attempts=0,
+        last_digest=excluded.last_digest, used=NULL`, userId, digest, expiresAt, digest);
     return { code, expiresAt };
   }
   function redeemInvitation(userId, code, activate = () => null) {
     const outcome = transaction(() => {
       const row = get('SELECT * FROM registration_invites WHERE user_id=? AND used IS NULL', userId);
       const account = get('SELECT approval FROM users WHERE id=?', userId);
-      if (!row || account?.approval !== 'pending') return { error: 'invitation_unavailable' };
+      if (!['pending', 'approved'].includes(account?.approval)) return { error: 'invitation_unavailable' };
+      if (!row) return { error: 'invitation_used' };
       const time = clock();
       if (row.expires <= time || row.attempts >= 5) return { error: 'invitation_expired' };
       if (!timingSafeEqual(row.digest, inviteDigest(userId, code))) {
         run('UPDATE registration_invites SET attempts=attempts+1 WHERE user_id=?', userId);
         return { error: row.attempts >= 4 ? 'invitation_expired' : 'invalid_invitation' };
       }
-      run('UPDATE registration_invites SET used=?, digest=NULL WHERE user_id=?', time, userId);
+      run('UPDATE registration_invites SET used=?, activated=COALESCE(activated,?), digest=NULL WHERE user_id=?', time, time, userId);
       return { session: activate() };
     });
     if (outcome.error) fail(400, outcome.error);
@@ -118,7 +125,7 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
     return row || null;
   }
   return {
-    check, issue, reserve, finish, saveEvidence, evidence, invitationPending, activeInvitationAccount,
+    check, issue, reserve, finish, saveEvidence, evidence, invitationPending, adminCodeAccount,
     invitationActivated, issueInvitation, redeemInvitation, tracking,
   };
 }
