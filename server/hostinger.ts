@@ -1,13 +1,14 @@
 import express, { type ErrorRequestHandler, type Request as HttpRequest, type Response as HttpResponse } from 'express'
-import { createPool, type Pool, type QueryResult, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise'
+import { createPool, type Pool, type PoolOptions, type QueryResult, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise'
 import { api, ApiError, type Repository } from './api'
 import { serveAsset } from './assets'
+import { mysqlConfig, mysqlFailureIssue } from './hostinger-db'
 
 const env = process.env
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
 const port = Number(env.PORT || 3000)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT')
-const databaseConfigured = Boolean(env.DATABASE_URL || (env.DB_HOST && env.DB_NAME && env.DB_USER && env.DB_PASSWORD))
+const config = mysqlConfig(env)
 const createSchema = `
   CREATE TABLE IF NOT EXISTS halaqat_workspaces (
     id VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -18,32 +19,38 @@ const createSchema = `
 
 let connection:Pool|undefined
 let databaseInitialization:Promise<Pool>|undefined
-let databaseStatus:'not_configured'|'connecting'|'unavailable'|'ready' = databaseConfigured ? 'connecting' : 'not_configured'
+let databaseIssue:string|undefined = 'issue' in config ? config.issue : undefined
+let databaseStatus:'not_configured'|'connecting'|'unavailable'|'ready' = 'options' in config ? 'connecting' : 'not_configured'
 let retryDatabaseAt = 0
+
+function databaseError() {
+  if (databaseIssue === 'password_is_example') return new ApiError('كلمة مرور MySQL في إعدادات الاستضافة تحتاج إلى تصحيح',503)
+  return new ApiError(databaseStatus === 'not_configured'
+    ? 'يلزم إعداد اتصال MySQL في Hostinger'
+    : 'تعذر الاتصال بقاعدة بيانات المنصة، حاول مجددًا بعد قليل',503)
+}
 
 function unavailable(error:unknown) {
   databaseInitialization = undefined
   databaseStatus = 'unavailable'
   retryDatabaseAt = Date.now() + 5000
-  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^[A-Z0-9_]+$/.test(error.code)
-    ? error.code : 'UNKNOWN'
-  console.error(`Hostinger MySQL unavailable (${code})`)
-  return new ApiError('تعذر الاتصال بقاعدة بيانات المنصة، حاول مجددًا بعد قليل',503)
+  databaseIssue = mysqlFailureIssue(error)
+  console.error(`Hostinger MySQL unavailable (${databaseIssue})`)
+  return databaseError()
 }
 
-async function startDatabase() {
-  connection ??= createPool(env.DATABASE_URL ? { ...settings, uri:env.DATABASE_URL } : {
-    ...settings, host:env.DB_HOST, port:Number(env.DB_PORT || 3306), database:env.DB_NAME, user:env.DB_USER, password:env.DB_PASSWORD,
-  })
+async function startDatabase(options:PoolOptions) {
+  connection ??= createPool(options)
   await connection.query(createSchema)
+  await connection.query('SELECT id, revision, data FROM halaqat_workspaces LIMIT 0')
   databaseStatus = 'ready'
+  databaseIssue = undefined
   return connection
 }
 
 async function database() {
-  if (!databaseConfigured) throw new ApiError('يلزم إعداد اتصال MySQL في Hostinger',503)
-  if (Date.now() < retryDatabaseAt) throw new ApiError('تعذر الاتصال بقاعدة بيانات المنصة، حاول مجددًا بعد قليل',503)
-  return databaseInitialization ??= startDatabase().catch((error)=>{throw unavailable(error)})
+  if ('issue' in config || Date.now() < retryDatabaseAt) throw databaseError()
+  return databaseInitialization ??= startDatabase({ ...settings, ...config.options }).catch((error)=>{throw unavailable(error)})
 }
 
 async function query<T extends QueryResult>(statement:string,values:(string|number)[]) {
@@ -97,6 +104,7 @@ app.get('/api/health',(_req,res)=>{
     app:'halaqat-al-khair',
     status:databaseStatus === 'ready' ? 'ok' : 'degraded',
     database:databaseStatus,
+    databaseIssue,
     phoneAuthConfigured:Boolean(env.FIREBASE_WEB_CONFIG),
   })
 })
@@ -118,10 +126,10 @@ app.use(handleError)
 
 const server = app.listen(port,'0.0.0.0',()=>{
   console.log(`Halaqat listening on 0.0.0.0:${port}`)
-  if (databaseConfigured) {
+  if ('options' in config) {
     void database().catch(()=>{})
   } else {
-    console.error('Hostinger MySQL is not configured. Set DATABASE_URL or the DB_HOST, DB_NAME, DB_USER and DB_PASSWORD values.')
+    console.error(`Hostinger MySQL is not configured (${config.issue})`)
   }
 })
 process.once('SIGTERM',()=>server.close(()=>{void connection?.end()}))
