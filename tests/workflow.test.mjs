@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { makeApp } from '../server.mjs';
 import { lookupAddress } from '../geocoding.mjs';
 import { nearestRegistrationCity } from '../public/registration-fields.js';
+import { locateDevice } from '../public/locate.js';
 
 const testPin = '637592';
 const adminPhone = '0550001017';
@@ -575,6 +576,35 @@ test('GPS can identify a nearby catalog city without inventing an address outsid
   assert.deepEqual(nearestRegistrationCity(location), { key: 'riyadh', distance: 0 });
   assert.equal(nearestRegistrationCity({ ...location, accuracy: 80 }), null);
   assert.equal(nearestRegistrationCity({ latitude: 51.48, longitude: 0, accuracy: 10 }), null);
+});
+
+test('GPS retries a transient failure and keeps the best reading until it is precise', async () => {
+  const progress = [];
+  const location = { latitude: 24.7, longitude: 46.68, accuracy: 23 };
+  let cleared;
+  const device = {
+    watchPosition(success, failure) {
+      queueMicrotask(() => { success({ coords: { ...location, accuracy: 110 } }); failure({ code: 2 }); });
+      return 10;
+    },
+    getCurrentPosition(success) { queueMicrotask(() => success({ coords: location })); },
+    clearWatch(id) { cleared = id; },
+  };
+  assert.deepEqual(await locateDevice(device, accuracy => progress.push(accuracy), 200), location);
+  assert.deepEqual(progress, [110, 23]);
+  assert.equal(cleared, 10);
+});
+
+test('manual map pins remain explicitly marked in the registration record', async t => {
+  const base = await start(t);
+  const admin = client(base);
+  const customer = client(base);
+  await login(admin, adminPhone);
+  const user = await login(customer, '0550001089', { name: 'عمر سعيد الحربي', role: 'customer' });
+  const location = { latitude: 24.7, longitude: 46.68, accuracy: null, source: 'manual' };
+  await customer('/registration', 'POST', { ...evidence, location: { ...location, accuracy: 23 } }, 400);
+  await customer('/registration', 'POST', { ...evidence, location });
+  assert.deepEqual((await admin('/admin/users/' + user.id + '/registration')).location, location);
 });
 
 async function until(check, description) {

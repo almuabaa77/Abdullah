@@ -316,3 +316,24 @@ Object.assign(copy, {
   addressNeighborhood: ['الحي', 'Neighborhood'],
   openLocationMap: ['فتح الموقع على الخريطة', 'Open location on the map'],
 });
+
+Object.assign(copy, {
+  authSub: ['أدخل رقم جوالك لتظهر لك طريقة الدخول المناسبة لحسابك.', 'Enter your mobile number to continue with the sign-in method for your account.'],
+  entryReturning: ['عندك حساب؟', 'Already registered?'],
+  entryNew: ['جديد في وصلة؟', 'New to Waslah?'],
+  adminCreateHint: ['أضف الاسم والجوال وحدد دور الحساب. تصدر وصلة رمزًا لمرة واحدة لتسلّمه لصاحب الحساب.', 'Enter the name and mobile number, then choose the account role. Waslah issues a one-time code you can hand to the account owner.'],
+  adminPhoneNormalized: ['الرقم الذي سيرتبط بالحساب', 'Mobile number for this account'],
+  adminCreating: ['جارٍ إنشاء الحساب…', 'Creating account…'],
+  inviteGreeting: ['أهلًا بك في وصلة،', 'Welcome to Waslah,'],
+  copyInvitationMessage: ['نسخ رسالة الدعوة', 'Copy invitation message'],
+  location_searching: ['جارٍ البحث عن قراءة دقيقة للموقع…', 'Looking for an accurate location reading…'],
+  location_signal_unavailable: ['تعذّر استقبال الموقع. فعّل خدمات الموقع أو أدخل إحداثيات النقطة من الخريطة.', 'No location fix was available. Enable location services or enter the coordinates from your map.'],
+  location_imprecise: ['لم تصل القراءة إلى دقة 50 مترًا. فعّل الموقع الدقيق أو أدخل إحداثيات النقطة من الخريطة.', 'The location could not reach 50-metre accuracy. Enable precise location or enter the coordinates from your map.'],
+  location_requires_https: ['لتحديد موقع الجهاز، افتح وصلة عبر رابط HTTPS.', 'Open Waslah over HTTPS to use your device location.'],
+  manualMapPin: ['إدخال نقطة من الخريطة', 'Enter a map pin'],
+  manualMapHelp: ['ثبّت دبوسًا في تطبيق الخرائط وانسخ الإحداثيات الرقمية هنا بالترتيب الظاهر.', 'Drop a pin in your maps app and paste the decimal coordinates in the order shown.'],
+  manualMapSave: ['اعتماد نقطة الخريطة', 'Use map pin'],
+  invalid_manual_pin: ['أدخل خط العرض ثم خط الطول وافصل بينهما بفاصلة.', 'Enter latitude and longitude separated by a comma.'],
+  locationSource: ['مصدر الموقع', 'Location source'],
+  manualMapSource: ['نقطة خريطة أدخلها المستخدم', 'User-provided map pin'],
+});

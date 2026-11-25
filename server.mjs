@@ -11,7 +11,7 @@ import { answerConversation, prepareConversation } from './assistant.mjs';
 import { exchangeFirebaseCode, readFirebaseConfig, verifiedPhone, verifierFor } from './firebase-provider.mjs';
 import { normalizePhone } from './public/phone.js';
 import { registrationName } from './public/registration-name.js';
-import { preciseLocation } from './public/registration-fields.js';
+import { validRegistrationLocation } from './public/registration-fields.js';
 import { createRegistration, registrationPacket } from './registration.mjs';
 import { lookupAddress } from './geocoding.mjs';
 import { createAccountSync, firebaseAccountStore, migrateAccountSync } from './firebase-accounts.mjs';
@@ -482,7 +482,7 @@ export function makeApp({
       if (registration.invitationPending(user.id)) fail(403, 'invitation_unavailable');
       if (!geocodingKey && !placesKey) fail(503, 'address_lookup_unavailable');
       const { location, lang } = await body(req);
-      if (!preciseLocation(location)) fail(400, 'invalid_location');
+      if (!validRegistrationLocation(location)) fail(400, 'invalid_location');
       rate('registration-address:' + user.id, 12, 3_600_000);
       let result;
       try { result = await reverseAddress(geocodingKey, location, lang === 'en' ? 'en' : 'ar', placesKey); }

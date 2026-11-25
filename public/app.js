@@ -2,7 +2,8 @@ import { categories, legacyServiceNames, statuses, roles } from './catalog.js';
 import { copy } from './copy.js';
 import { normalizePhone } from './phone.js';
 import { registrationName } from './registration-name.js';
-import { nearestRegistrationCity, preciseLocation, validNationalId } from './registration-fields.js';
+import { nearestRegistrationCity, validNationalId, validRegistrationLocation } from './registration-fields.js';
+import { locateDevice } from './locate.js';
 import { activeLimit, cities, specialties, suggestedSpecialty } from './market.js';
 
 const app = document.querySelector('#app');
@@ -243,19 +244,28 @@ function usersPage() {
     <select id="user-role-filter" class="filter-select" aria-label="${t('filterPeople')}">${[['all', t('all')], ...Object.entries(roles).map(([key, label]) => [key, local(label)])].map(([key, label]) => `<option value="${key}" ${state.userRole === key ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div id="user-results">${userResults()}</div>`;
 }
 function adminCreateForm() {
-  openDialog(`${modalHeading(t('adminCreateAccount'))}<form class="form-stack" data-form="admin-create-user">
-    <label>${t('registrationName')}<input name="name" maxlength="72" required></label>
+  openDialog(`${modalHeading(t('adminCreateAccount'), t('adminCreateHint'))}<form class="form-stack" data-form="admin-create-user" novalidate>
+    <label>${t('registrationName')}<input name="name" autocomplete="name" maxlength="72" required></label>
     <label>${t('phone')}<input type="tel" name="phone" dir="ltr" autocomplete="tel" maxlength="28" required></label>
-    ${selectedChoice('role', t('accountType'), [['customer', local(roles.customer)], ['agent', local(roles.agent)]], 'customer')}
+    <p class="muted" data-admin-phone-note role="status"></p>
+    <fieldset class="account-roles"><legend>${t('accountType')}</legend>
+      ${[['customer', 'clipboard-list'], ['agent', 'briefcase-business']].map(([role, glyph]) => `<label>
+        <input type="radio" name="role" value="${role}" ${role === 'customer' ? 'checked' : ''}>
+        <span>${icon(glyph)}<strong>${local(roles[role])}</strong></span>
+      </label>`).join('')}
+    </fieldset>
+    <p class="registration-feedback" data-admin-create-error role="alert" tabindex="-1" hidden></p>
     <button type="submit" class="button primary">${t('adminIssueInvitation')}</button>
   </form>`);
 }
 function invitationReceipt(result) {
-  openDialog(`${modalHeading(t('invitationCreated'), t('invitationShare'))}<p><bdi>${escape(result.user.phone)}</bdi></p>
+  const message = `${t('inviteGreeting')} ${result.user.name}\n${t('phone')} ${result.user.phone}\n${t('invitationCode')} ${result.code}\n${t('invitationExpires')} ${localeTime(result.expiresAt)}\n${location.origin}/`;
+  openDialog(`${modalHeading(t('invitationCreated'), t('invitationShare'))}<p><strong>${escape(result.user.name)}</strong> · ${local(roles[result.user.role])} · <bdi>${escape(result.user.phone)}</bdi></p>
     <p class="invitation-code"><bdi>${escape(result.code)}</bdi></p>
     <p class="muted">${t('invitationExpires')} ${localeTime(result.expiresAt)}</p>
     <p class="muted">${t({ synced: 'firebaseSyncDone', queued: 'firebaseSyncQueued', retrying: 'firebaseSyncRetrying', disabled: 'firebaseSyncDisabled' }[result.firebaseSync])}</p>
-    <button class="button primary" data-action="copy-reference" data-reference="${escape(result.code)}">${icon('copy')}${t('copyInvitation')}</button>`);
+    <div class="auth-links"><button class="button primary" data-action="copy-reference" data-reference="${escape(message)}">${icon('copy')}${t('copyInvitationMessage')}</button>
+    <button class="button secondary" data-action="copy-reference" data-reference="${escape(result.code)}">${t('copyInvitation')}</button></div>`);
 }
 function confirmAccountRemoval(id) {
   const account = state.users.find(entry => entry.id === Number(id));
@@ -393,7 +403,8 @@ async function manageUser(id) {
     ${selectedChoice('approval', t('status'), [['keep', t('currentAvailability')], ...actions], 'keep')}
     ${evidence ? `<fieldset class="registration-review"><legend>${t('registrationEvidence')}</legend>
       <p><bdi>${escape(evidence.nationalId)}</bdi></p><p>${escape(evidence.address)}</p>
-      <p><bdi>${evidence.location.latitude}, ${evidence.location.longitude} (±${Math.round(evidence.location.accuracy)} m)</bdi></p>
+      <p><bdi>${evidence.location.latitude}, ${evidence.location.longitude}</bdi> · ${evidence.location.source === 'manual'
+        ? t('manualMapSource') : `<bdi>±${Math.round(evidence.location.accuracy)} m</bdi>`}</p>
       <div class="registration-images">
         <figure><img alt="${t('selfie')}" src="data:image/jpeg;base64,${escape(evidence.selfie)}"><figcaption>${t('selfie')}</figcaption></figure>
         <figure><img alt="${t('identityPhoto')}" src="data:image/jpeg;base64,${escape(evidence.identity)}"><figcaption>${t('identityPhoto')}</figcaption></figure>
@@ -486,8 +497,10 @@ function helpPage() {
   return `${sectionHeader(t('help'), t('helpIntro'))}<div class="help-grid"><section class="settings-card"><div class="tile-icon purple">${icon('sparkles')}</div><h2>${t('assistant')}</h2><p>${t('assistantIntro')}</p><button class="button primary" data-action="assistant">${t('helpStart')}${arrow()}</button></section>
     <section class="settings-card"><div class="tile-icon teal">${icon('file-text')}</div><h2>${t('helpFollow')}</h2><p>${t('emptySub')}</p><button class="button secondary" data-route="requests">${t('viewAll')}${arrow()}</button></section></div>`;
 }
-function authFrame(content) {
-  return `<div class="auth-layout"><header class="auth-header"><div class="brand">${brand()}</div><div class="auth-tools">${installControl()}${fullscreenControl()}${languageBtn()}</div></header><div class="auth-body"><div class="auth-card">${content}</div><div class="auth-art" aria-hidden="true"></div></div></div>`;
+function authFrame(content, entry = false) {
+  return `<div class="auth-layout${entry ? ' auth-entry' : ''}"><header class="auth-header"><div class="brand">${brand()}</div><div class="auth-tools">${installControl()}${fullscreenControl()}${languageBtn()}</div></header><div class="auth-body"><div class="auth-card">${content}</div>${entry
+    ? `<aside class="auth-art"><div class="entry-caption"><h2>${t('heroTitle')}</h2><p>${t('heroSub')}</p></div></aside>`
+    : '<div class="auth-art" aria-hidden="true"></div>'}</div></div>`;
 }
 function auth() {
   if (state.authStep === 'invitation') return invitationScreen(state.login.phone);
@@ -512,7 +525,7 @@ function auth() {
     </form>
     ${code ? `<div class="auth-links"><button class="text-button" data-action="change-phone" aria-expanded="${!!state.login.editPhone}">${t('changePhone')}</button><button class="text-button" data-action="resend">${t('resend')}</button></div>
       ${state.login.editPhone ? `<form data-form="edit-phone" class="form-stack"><label>${t('phone')}<input name="phone" type="tel" dir="ltr" autocomplete="tel" maxlength="28" required value="${phone}"></label><button class="button secondary" type="submit">${t('sendCode')}</button></form>` : ''}`
-      : `<button class="text-button auth-switch" data-action="auth-switch">${t(signup ? 'login' : 'signup')}</button>`}`);
+      : `<div class="entry-switch"><span>${t(signup ? 'entryReturning' : 'entryNew')}</span><button class="text-button auth-switch" data-action="auth-switch">${t(signup ? 'login' : 'signup')}</button></div>`}`, !code);
 }
 function invitationScreen(phone) {
   return authFrame(`<h1>${t('invitationTitle')}</h1><p>${t('invitationUse')} <bdi>${escape(phone)}</bdi></p>
@@ -608,10 +621,18 @@ function registrationForm() {
       <label>${t('nationalId')}<input name="nationalId" inputmode="numeric" dir="ltr" minlength="10" maxlength="10" value="${escape(registrationDraft.nationalId)}" required></label>
       <label>${t('registrationAddress')}<textarea name="address" minlength="10" maxlength="240" required>${escape(registrationDraft.address)}</textarea></label>
       <button type="button" class="button secondary" data-action="registration-location">${icon('map-pin')}${t(mapEnabled ? 'captureLocationAndAddress' : 'captureLocation')}</button>
+      <p class="muted" data-location-progress role="status" hidden></p>
+      <details class="manual-map">
+        <summary>${t('manualMapPin')}</summary>
+        <p class="muted">${t('manualMapHelp')}</p>
+        <label>${t('locationCoordinates')}<input name="coordinates" dir="ltr" maxlength="70" placeholder="24.7136, 46.6753"></label>
+        <button type="button" class="button secondary" data-action="registration-set-pin">${t('manualMapSave')}</button>
+      </details>
       ${mapEnabled ? `<p class="muted fine-print">${t('addressLookupPrivacy')}</p>` : ''}
       ${addressStatus ? `<p class="muted" role="status">${t(addressStatus)}</p>` : ''}
       ${location ? `<dl class="tracking-details address-details">
-        <div><dt>${t('locationAccuracy')}</dt><dd><bdi>±${Math.round(location.accuracy)} m</bdi></dd></div>
+        <div><dt>${t(location.source === 'manual' ? 'locationSource' : 'locationAccuracy')}</dt><dd>${location.source === 'manual'
+          ? t('manualMapSource') : `<bdi>±${Math.round(location.accuracy)} m</bdi>`}</dd></div>
         <div><dt>${t('locationCoordinates')}</dt><dd><bdi>${coordinates}</bdi></dd></div>
         ${addressDetails?.city ? `<div><dt>${t('city')}</dt><dd>${escape(addressDetails.city)}</dd></div>` : ''}
         ${nearby ? `<div><dt>${t('nearestCatalogCity')}</dt><dd>${local(cities[nearby.key].name)} · ${digit(nearby.distance)} ${t('meters')}</dd></div>` : ''}
@@ -680,24 +701,33 @@ function captureRegistrationPhoto() {
   render();
 }
 async function captureRegistrationLocation() {
-  if (!navigator.geolocation) throw new Error('invalid_location');
+  if (!window.isSecureContext) throw new Error('location_requires_https');
+  if (!navigator.geolocation) throw new Error('location_signal_unavailable');
   const draft = registrationDraft;
-  const coords = await new Promise((resolve, reject) => {
-    function finish(callback, value) {
-      clearTimeout(timeout);
-      navigator.geolocation.clearWatch(watch);
-      callback(value);
-    }
-    const timeout = setTimeout(() => finish(reject, new Error('invalid_location')), 20_000);
-    const watch = navigator.geolocation.watchPosition(({ coords }) => {
-      if (preciseLocation(coords)) finish(resolve, coords);
-    }, error => {
-      finish(reject, new Error(error.code === 1 ? 'location_permission' : 'invalid_location'));
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 });
-  });
-  if (draft !== registrationDraft) return;
-  const { latitude, longitude, accuracy } = coords;
-  draft.location = { latitude, longitude, accuracy };
+  const request = {};
+  draft.locationRequest = request;
+  const progress = app.querySelector('[data-location-progress]');
+  progress.hidden = false;
+  progress.textContent = t('location_searching');
+  let captured;
+  try {
+    captured = await locateDevice(navigator.geolocation, accuracy => {
+      progress.textContent = t('location_searching') + ' ±' + digit(Math.round(accuracy)) + ' ' + t('meters');
+    });
+  } finally { progress.hidden = true; }
+  if (draft !== registrationDraft || draft.locationRequest !== request) return;
+  await applyRegistrationLocation(draft, captured);
+}
+async function applyManualPin(form) {
+  const value = translatedDigits(form.elements.coordinates.value.trim()).replace(/٫/g, '.');
+  const match = value.match(/^([+-]?\d+(?:\.\d+)?)\s*[,،]\s*([+-]?\d+(?:\.\d+)?)$/);
+  const location = { latitude: Number(match?.[1]), longitude: Number(match?.[2]), source: 'manual', accuracy: null };
+  if (!validRegistrationLocation(location)) throw new Error('invalid_manual_pin');
+  registrationDraft.locationRequest = null;
+  await applyRegistrationLocation(registrationDraft, location);
+}
+async function applyRegistrationLocation(draft, location) {
+  draft.location = location;
   draft.addressDetails = null;
   const mapEnabled = state.config.addressLookup || state.config.landmarkLookup;
   draft.addressStatus = state.config.addressLookup ? 'address_enter_manually' : 'address_lookup_disabled';
@@ -705,6 +735,7 @@ async function captureRegistrationLocation() {
   if (mapEnabled) {
     try {
       const details = await api('/registration/address', 'POST', { location: draft.location, lang: state.lang });
+      if (draft.location !== location) return;
       const { address } = details;
       draft.addressDetails = details;
       if (details.addressUnavailable) draft.addressStatus = 'address_lookup_unavailable';
@@ -713,9 +744,9 @@ async function captureRegistrationLocation() {
         draft.autoAddress = address;
         draft.addressStatus = 'address_check_suggestion';
       }
-    } catch { draft.addressStatus = 'address_lookup_unavailable'; }
+    } catch { if (draft.location === location) draft.addressStatus = 'address_lookup_unavailable'; }
   }
-  if (draft !== registrationDraft) return;
+  if (draft !== registrationDraft || draft.location !== location) return;
   render();
 }
 
@@ -728,6 +759,7 @@ function registrationError(form, error) {
   const fields = {
     invalid_national_id: '[name="nationalId"]', invalid_registration_address: '[name="address"]',
     invalid_location: '[data-action="registration-location"]', registration_selfie_required: '[data-photo="selfie"]',
+    invalid_manual_pin: '[name="coordinates"]',
     registration_id_photo_required: '[data-photo="identity"]',
   };
   const field = fields[error] && form.querySelector(fields[error]);
@@ -1197,14 +1229,18 @@ document.addEventListener('click', async event => {
       flash(t('copied'));
       return;
     }
-    if (action === 'registration-camera' || action === 'registration-location') {
+    if (['registration-camera', 'registration-location', 'registration-set-pin'].includes(action)) {
       target.disabled = true;
       try {
         if (action === 'registration-camera') await activateRegistrationCamera(target.dataset.photo);
-        else await captureRegistrationLocation();
+        else if (action === 'registration-location') await captureRegistrationLocation();
+        else await applyManualPin(target.closest('form'));
       } catch (error) {
         const form = target.closest('form');
-        if (form?.isConnected) registrationError(form, error.message);
+        if (form?.isConnected) {
+          if (action === 'registration-location') form.querySelector('.manual-map').open = true;
+          registrationError(form, error.message);
+        }
       } finally { target.disabled = false; }
       return;
     }
@@ -1278,6 +1314,11 @@ document.addEventListener('click', async event => {
   } catch (error) { report(error); }
 });
 document.addEventListener('input', event => {
+  if (event.target.name === 'phone' && event.target.form?.dataset.form === 'admin-create-user') {
+    const phone = normalizePhone(event.target.value);
+    const note = event.target.form.querySelector('[data-admin-phone-note]');
+    note.textContent = phone ? (state.users.some(user => user.phone === phone) ? t('phone_in_use') : t('adminPhoneNormalized') + ' ' + phone) : '';
+  }
   if (event.target.form?.dataset.form === 'registration' && ['nationalId', 'address'].includes(event.target.name)) {
     registrationDraft[event.target.name] = event.target.value;
   }
@@ -1370,7 +1411,12 @@ document.addEventListener('submit', async event => {
     } else if (mode === 'admin-create-user') {
       const name = registrationName(data.get('name'));
       if (!name) throw new Error('invalid_registration_name');
-      const result = await api('/admin/users', 'POST', { name, phone: data.get('phone'), role: data.get('role') });
+      const phone = normalizePhone(data.get('phone'));
+      if (!phone) throw new Error('invalid_phone');
+      if (button) button.textContent = t('adminCreating');
+      const feedback = form.querySelector('[data-admin-create-error]');
+      feedback.hidden = true;
+      const result = await api('/admin/users', 'POST', { name, phone, role: data.get('role') });
       await refresh();
       render();
       invitationReceipt(result);
@@ -1387,7 +1433,7 @@ document.addEventListener('submit', async event => {
       const { location, selfie, identity } = registrationDraft;
       if (!validNationalId(nationalId)) throw new Error('invalid_national_id');
       if (address.length < 10 || address.length > 240) throw new Error('invalid_registration_address');
-      if (!preciseLocation(location)) throw new Error('invalid_location');
+      if (!validRegistrationLocation(location)) throw new Error('invalid_location');
       if (!selfie) throw new Error('registration_selfie_required');
       if (!identity) throw new Error('registration_id_photo_required');
       if (button) button.textContent = t('registrationSubmitting');
@@ -1458,6 +1504,12 @@ document.addEventListener('submit', async event => {
   } catch (error) {
     if (authForm) showAuthError(error);
     else if (mode === 'registration' && form.isConnected) registrationError(form, error.message);
+    else if (mode === 'admin-create-user' && form.isConnected) {
+      const feedback = form.querySelector('[data-admin-create-error]');
+      feedback.textContent = t(copy[error.message] ? error.message : 'error');
+      feedback.hidden = false;
+      feedback.focus();
+    }
     else report(error);
   }
   finally {
@@ -1465,6 +1517,7 @@ document.addEventListener('submit', async event => {
       delete button.dataset.waiting;
       button.disabled = false;
       if (mode === 'registration') button.textContent = t('submitRegistration');
+      if (mode === 'admin-create-user') button.textContent = t('adminIssueInvitation');
     }
     updateVerificationTimer();
   }

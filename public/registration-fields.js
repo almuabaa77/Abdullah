@@ -13,9 +13,17 @@ export function validNationalId(value) {
 
 export function preciseLocation(location) {
   const { latitude, longitude, accuracy } = location || {};
-  return Number.isFinite(latitude) && Math.abs(latitude) <= 90
+  return location?.source !== 'manual' && Number.isFinite(latitude) && Math.abs(latitude) <= 90
     && Number.isFinite(longitude) && Math.abs(longitude) <= 180
     && Number.isFinite(accuracy) && accuracy > 0 && accuracy <= maxLocationAccuracy;
+}
+
+export function validRegistrationLocation(location) {
+  if (preciseLocation(location)) return true;
+  const { latitude, longitude, accuracy, source } = location || {};
+  return source === 'manual' && accuracy === null
+    && Number.isFinite(latitude) && Math.abs(latitude) <= 90
+    && Number.isFinite(longitude) && Math.abs(longitude) <= 180;
 }
 
 export function distanceMeters(origin, point) {
@@ -30,7 +38,7 @@ export function distanceMeters(origin, point) {
 }
 
 export function nearestRegistrationCity(location) {
-  if (!preciseLocation(location)) return null;
+  if (!validRegistrationLocation(location)) return null;
   let nearest = null;
   for (const [key, { coordinates }] of Object.entries(cities)) {
     if (!coordinates) continue;
