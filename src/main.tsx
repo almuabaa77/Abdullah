@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, UserCheck, WifiOff, X } from 'lucide-react'
 import { idFor, type Daily, type Student, type View } from './domain'
@@ -51,6 +51,7 @@ function App() {
   const [toast,setToast] = useState<{text:string;error:boolean}>()
   const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>}>()
   const [online,setOnline] = useState(navigator.onLine)
+  const seenNotices = useRef<{user:string;ids:Set<string>}>(undefined)
   const [install,setInstall] = useState<InstallEvent|null>(null)
   const [registering,setRegistering] = useState(false)
   const [recheck,setRecheck] = useState(0)
@@ -96,7 +97,7 @@ function App() {
       } finally{if(active&&initial)setLoading(false)}
     }
     void pull(true)
-    const timer=window.setInterval(()=>{if(document.visibilityState==='visible'&&navigator.onLine)void pull()},6500)
+    const timer=window.setInterval(()=>{if(navigator.onLine&&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))void pull()},6500)
     const refresh=()=>{if(navigator.onLine)void pull()}
     window.addEventListener('online',refresh);window.addEventListener('focus',refresh)
     return ()=>{active=false;controller.abort();clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh)}
@@ -119,6 +120,20 @@ function App() {
   const teacher = data.user?.role==='teacher'||data.user?.role==='admin'
   const student=data.user?.role==='student'
   const notices=data.notices.filter(n=>!n.readBy.includes(data.user?.id||''))
+  useEffect(()=>{
+    const user=data.user?.id
+    if(!user)return
+    const seen=seenNotices.current
+    if(!seen||seen.user!==user){seenNotices.current={user,ids:new Set(data.notices.map(n=>n.id))};return}
+    const incoming=data.notices.filter(n=>!seen.ids.has(n.id)&&!n.readBy.includes(user))
+    for(const n of data.notices)seen.ids.add(n.id)
+    if(!incoming.length||document.visibilityState!=='hidden'||!('Notification'in window)||Notification.permission!=='granted'||!('serviceWorker'in navigator))return
+    void navigator.serviceWorker.getRegistration().then(reg=>reg?.showNotification(en?'Al-Khair Quran Circles':'حلقات جامع الخير',{
+      body:en?'You have new notifications.':'لديك إشعارات جديدة.',
+      icon:'/assets/icon-192.png',tag:'halaqat-updates',
+    })).catch(()=>{})
+  },[data.notices,data.user?.id,en])
+
   const show = !loading&&!loadError&&data.user?.status==='active'
   const nav = [
     ['home',Home,t('الرئيسية','Home')],

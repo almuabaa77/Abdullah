@@ -15,3 +15,10 @@ self.addEventListener('fetch', event => {
     event.respondWith(fetch(request).catch(() => caches.match('/')))
   } else if (precache.includes(url.pathname)) event.respondWith(caches.open(cacheName).then(cache => cache.match(request)).then(entry => entry || fetch(request)))
 })
+self.addEventListener('notificationclick', event => {
+  event.notification.close()
+  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients => {
+    const tab = clients.find(client => new URL(client.url).pathname === '/')
+    return tab ? tab.focus() : self.clients.openWindow('/')
+  }))
+})

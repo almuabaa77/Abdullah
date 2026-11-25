@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Award, Bell, BookOpen, CalendarDays, Check, ChevronLeft, Download, Flag, Gift, Globe, Link2, LockKeyhole, MessageCircle, Pin, Plus, Search, Send, ShieldCheck, Smartphone, Star, UserCheck, Users } from 'lucide-react'
-import { balanceFor, dateKey, type Exam, type Student } from './domain'
+import { balanceFor, dateKey, idFor, type Exam, type Student } from './domain'
 import { Avatar, Badge, Brand, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
 
 export function ChatPage() {
@@ -44,6 +44,7 @@ export function Store() {
   const {data,t,en,post,tell} = useWorkspace()
   const [selected,setSelected] = useState('')
   const [busy,setBusy] = useState(false)
+  const [orderId,setOrderId] = useState(idFor)
   const student = data.students.find(s=>s.id===data.user?.studentId)
   const balance = student?balanceFor(student,data):0
   const p = data.prizes.find(p=>p.id===selected)
@@ -52,11 +53,11 @@ export function Store() {
     <div className="summary-grid">{data.prizes.filter(x=>x.active).map((p,i)=><article key={p.id} className="panel prize-card">
       <div className={'prize-image tint-'+(i%2?'gold':'green')}>{p.image?<img src={p.image} alt={p.name} loading="lazy" referrerPolicy="no-referrer"/>:i%2?<Gift size={48}/>:<BookOpen size={48}/>}</div>
       <h2>{p.name}</h2><p>{p.description}</p><div className="split-line"><strong><Star size={16}/>{p.price} {t('نقطة','points')}</strong><span>{p.stock?t(`${p.stock} متوفرة`,`${p.stock} in stock`):t('نفدت الكمية','Out of stock')}</span></div>
-      <button className="btn btn-primary full" disabled={!student||balance<p.price||!p.stock} onClick={()=>setSelected(p.id)}><Gift size={17}/>{t('استبدال','Redeem')}</button>
+      <button className="btn btn-primary full" disabled={!student||balance<p.price||!p.stock} onClick={()=>{setOrderId(idFor());setSelected(p.id)}}><Gift size={17}/>{t('استبدال','Redeem')}</button>
     </article>)}</div>
     {!data.prizes.length&&<div className="panel"><Empty title={t('لا توجد جوائز متاحة','No rewards available')}/></div>}
     <section className="panel section-panel"><div className="section-title"><h2>{t('طلبات الاستبدال','Redemption orders')}</h2></div>{data.orders.length?data.orders.map(o=><div className="entity-row" key={o.id}><div><strong>{o.name}</strong><p>{dateLabel(o.date,en)} · {o.price} {t('نقطة','points')}</p></div><Badge status={o.status} label={o.status==='pending'?t('قيد المراجعة','Under review'):undefined}/></div>):<Empty title={t('لا توجد طلبات','No orders yet')}/>}</section>
-    {p&&<Modal title={t('تأكيد الاستبدال','Confirm redemption')} close={()=>{if(!busy)setSelected('')}}><div className="modal-body"><p>{t(`استبدال ${p.name} مقابل ${p.price} نقطة؟`,`Redeem ${p.name} for ${p.price} points?`)}</p></div><div className="modal-foot"><button className="btn btn-outline" onClick={()=>setSelected('')} disabled={busy}>{t('إلغاء','Cancel')}</button><button className="btn btn-primary" disabled={busy} onClick={async()=>{setBusy(true);try{await post('redeem',{id:p.id,studentId:student?.id});setSelected('');tell(t('تم إرسال طلب الاستبدال','Redemption requested'))}catch(e){tell((e as Error).message,true)}finally{setBusy(false)}}}>{t('تأكيد الاستبدال','Confirm redemption')}</button></div></Modal>}
+    {p&&<Modal title={t('تأكيد الاستبدال','Confirm redemption')} close={()=>{if(!busy)setSelected('')}}><div className="modal-body"><p>{t(`استبدال ${p.name} مقابل ${p.price} نقطة؟`,`Redeem ${p.name} for ${p.price} points?`)}</p></div><div className="modal-foot"><button className="btn btn-outline" onClick={()=>setSelected('')} disabled={busy}>{t('إلغاء','Cancel')}</button><button className="btn btn-primary" disabled={busy} onClick={async()=>{setBusy(true);try{await post('redeem',{id:p.id,studentId:student?.id},orderId);setSelected('');tell(t('تم إرسال طلب الاستبدال','Redemption requested'))}catch(e){tell((e as Error).message,true)}finally{setBusy(false)}}}>{t('تأكيد الاستبدال','Confirm redemption')}</button></div></Modal>}
   </div>
 }
 

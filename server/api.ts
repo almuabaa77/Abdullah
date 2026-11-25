@@ -200,9 +200,11 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (u.role !== 'student') deny()
       const s = student(), prize = state.prizes.find(x => x.id === p.id && x.active)
       if (!prize || prize.stock < 1) throw new ApiError('الجائزة غير متاحة')
-      if (balanceFor(s, state) < prize.price) throw new ApiError('رصيد النقاط غير كافٍ')
+      const balance = balanceFor(s, state)
+      if (balance < prize.price) throw new ApiError('رصيد النقاط غير كافٍ')
       prize.stock--
       state.orders.unshift({ id: op, studentId: s.id, prizeId: prize.id, name: prize.name, price: prize.price, status: 'pending', date: dateKey() })
+      state.audit.push({ time:new Date().toISOString(),actor:u.name,action:'استبدال النقاط',target:s.id,before:balance,after:balance-prize.price })
       notify(state,'store','تم إرسال طلب الاستبدال',prize.name,{studentId:s.id})
       break
     }
@@ -213,10 +215,13 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const next = choice(p.status, ['approved','ready','delivered','cancelled'] as const)
       const allowed: Record<string,string[]> = { pending:['approved','cancelled'], approved:['ready','cancelled'],ready:['delivered','cancelled'], delivered:[],cancelled:[] }
       if (!allowed[order.status].includes(next)) throw new ApiError('لا يمكن تعديل الطلب إلى هذه الحالة')
+      const owner = state.students.find(s=>s.id===order.studentId)
+      const balance = owner ? balanceFor(owner,state) : undefined
       order.status = next
       if (next === 'cancelled') {
         const still = state.prizes.find(x => x.id === order.prizeId)
         if (still) still.stock++
+        if(balance!==undefined) state.audit.push({time:new Date().toISOString(),actor:u.name,action:'إرجاع النقاط',target:order.studentId,before:balance,after:balance+order.price})
       }
       notify(state,'store','تحديث طلب الاستبدال',order.name,{studentId:order.studentId})
       break

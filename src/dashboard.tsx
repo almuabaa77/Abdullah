@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { BookOpen, CalendarDays, Check, ChevronDown, CircleCheck, Clock3, Ellipsis, ListFilter, Plus, Search, Sparkles, UserCheck, Users } from 'lucide-react'
-import { balanceFor, circleMeets, segmentLabel, statusFor } from './domain'
+import { Award, BookOpen, CalendarDays, Check, ChevronDown, CircleCheck, Clock3, Ellipsis, ListFilter, Plus, Search, Sparkles, UserCheck, Users } from 'lucide-react'
+import { balanceFor, circleMeets, segmentLabel, statusFor, surahs } from './domain'
 import { Avatar, Badge, Empty, StudentIndicators, dateLabel, matches, nameFor, useWorkspace } from './ui'
 
 export function Dashboard() {
@@ -105,6 +105,15 @@ export function StudentHome() {
   const today = daily.find(d=>d.date===data.date)
   const last = daily.find(d=>d.date<=data.date && (d.nextMemorization.length || d.nextReview.length))
   const balance = balanceFor(student,data)
+  const assigned = daily.find(d=>d.date<data.date && d.nextDate===data.date && (d.nextMemorization.length || d.nextReview.length))
+  const memorized = new Set(daily.filter(d=>d.memorizationStatus==='complete').flatMap(d=>d.memorization.flatMap(s=>Array.from({length:s.to-s.from+1},(_,i)=>s.surah+':'+(s.from+i)))))
+  const totalVerses = surahs.reduce((sum,s)=>sum+s.count,0)
+  const attendanceCount = daily.filter(d=>d.attendance==='present').length
+  const badges = [
+    {earned:memorized.size>0,label:t('بداية الحفظ','First recitation')},
+    {earned:attendanceCount>=7,label:t('مواظبة 7 أيام','7 days attended')},
+    {earned:memorized.size>=100,label:t('حفظ 100 آية','100 verses memorized')},
+  ].filter(b=>b.earned)
   return <div className="page-stack">
     <section className="hero learner-hero"><div className="hero-image"/><div className="hero-content">
       <div className="hero-date"><CalendarDays size={15}/>{dateLabel(data.date,en,true)}</div><h1>{parent?t('متابعة الأبناء','Family dashboard'):t(`أهلًا بك، ${nameFor(student,en).split(' ')[0]}`,`Welcome, ${nameFor(student,en).split(' ')[0]}`)}</h1><p>{t('خطوة جديدة في رحلة حفظ القرآن الكريم.','A new step in your Quran memorization journey.')}</p>
@@ -115,6 +124,16 @@ export function StudentHome() {
       <section className="panel summary-panel"><span className="stat-icon tint-green"><BookOpen size={20}/></span><h2>{t('الجدولة القادمة','Upcoming assignment')}</h2>{last?<><p>{dateLabel(last.nextDate,en)}</p><p><strong>{t('الحفظ','Memorization')}</strong> · {segmentLabel(last.nextMemorization,en)||'—'}</p><p><strong>{t('المراجعة','Revision')}</strong> · {segmentLabel(last.nextReview,en)||'—'}</p></>:<p>{t('ستظهر المهام عند تسجيلها من المحفّظ.','New assignments will appear here.')}</p>}</section>
       <section className="panel summary-panel"><span className="stat-icon tint-blue"><Sparkles size={20}/></span><h2>{t('رصيد النقاط','Points balance')}</h2><strong className="big-number">{balance}</strong>{!parent&&<button className="btn btn-outline" onClick={()=>go('store')}>{t('زيارة المتجر','Visit the store')}</button>}</section>
     </div>
+    {assigned&&<section className="panel section-panel">
+      <div className="section-title"><div><h2>{t('المطلوب اليوم','Today’s assignment')}</h2><p>{dateLabel(data.date,en,true)}</p></div><span className="stat-icon tint-green"><CalendarDays size={18}/></span></div>
+      <p><strong>{t('الحفظ','Memorization')}</strong> · {segmentLabel(assigned.nextMemorization,en)||'—'}</p><p><strong>{t('المراجعة','Revision')}</strong> · {segmentLabel(assigned.nextReview,en)||'—'}</p>
+    </section>}
+    <section className="panel section-panel">
+      <div className="section-title"><div><h2>{t('التقدم في الحفظ','Memorization progress')}</h2><p>{t('الآيات المسجلة كمكتملة في المنصة','Verses marked complete in the platform')}</p></div><strong className="big-number">{(memorized.size/totalVerses*100).toFixed(1)}%</strong></div>
+      <div className="bar-track"><i style={{width:memorized.size/totalVerses*100+'%',background:'#238468'}}/></div>
+      <p className="small-text">{memorized.size} / {totalVerses} {t('آية','verses')}</p>
+      {!!badges.length&&<div className="chip-row achievement-list">{badges.map(b=><span key={b.label} className="count-pill"><Award size={16}/>{b.label}</span>)}</div>}
+    </section>
     <section className="panel section-panel">
       <div className="section-title"><div><h2>{t('متابعة الطالب','Student activity')}</h2><p>{nameFor(student,en)}</p></div></div>
       <div className="chip-row"><button className="btn btn-outline" onClick={()=>go('records')}>{t('سجل الحفظ والحضور','Recitation and attendance')}</button><button className="btn btn-outline" onClick={()=>go('exams')}>{t('الاختبارات','Assessments')}</button><button className="btn btn-outline" onClick={()=>go('leaves')}>{t('طلب استئذان','Request leave')}</button></div>
