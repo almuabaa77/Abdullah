@@ -13,6 +13,7 @@ import { normalizePhone } from './public/phone.js';
 import { createMarketplace, isActive, migrateMarketplace } from './marketplace.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
+const publicDirectory = resolve(root, 'public');
 const runningDirectly = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 if (runningDirectly) {
   try {
@@ -540,7 +541,7 @@ export function makeApp({
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) return await api(req, res, url);
       if (!['GET', 'HEAD'].includes(req.method)) fail(405, 'invalid_input');
-      serveStatic(req, res, url.pathname);
+      serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
     } catch (error) {
       if (!(error instanceof HttpError)) console.error(error);
       if (!res.headersSent) send(res, error.status || 500, { error: error.status ? error.message : 'server_error' });
@@ -555,16 +556,26 @@ function serveStatic(req, res, path) {
   const assets = {
     '/assets/lucide.js': 'node_modules/lucide/dist/umd/lucide.min.js',
   };
-  const clean = decodeURIComponent(path === '/' ? '/index.html' : path);
+  const clean = decodeURIComponent(path);
   const font = clean.match(/^\/assets\/(ibm-plex-sans-arabic-(?:arabic|latin)-(?:400|500|600|700)-normal\.woff2)$/);
-  const base = resolve(root, 'public');
   const filename = font ? resolve(root, 'node_modules/@fontsource/ibm-plex-sans-arabic/files', font[1])
-    : Object.hasOwn(assets, clean) ? resolve(root, assets[clean]) : resolve(base, '.' + clean);
-  const publicPath = relative(base, filename);
+    : Object.hasOwn(assets, clean) ? resolve(root, assets[clean]) : resolve(publicDirectory, '.' + clean);
+  const publicPath = relative(publicDirectory, filename);
   const outsidePublic = isAbsolute(publicPath) || publicPath === '..' || publicPath.startsWith('..' + sep);
   if (!font && !Object.hasOwn(assets, clean) && outsidePublic) fail(404, 'not_found');
   const info = statSync(filename, { throwIfNoEntry: false });
-  if (!info?.isFile()) fail(404, 'not_found');
+  if (!info?.isFile()) {
+    if (!extname(clean) && !/^\/(?:api|assets)(?:\/|$)/.test(clean)) {
+      res.setHeader('Vary', 'Accept');
+      const acceptsHtml = (req.headers.accept || '*/*').split(',').some(value => {
+        const [type, ...parameters] = value.trim().split(';');
+        return ['text/html', 'text/*', '*/*'].includes(type.toLowerCase())
+          && !parameters.some(parameter => /^\s*q\s*=\s*0(?:\.0*)?\s*$/i.test(parameter));
+      });
+      if (acceptsHtml) return serveStatic(req, res, '/index.html');
+    }
+    fail(404, 'not_found');
+  }
   res.writeHead(200, { 'Content-Type': mime[extname(filename)] || 'application/octet-stream', 'Content-Length': info.size,
     'Cache-Control': clean.startsWith('/assets/') ? 'public, max-age=3600' : 'no-cache' });
   if (req.method === 'HEAD') return res.end();

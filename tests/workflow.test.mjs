@@ -48,6 +48,32 @@ test('serves the home page and frontend assets from the public folder', async t 
   assert.equal((await fetch(base + '/..%2Fserver.mjs')).status, 404);
 });
 
+test('serves the app shell for HTML navigation without masking missing APIs or assets', async t => {
+  const base = await start(t);
+  const index = await (await fetch(base + '/')).text();
+  const headers = { Accept: 'text/html,application/xhtml+xml' };
+  const deepLink = base + '/requests/123/details?tab=messages';
+  const page = await fetch(deepLink, { headers });
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('vary'), 'Accept');
+  assert.match(page.headers.get('content-type'), /^text\/html/);
+  assert.equal(await page.text(), index);
+  const head = await fetch(deepLink, { method: 'HEAD', headers });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-length'), String(Buffer.byteLength(index)));
+  assert.equal(await head.text(), '');
+  const json = await fetch(deepLink, { headers: { Accept: 'application/json' } });
+  assert.equal(json.status, 404);
+  const api = await fetch(base + '/api/missing', { headers });
+  assert.equal(api.status, 401);
+  assert.match(api.headers.get('content-type'), /^application\/json/);
+  for (const path of ['/api', '/assets/missing', '/missing.js']) {
+    const missing = await fetch(base + path, { headers });
+    assert.equal(missing.status, 404, path);
+    assert.deepEqual(await missing.json(), { error: 'not_found' });
+  }
+});
+
 async function login(account, number, signup = {}) {
   const result = await account('/auth/send', 'POST', { phone: number });
   assert.deepEqual(Object.keys(result), ['phone']);
