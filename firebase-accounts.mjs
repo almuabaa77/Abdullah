@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -64,19 +65,27 @@ export function migrateAccountSync(db) {
 }
 
 export function createAccountSync({ get, run, transaction, store, interval }) {
-  if (!store) return () => {};
+  if (!store) return { stop() {}, async syncNow() { return 'disabled'; } };
   let running = false;
   let closed = false;
   let heartbeat;
 
-  async function drain() {
+  function status(phone) {
+    const job = get('SELECT failures FROM account_sync WHERE phone=?', phone);
+    if (!job) return 'synced';
+    return job.failures ? 'retrying' : 'queued';
+  }
+
+  async function drain(preferredPhone) {
     if (running || closed) return;
     running = true;
     try {
       for (let count = 0; count < 30 && !closed; count++) {
         const job = transaction(() => {
           const now = Date.now();
-          const row = get('SELECT * FROM account_sync WHERE retry_at<=? AND lease_until<=? ORDER BY retry_at,phone LIMIT 1', now, now);
+          const ready = 'SELECT * FROM account_sync WHERE retry_at<=? AND lease_until<=?';
+          const preferred = preferredPhone && get(ready + ' AND phone=?', now, now, preferredPhone);
+          const row = preferred || get(ready + ' ORDER BY retry_at,phone LIMIT 1', now, now);
           if (!row) return null;
           const lease = randomUUID();
           run('UPDATE account_sync SET lease=?,lease_until=? WHERE phone=?', lease, now + 120_000, row.phone);
@@ -133,5 +142,17 @@ export function createAccountSync({ get, run, transaction, store, interval }) {
   }
   const timer = setInterval(drain, interval);
   timer.unref();
-  return () => { closed = true; clearInterval(timer); clearInterval(heartbeat); };
+  return {
+    async syncNow(phone) {
+      void drain(phone);
+      const deadline = Date.now() + 2000;
+      let state = status(phone);
+      while (!closed && state === 'queued' && Date.now() < deadline) {
+        await delay(50);
+        if (!closed) state = status(phone);
+      }
+      return state;
+    },
+    stop() { closed = true; clearInterval(timer); clearInterval(heartbeat); },
+  };
 }

@@ -254,7 +254,7 @@ function invitationReceipt(result) {
   openDialog(`${modalHeading(t('invitationCreated'), t('invitationShare'))}<p><bdi>${escape(result.user.phone)}</bdi></p>
     <p class="invitation-code"><bdi>${escape(result.code)}</bdi></p>
     <p class="muted">${t('invitationExpires')} ${localeTime(result.expiresAt)}</p>
-    <p class="muted">${t(result.firebaseSync === 'queued' ? 'firebaseSyncQueued' : 'firebaseSyncDisabled')}</p>
+    <p class="muted">${t({ synced: 'firebaseSyncDone', queued: 'firebaseSyncQueued', retrying: 'firebaseSyncRetrying', disabled: 'firebaseSyncDisabled' }[result.firebaseSync])}</p>
     <button class="button primary" data-action="copy-reference" data-reference="${escape(result.code)}">${icon('copy')}${t('copyInvitation')}</button>`);
 }
 function confirmAccountRemoval(id) {
@@ -490,6 +490,7 @@ function authFrame(content) {
   return `<div class="auth-layout"><header class="auth-header"><div class="brand">${brand()}</div><div class="auth-tools">${installControl()}${fullscreenControl()}${languageBtn()}</div></header><div class="auth-body"><div class="auth-card">${content}</div><div class="auth-art" aria-hidden="true"></div></div></div>`;
 }
 function auth() {
+  if (state.authStep === 'invitation') return invitationScreen(state.login.phone);
   const signup = state.authMode === 'signup';
   const code = state.authStep === 'code';
   const phone = escape(state.login.phone);
@@ -502,16 +503,24 @@ function auth() {
     ${state.config.firebase ? '<div id="firebase-recaptcha"></div>' : ''}
     ${code ? `<p>${t('verificationCountdown')} <bdi data-verification-time role="timer"></bdi></p>` : ''}
     <p class="auth-status" data-verification-lock hidden></p>
-    <form data-form="${code ? 'verify' : 'phone'}" class="form-stack">
+    <form data-form="${code ? 'verify' : 'phone'}" class="form-stack" ${code ? '' : 'novalidate'}>
       ${code ? `<label>${t('enterCode')}<input class="code-input" name="code" dir="ltr" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" maxlength="6" required></label>`
       : `${signup ? `<label>${t('registrationName')}<input name="name" autocomplete="name" maxlength="72" required value="${escape(state.login.name)}"></label><label>${t('accountType')}<select name="role"><option value="customer">${local(roles.customer)}</option><option value="agent" ${state.login.role === 'agent' ? 'selected' : ''}>${local(roles.agent)}</option></select></label>` : ''}
       <label>${t('phone')}<input name="phone" type="tel" dir="ltr" autocomplete="tel" placeholder="05XXXXXXXX" value="${phone}" required maxlength="28"></label>`}
-      <button class="button primary" type="submit" ${state.config.sms === false ? 'disabled' : ''}>${t(code ? 'verify' : 'sendCode')}${arrow()}</button>
+      <button class="button primary" type="submit" ${state.config.sms === false && (code || !state.config.invitationSignIn) ? 'disabled' : ''}>${t(code ? 'verify' : 'phoneContinue')}${arrow()}</button>
       <p id="auth-error" class="auth-error" role="alert" hidden></p>
     </form>
     ${code ? `<div class="auth-links"><button class="text-button" data-action="change-phone" aria-expanded="${!!state.login.editPhone}">${t('changePhone')}</button><button class="text-button" data-action="resend">${t('resend')}</button></div>
       ${state.login.editPhone ? `<form data-form="edit-phone" class="form-stack"><label>${t('phone')}<input name="phone" type="tel" dir="ltr" autocomplete="tel" maxlength="28" required value="${phone}"></label><button class="button secondary" type="submit">${t('sendCode')}</button></form>` : ''}`
       : `<button class="text-button auth-switch" data-action="auth-switch">${t(signup ? 'login' : 'signup')}</button>`}`);
+}
+function invitationScreen(phone) {
+  return authFrame(`<h1>${t('invitationTitle')}</h1><p>${t('invitationUse')} <bdi>${escape(phone)}</bdi></p>
+    <form class="form-stack" data-form="invitation">
+      <label>${t('invitationCode')}<input class="code-input" name="invitation" dir="ltr" inputmode="numeric" placeholder="000000" maxlength="8" required></label>
+      <button class="button primary" type="submit">${t('verify')}</button>
+      <p id="auth-error" class="auth-error" role="alert" hidden></p>
+    </form><button class="text-button auth-switch" data-action="${state.user ? 'logout' : 'change-phone'}">${t(state.user ? 'logout' : 'changePhone')}</button>`);
 }
 function pending() {
   if (state.user.reviewOnly && (state.user.approval === 'approved' || state.user.needsRegistration)) {
@@ -519,12 +528,7 @@ function pending() {
       ${trackingDetails()}<p>${t('reviewSignInAgain')}</p><button class="button primary" data-action="logout">${t('login')}</button>`);
   }
   if (state.user.approval === 'pending' && state.user.invitationPending) {
-    return authFrame(`<h1>${t('invitationTitle')}</h1><p>${t('invitationUse')}</p>
-      <form class="form-stack" data-form="invitation">
-        <label>${t('invitationCode')}<input class="code-input" name="invitation" dir="ltr" inputmode="numeric" placeholder="000000" maxlength="8" required></label>
-        <button class="button primary" type="submit">${t('verify')}</button>
-        <p id="auth-error" class="auth-error" role="alert" hidden></p>
-      </form><button class="text-button auth-switch" data-action="logout">${t('logout')}</button>`);
+    return invitationScreen(state.user.phone);
   }
   if (state.user.approval === 'pending' && state.user.needsRegistration) return registrationForm();
   if (state.user.approval === 'pending') {
@@ -532,7 +536,7 @@ function pending() {
       <span class="review-mark" aria-hidden="true">${icon('clipboard-check')}</span>
       <h1 id="review-heading">${t('pendingTitle')}</h1><p>${t('reviewDescription')}</p>
       <ol class="review-steps" aria-label="${t('reviewSteps')}">
-        <li>${icon('check')}<span>${t('reviewPhone')}</span></li>
+        <li>${icon('check')}<span>${t(state.user.invitationActivated ? 'reviewInviteConfirmed' : 'reviewPhone')}</span></li>
         <li>${icon('check')}<span>${t('reviewReceived')}</span></li>
         <li aria-current="step">${icon('hourglass')}<strong>${t('reviewActive')}</strong></li>
       </ol>
@@ -926,14 +930,26 @@ function firebaseError(error) {
   if (/^auth\/[a-z0-9-]{2,80}$/.test(error?.code)) result.providerCode = error.code;
   return result;
 }
-async function sendCode(phone) {
+async function sendCode(phone, signup) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) throw new Error('invalid_phone');
+  const { method } = await api('/auth/check', 'POST', { phone: normalized });
+  if (method === 'invitation') {
+    state.login = { phone: normalized };
+    state.authStep = 'invitation';
+    render();
+    return;
+  }
+  if (signup) {
+    const name = registrationName(signup.name);
+    if (!name) throw new Error('invalid_registration_name');
+    Object.assign(state.login, { name, role: signup.role });
+  }
+  if (state.config.sms === false) throw new Error('sms_unavailable');
   let result;
   if (state.config.firebase) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) throw new Error('invalid_phone');
     try {
       const { requestFirebaseCode } = await import('/assets/firebase-auth.js?v=3');
-      await api('/auth/check', 'POST', { phone: normalized });
       const session = await requestFirebaseCode(
         state.config.firebase, normalized, state.lang, document.querySelector('#firebase-recaptcha'),
         { visible: firebaseCaptchaVisible },
@@ -947,7 +963,7 @@ async function sendCode(phone) {
       throw failure;
     }
   } else {
-    result = await api('/auth/send', 'POST', { phone });
+    result = await api('/auth/send', 'POST', { phone: normalized });
   }
   Object.assign(state.login, result, {
     expiresAt: Date.now() + (result.expiresAt - result.serverTime), resend: Date.now() + 55000,
@@ -1233,7 +1249,11 @@ document.addEventListener('click', async event => {
       return render();
     }
     if (action === 'auth-switch') { state.authMode = state.authMode === 'login' ? 'signup' : 'login'; return render(); }
-    if (action === 'change-phone') { state.login.editPhone = !state.login.editPhone; return render(); }
+    if (action === 'change-phone') {
+      if (state.authStep === 'invitation') state.authStep = 'phone';
+      else state.login.editPhone = !state.login.editPhone;
+      return render();
+    }
     if (action === 'check-approval' || action === 'resend') {
       target.dataset.waiting = '1';
       target.disabled = true;
@@ -1314,11 +1334,9 @@ document.addEventListener('submit', async event => {
   if (authForm) showAuthError();
   try {
     if (mode === 'phone') {
-      const signup = state.authMode === 'signup';
-      const name = signup ? registrationName(data.get('name')) : '';
-      if (signup && !name) throw new Error('invalid_registration_name');
-      Object.assign(state.login, { name, role: signup ? data.get('role') : null });
-      await sendCode(data.get('phone'));
+      const signup = state.authMode === 'signup' ? { name: data.get('name'), role: data.get('role') } : null;
+      if (!signup) Object.assign(state.login, { name: '', role: null });
+      await sendCode(data.get('phone'), signup);
     } else if (mode === 'edit-phone') {
       await sendCode(data.get('phone'));
     } else if (mode === 'verify') {
@@ -1332,7 +1350,13 @@ document.addEventListener('submit', async event => {
       await refresh();
       render();
     } else if (mode === 'invitation') {
-      state.user = await api('/registration/invitation', 'POST', { code: translatedDigits(String(data.get('invitation')).trim()) });
+      const code = translatedDigits(String(data.get('invitation')).trim());
+      state.user = state.user
+        ? await api('/registration/invitation', 'POST', { code })
+        : await api('/auth/invitation', 'POST', { phone: state.login.phone, code });
+      state.login = {};
+      state.authMode = 'login';
+      state.authStep = 'phone';
       render();
     } else if (mode === 'admin-create-user') {
       const name = registrationName(data.get('name'));

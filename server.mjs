@@ -257,7 +257,7 @@ export function makeApp({
       throw new StartupConfigurationError('ADMIN_PHONE already belongs to a non-admin account.');
     }
   }
-  const stopAccountSync = createAccountSync({ get, run, transaction, store: cloudAccounts, interval: accountSyncInterval });
+  const accountSync = createAccountSync({ get, run, transaction, store: cloudAccounts, interval: accountSyncInterval });
   const limits = new Map();
   const cleanup = setInterval(() => {
     const time = Date.now();
@@ -278,17 +278,23 @@ export function makeApp({
     if (entry.count >= max) fail(429, 'rate_limited');
     entry.count++;
   }
-  function setSession(res, user) {
+  function createSession(user) {
     const token = randomBytes(32).toString('hex');
     const age = user.approval === 'pending' ? reviewSessionAge : sessionAge;
     const time = Date.now();
     run('INSERT INTO sessions(token,user_id,expires,account_expires) VALUES(?,?,?,?)', digest(token), user.id, time + age * 1000, time + sessionAge * 1000);
-    res.setHeader('Set-Cookie', cookie(token, age));
-    return registrationUser(user);
+    return { token, age, user: registrationUser(user) };
+  }
+  function respondWithSession(res, session) {
+    res.setHeader('Set-Cookie', cookie(session.token, session.age));
+    return send(res, 200, session.user);
   }
   function registrationUser(user, reviewOnly = false) {
     const view = reviewOnly ? { approval: user.approval, needsRegistration: !!user.needs_registration } : publicUser(user);
-    return { ...view, reviewOnly, tracking: registration.tracking(user), invitationPending: registration.invitationPending(user.id) };
+    return {
+      ...view, reviewOnly, tracking: registration.tracking(user), invitationPending: registration.invitationPending(user.id),
+      invitationActivated: registration.invitationActivated(user.id),
+    };
   }
   function cookie(token, age) {
     return `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${production ? '; Secure' : ''}`;
@@ -326,6 +332,7 @@ export function makeApp({
 
   function completePhoneLogin(phone, data, req, res, firebaseUid) {
     checkPendingRemoval(phone);
+    requireSmsAccess(phone);
     let user = byPhone(phone);
     if (user?.approval === 'blocked') fail(403, 'account_blocked');
     if (!user) {
@@ -338,7 +345,16 @@ export function makeApp({
     if (firebaseUid && user.firebase_uid !== firebaseUid) run('UPDATE users SET firebase_uid=? WHERE id=?', firebaseUid, user.id);
     const token = tokenFrom(req);
     if (token) run('DELETE FROM sessions WHERE token = ?', token);
-    return send(res, 200, setSession(res, user));
+    return respondWithSession(res, createSession(user));
+  }
+
+  function requireSmsAccess(phone) {
+    if (registration.activeInvitationAccount(phone)) fail(409, 'invitation_required');
+  }
+
+  function invitationCode(value) {
+    if (typeof value !== 'string' || !/^(?:\d{6}|\d{8})$/.test(value)) fail(400, 'invalid_invitation');
+    return value;
   }
 
   async function api(req, res, url) {
@@ -349,17 +365,37 @@ export function makeApp({
       get('SELECT id FROM users LIMIT 1');
       return send(res, 200, { ok: true });
     }
-    if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), firebase, ai: !!assistantKey, market: true, addressLookup: !!geocodingKey });
+    if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), invitationSignIn: true, firebase, ai: !!assistantKey, market: true, addressLookup: !!geocodingKey });
     if (pathname === '/api/demo') fail(404, 'not_found');
     if (method === 'POST' && pathname === '/api/auth/check') {
+      rate('auth-lookup:' + req.socket.remoteAddress, 180, 60_000);
       const phone = phoneNumber((await body(req)).phone);
+      checkPendingRemoval(phone);
+      if (registration.activeInvitationAccount(phone)) return send(res, 200, { method: 'invitation' });
       registration.check(phone);
-      return send(res, 200, { ok: true });
+      return send(res, 200, { method: 'sms' });
+    }
+    if (method === 'POST' && pathname === '/api/auth/invitation') {
+      rate('invite-login:' + req.socket.remoteAddress, 50, 60_000);
+      const data = await body(req);
+      const phone = phoneNumber(data.phone);
+      const code = invitationCode(data.code);
+      const account = registration.activeInvitationAccount(phone);
+      if (!account) fail(400, 'invalid_invitation');
+      const session = registration.redeemInvitation(account.id, code, () => {
+        const token = tokenFrom(req);
+        if (token) run('DELETE FROM sessions WHERE token=?', token);
+        run('DELETE FROM phone_challenges WHERE phone=?', phone);
+        ops.audit(account.id, account.id, 'invitation', 'issued', 'activated');
+        return createSession(account);
+      });
+      return respondWithSession(res, session);
     }
     if (method === 'POST' && pathname === '/api/auth/challenge') {
       if (!verifyIdentity) fail(404, 'not_found');
       const data = await body(req);
       const phone = phoneNumber(data.phone);
+      requireSmsAccess(phone);
       const session = input(data.session, 4096, true);
       registration.check(phone);
       rate('send:' + phone, 1, 55000);
@@ -369,6 +405,7 @@ export function makeApp({
     if (method === 'POST' && pathname === '/api/auth/send') {
       if (!sms) fail(503, 'sms_unavailable');
       const phone = phoneNumber((await body(req)).phone);
+      requireSmsAccess(phone);
       registration.check(phone);
       rate('send:' + phone, 1, 55000);
       rate('send-hour:' + phone, 6, 3600000);
@@ -378,6 +415,7 @@ export function makeApp({
     if (method === 'POST' && pathname === '/api/auth/verify') {
       const data = await body(req);
       const phone = phoneNumber(data.phone);
+      requireSmsAccess(phone);
       if (!sms && !verifyIdentity) fail(503, 'sms_unavailable');
       const code = input(data.code, 6, true);
       if (!/^\d{6}$/.test(code)) fail(400, 'invalid_code');
@@ -422,8 +460,7 @@ export function makeApp({
     if (!user) fail(401, 'unauthorized');
     if (reviewOnly) fail(403, 'review_session_only');
     if (method === 'POST' && pathname === '/api/registration/invitation') {
-      const { code } = await body(req);
-      if (typeof code !== 'string' || !/^(?:\d{6}|\d{8})$/.test(code)) fail(400, 'invalid_invitation');
+      const code = invitationCode((await body(req)).code);
       registration.redeemInvitation(user.id, code);
       return send(res, 200, registrationUser(user));
     }
@@ -619,26 +656,28 @@ export function makeApp({
       const name = registrationName(data.name);
       if (!name) fail(400, 'invalid_registration_name');
       if (!['customer', 'agent'].includes(data.role)) fail(400, 'invalid_input');
-      return send(res, 201, transaction(() => {
+      const created = transaction(() => {
         checkPendingRemoval(phone);
         if (byPhone(phone)) fail(409, 'phone_in_use');
         const { lastInsertRowid: id } = createUser(phone, name, data.role, 'pending', 1);
         const invitation = registration.issueInvitation(id);
         ops.audit(id, user.id, 'invitation', null, 'issued');
-        return { user: registrationUser(byPhone(phone)), ...invitation, firebaseSync: cloudAccounts ? 'queued' : 'disabled' };
-      }));
+        return { user: registrationUser(byPhone(phone)), ...invitation };
+      });
+      return send(res, 201, { ...created, firebaseSync: await accountSync.syncNow(phone) });
     }
     const inviteMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/invitation$/);
     if (inviteMatch && method === 'POST') {
       if (user.role !== 'admin') fail(403, 'forbidden');
       await actionBody();
       const id = Number(inviteMatch[1]);
-      return send(res, 200, transaction(() => {
+      const reissued = transaction(() => {
         const account = get("SELECT * FROM users WHERE id=? AND role<>'admin' AND approval='pending'", id);
         if (!account || !registration.invitationPending(id)) fail(409, 'invitation_unavailable');
         ops.audit(id, user.id, 'invitation', 'issued', 'reissued');
-        return { user: registrationUser(account), ...registration.issueInvitation(id), firebaseSync: cloudAccounts ? 'queued' : 'disabled' };
-      }));
+        return { user: registrationUser(account), ...registration.issueInvitation(id) };
+      });
+      return send(res, 200, { ...reissued, firebaseSync: await accountSync.syncNow(reissued.user.phone) });
     }
     const userMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
     const evidenceMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/registration$/);
@@ -739,7 +778,7 @@ export function makeApp({
   }
 
   const server = createWebServer(firebase, api);
-  server.on('close', () => { clearInterval(cleanup); stopAccountSync(); db.close(); });
+  server.on('close', () => { clearInterval(cleanup); accountSync.stop(); db.close(); });
   return server;
 }
 

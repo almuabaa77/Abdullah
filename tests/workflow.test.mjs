@@ -196,7 +196,7 @@ test('address lookup is limited to an incomplete registration and keeps the map 
   await account('/registration/address', 'POST', { location: evidence.location }, 403);
 });
 
-test('administrator invitations bind a unique phone and can be redeemed only once after mobile verification', async t => {
+test('administrator invitations activate a unique phone without SMS, with an atomic one-time session', async t => {
   const base = await start(t);
   const admin = client(base);
   const invited = client(base);
@@ -211,18 +211,29 @@ test('administrator invitations bind a unique phone and can be redeemed only onc
   const conflict = await admin('/admin/users', 'POST', { ...details, phone: '+966550001068' }, 409);
   assert.equal(conflict.error, 'phone_in_use');
   await invited('/registration/invitation', 'POST', { code: first.code }, 401);
-  const account = await login(invited, details.phone);
-  await login(other, '0550001069', { name: 'صالح راشد الحربي', role: 'customer' });
-  await other('/registration/invitation', 'POST', { code: first.code }, 400);
+  assert.deepEqual(await invited('/auth/check', 'POST', { phone: details.phone }), { method: 'invitation' });
+  assert.equal((await invited('/auth/send', 'POST', { phone: details.phone }, 409)).error, 'invitation_required');
+  await invited('/auth/verify', 'POST', { phone: details.phone, code: testPin, challenge: 'irrelevant' }, 409);
+  await invited('/registration', 'POST', evidence, 401);
+  await other('/auth/invitation', 'POST', { phone: adminPhone, code: first.code }, 400);
+  await other('/auth/invitation', 'POST', { phone: '0550001069', code: first.code }, 400);
+  const invalidFirst = first.code === '000000' ? '000001' : '000000';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const result = await invited('/auth/invitation', 'POST', { phone: details.phone, code: invalidFirst }, 400);
+    assert.equal(result.error, attempt < 4 ? 'invalid_invitation' : 'invitation_expired');
+  }
+  assert.equal((await invited('/auth/invitation', 'POST', { phone: details.phone, code: first.code }, 400)).error, 'invitation_expired');
+  const replacement = await admin('/admin/users/' + first.user.id + '/invitation', 'POST', {});
+  const invalid = replacement.code === '000000' ? '000001' : '000000';
+  await invited('/auth/invitation', 'POST', { phone: details.phone, code: invalid }, 400);
+  const account = await invited('/auth/invitation', 'POST', { phone: details.phone, code: replacement.code });
+  assert.equal(account.invitationPending, false);
+  assert.equal(account.invitationActivated, true);
   assert.equal(account.id, first.user.id);
   assert.equal(account.tracking.reference, first.user.tracking.reference);
-  await invited('/registration', 'POST', evidence, 403);
-  const replacement = await admin('/admin/users/' + account.id + '/invitation', 'POST', {});
-  const invalid = replacement.code === '000000' ? '000001' : '000000';
-  await invited('/registration/invitation', 'POST', { code: invalid }, 400);
-  const redeemed = await invited('/registration/invitation', 'POST', { code: replacement.code });
-  assert.equal(redeemed.invitationPending, false);
-  await invited('/registration/invitation', 'POST', { code: replacement.code }, 400);
+  assert.equal((await invited('/me')).user.id, account.id);
+  await other('/auth/invitation', 'POST', { phone: details.phone, code: replacement.code }, 400);
+  assert.deepEqual(await other('/auth/check', 'POST', { phone: details.phone }), { method: 'sms' });
   await admin('/admin/users/' + account.id + '/invitation', 'POST', {}, 409);
   const saved = await invited('/registration', 'POST', evidence);
   assert.equal(saved.tracking.reference, account.tracking.reference);
@@ -491,7 +502,7 @@ test('verification expires after two minutes and locks the number on three wrong
   assert.equal(locked.retryAt - locked.serverTime, 31 * 60_000);
   await account('/auth/check', 'POST', { phone: second.phone }, 429);
   now = locked.retryAt;
-  assert.deepEqual(await account('/auth/check', 'POST', { phone: second.phone }), { ok: true });
+  assert.deepEqual(await account('/auth/check', 'POST', { phone: second.phone }), { method: 'sms' });
 });
 
 test('an older pending-session credential retains tracking without giving account access', async t => {
@@ -570,7 +581,7 @@ test('Firestore synchronization saves private account metadata, retries failures
   await login(admin, adminPhone);
   const created = await admin('/admin/users', 'POST', { phone: pendingPhone, name: 'سالم عمر الحربي', role: 'customer' }, 201);
   assert.match(created.code, /^\d{6}$/);
-  assert.equal(created.firebaseSync, 'queued');
+  assert.equal(created.firebaseSync, 'retrying');
   await until(() => documents.has(pendingPhone), 'Firestore job should retry the failed write');
   const synced = documents.get(pendingPhone);
   assert.equal(synced.phone, pendingPhone);
@@ -578,8 +589,7 @@ test('Firestore synchronization saves private account metadata, retries failures
   assert.equal(synced.role, 'customer');
   assert.match(synced.invitation.codeHash, /^[a-f0-9]{64}$/);
   assert.equal(Object.hasOwn(synced.invitation, 'code'), false);
-  await login(customer, pendingPhone);
-  await customer('/registration/invitation', 'POST', { code: created.code });
+  await customer('/auth/invitation', 'POST', { phone: pendingPhone, code: created.code });
   await until(() => documents.get(pendingPhone)?.invitation?.usedAt, 'Firestore should receive the redemption timestamp');
   assert.equal(documents.get(pendingPhone).invitation.codeHash, null);
   await customer('/admin/users/' + created.user.id, 'DELETE', { confirmation: pendingPhone }, 403);
@@ -589,6 +599,8 @@ test('Firestore synchronization saves private account metadata, retries failures
   assert.equal((await customer('/me')).user, null);
   await until(() => !documents.has(pendingPhone), 'Firestore should remove the account');
   const replacement = await admin('/admin/users', 'POST', { phone: pendingPhone, name: 'سالم عمر الحربي', role: 'customer' }, 201);
+  assert.equal(replacement.firebaseSync, 'synced');
+  assert.equal(documents.get(pendingPhone).accountId, replacement.user.id);
   assert.ok(replacement.user.id > created.user.id);
   assert.equal((await admin('/admin/users/1', 'DELETE', { confirmation: adminPhone }, 403)).error, 'admin_account_protected');
 });

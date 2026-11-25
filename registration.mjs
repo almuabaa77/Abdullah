@@ -70,6 +70,13 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
   function invitationPending(userId) {
     return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND used IS NULL', userId);
   }
+  function activeInvitationAccount(phone) {
+    return get(`SELECT u.* FROM users u JOIN registration_invites i ON i.user_id=u.id
+      WHERE u.phone=? AND u.role IN ('customer','agent') AND u.approval='pending' AND i.used IS NULL`, phone);
+  }
+  function invitationActivated(userId) {
+    return !!get('SELECT 1 FROM registration_invites WHERE user_id=? AND used IS NOT NULL', userId);
+  }
   function inviteDigest(userId, code) {
     return createHmac('sha256', key).update(`invite:${userId}:${code}`).digest();
   }
@@ -81,21 +88,22 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
     userId, inviteDigest(userId, code), expiresAt);
     return { code, expiresAt };
   }
-  function redeemInvitation(userId, code) {
+  function redeemInvitation(userId, code, activate = () => null) {
     const outcome = transaction(() => {
       const row = get('SELECT * FROM registration_invites WHERE user_id=? AND used IS NULL', userId);
       const account = get('SELECT approval FROM users WHERE id=?', userId);
-      if (!row || account?.approval !== 'pending') return 'invitation_unavailable';
+      if (!row || account?.approval !== 'pending') return { error: 'invitation_unavailable' };
       const time = clock();
-      if (row.expires <= time || row.attempts >= 5) return 'invitation_expired';
+      if (row.expires <= time || row.attempts >= 5) return { error: 'invitation_expired' };
       if (!timingSafeEqual(row.digest, inviteDigest(userId, code))) {
         run('UPDATE registration_invites SET attempts=attempts+1 WHERE user_id=?', userId);
-        return row.attempts >= 4 ? 'invitation_expired' : 'invalid_invitation';
+        return { error: row.attempts >= 4 ? 'invitation_expired' : 'invalid_invitation' };
       }
       run('UPDATE registration_invites SET used=?, digest=NULL WHERE user_id=?', time, userId);
-      return null;
+      return { session: activate() };
     });
-    if (outcome) fail(400, outcome);
+    if (outcome.error) fail(400, outcome.error);
+    return outcome.session;
   }
   function tracking(user) {
     let row = get('SELECT reference,submitted,decided FROM registration_tracking WHERE user_id=?', user.id);
@@ -109,7 +117,10 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
     }
     return row || null;
   }
-  return { check, issue, reserve, finish, saveEvidence, evidence, invitationPending, issueInvitation, redeemInvitation, tracking };
+  return {
+    check, issue, reserve, finish, saveEvidence, evidence, invitationPending, activeInvitationAccount,
+    invitationActivated, issueInvitation, redeemInvitation, tracking,
+  };
 }
 
 export function registrationPacket(data, fail) {
