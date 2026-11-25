@@ -254,7 +254,18 @@ function invitationReceipt(result) {
   openDialog(`${modalHeading(t('invitationCreated'), t('invitationShare'))}<p><bdi>${escape(result.user.phone)}</bdi></p>
     <p class="invitation-code"><bdi>${escape(result.code)}</bdi></p>
     <p class="muted">${t('invitationExpires')} ${localeTime(result.expiresAt)}</p>
+    <p class="muted">${t(result.firebaseSync === 'queued' ? 'firebaseSyncQueued' : 'firebaseSyncDisabled')}</p>
     <button class="button primary" data-action="copy-reference" data-reference="${escape(result.code)}">${icon('copy')}${t('copyInvitation')}</button>`);
+}
+function confirmAccountRemoval(id) {
+  const account = state.users.find(entry => entry.id === Number(id));
+  if (!account || account.role === 'admin') throw new Error('not_found');
+  openDialog(`${modalHeading(t('deleteAccount'), t('deleteAccountDetails'))}
+    <p><strong>${escape(account.name)}</strong> · <bdi>${escape(account.phone)}</bdi></p>
+    <form class="form-stack" data-form="delete-account" data-id="${account.id}">
+      <label>${t('confirm_account_phone')}<input name="confirmation" type="tel" dir="ltr" maxlength="28" autocomplete="off" required></label>
+      <button type="submit" class="button danger">${icon('trash-2')}${t('deleteAccount')}</button>
+    </form>`);
 }
 function userResults() {
     const query = state.userQuery.trim().toLowerCase();
@@ -375,6 +386,7 @@ async function manageUser(id) {
   if (account.approval !== 'blocked') actions.push(['blocked', t('block')]);
   openDialog(`${modalHeading(t('userManage'), '<bdi>' + escape(account.phone) + '</bdi>')}
     ${account.trackingReference ? `<p class="muted">${t('trackingReference')} <bdi>${escape(account.trackingReference)}</bdi></p>` : ''}
+    ${account.firebaseSync ? `<p class="muted">${t({ queued: 'firebaseSyncQueued', retrying: 'firebaseSyncRetrying', synced: 'firebaseSyncDone', disabled: 'firebaseSyncDisabled' }[account.firebaseSync])}</p>` : ''}
     <form class="form-stack" data-form="manage-user" data-id="${id}" data-agent="${account.role === 'agent'}">
     <label>${t('accountName')}<input name="name" value="${escape(account.name)}" maxlength="72" required></label>
     ${selectedChoice('city', t('city'), [['none', '—'], ...cityOptions()], account.city || 'none')}
@@ -390,7 +402,8 @@ async function manageUser(id) {
     </fieldset>` : ''}
     <p class="muted fine-print">${t('blockHint')}</p>${agentFields}
     ${account.invitationPending && account.approval === 'pending' ? `<button type="button" class="button secondary" data-action="admin-renew-invite" data-id="${account.id}">${t('renewInvitation')}</button>` : ''}
-    <button class="button primary">${t('save')}</button></form>
+    <div class="auth-links"><button class="button primary">${t('save')}</button>
+    <button class="button secondary" type="button" data-action="admin-delete-user" data-id="${id}">${icon('trash-2')}${t('deleteAccount')}</button></div></form>
     <section class="timeline-section"><h3>${t('audit')}</h3>
       ${audit.length ? `<ol class="request-timeline">${audit.map(entry => `<li>
         <span>${escape(entry.actor_name)} · ${entry.field === 'approval' ? t(approvalLabel[entry.current] || 'auditUpdate') : t(auditFields[entry.field] || 'auditUpdate')}</span>
@@ -508,7 +521,7 @@ function pending() {
   if (state.user.approval === 'pending' && state.user.invitationPending) {
     return authFrame(`<h1>${t('invitationTitle')}</h1><p>${t('invitationUse')}</p>
       <form class="form-stack" data-form="invitation">
-        <label>${t('invitationCode')}<input class="code-input" name="invitation" dir="ltr" inputmode="numeric" maxlength="8" required></label>
+        <label>${t('invitationCode')}<input class="code-input" name="invitation" dir="ltr" inputmode="numeric" placeholder="000000" maxlength="8" required></label>
         <button class="button primary" type="submit">${t('verify')}</button>
         <p id="auth-error" class="auth-error" role="alert" hidden></p>
       </form><button class="text-button auth-switch" data-action="logout">${t('logout')}</button>`);
@@ -1147,6 +1160,7 @@ document.addEventListener('click', async event => {
       return;
     }
     if (action === 'admin-create-user') return adminCreateForm();
+    if (action === 'admin-delete-user') return confirmAccountRemoval(id);
     if (action === 'admin-renew-invite') {
       target.disabled = true;
       try { invitationReceipt(await api('/admin/users/' + id + '/invitation', 'POST', {})); }
@@ -1327,6 +1341,12 @@ document.addEventListener('submit', async event => {
       await refresh();
       render();
       invitationReceipt(result);
+    } else if (mode === 'delete-account') {
+      const result = await api('/admin/users/' + id, 'DELETE', { confirmation: data.get('confirmation') });
+      dialog.close();
+      await refresh();
+      render();
+      flash(t(result.firebaseSync === 'queued' ? 'accountDeletedSyncQueued' : 'accountDeletedLocal'));
     } else if (mode === 'registration') {
       registrationError(form);
       const nationalId = translatedDigits(String(data.get('nationalId')).trim());

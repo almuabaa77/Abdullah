@@ -74,7 +74,7 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
     return createHmac('sha256', key).update(`invite:${userId}:${code}`).digest();
   }
   function issueInvitation(userId) {
-    const code = String(randomInt(100_000_000)).padStart(8, '0');
+    const code = String(randomInt(1_000_000)).padStart(6, '0');
     const expiresAt = clock() + 86_400_000;
     run(`INSERT INTO registration_invites(user_id,digest,expires,attempts) VALUES(?,?,?,0)
       ON CONFLICT(user_id) DO UPDATE SET digest=excluded.digest, expires=excluded.expires, attempts=0`,

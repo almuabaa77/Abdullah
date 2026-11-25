@@ -591,3 +591,5 @@ input[type=file]::file-selector-button { border: 0; border-radius: 6px; color: v
   .auth-card { max-width: 540px; }
   .auth-tools .icon-button { width: 33px; height: 33px; }
 }
+.button.danger { background: #a82540; color: #fff; border-color: #a82540; }
+.button.danger:hover { background: #811d31; border-color: #811d31; }

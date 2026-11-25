@@ -289,3 +289,17 @@ Object.assign(copy, {
   nearestLandmark: ['أقرب معلم والمسافة المباشرة', 'Nearest landmark and straight-line distance'],
   meters: ['م', 'm'],
 });
+
+Object.assign(copy, {
+  firebaseSyncQueued: ['أُضيفت مزامنة Firestore إلى قائمة الانتظار.', 'Firestore sync is queued.'],
+  firebaseSyncRetrying: ['تعذّرت مزامنة Firestore مؤقتًا. سيعيد الخادم المحاولة.', 'Firestore sync failed temporarily. The server will retry.'],
+  firebaseSyncDone: ['تمت المزامنة مع Firestore.', 'Synced with Firestore.'],
+  firebaseSyncDisabled: ['الحساب محفوظ في وصلة. تحتاج مزامنة Firestore إلى إعداد الخادم.', 'The account is saved in Waslah. Firestore sync needs server configuration.'],
+  deleteAccount: ['حذف الحساب نهائيًا', 'Permanently delete account'],
+  deleteAccountDetails: ['يحذف الإجراء الحساب ورموزه ومستنداته وطلباته الخاصة، وينهي جلساته. تبقى طلبات الآخرين ويُفك إسنادها إذا كان الحساب معقّبًا.', 'This removes the account, its codes, documents, and owned requests, and ends its sessions. Requests owned by others remain and are unassigned where applicable.'],
+  confirm_account_phone: ['أعد كتابة رقم جوال الحساب لتأكيد الحذف.', 'Re-enter the account’s mobile number to confirm deletion.'],
+  admin_account_protected: ['حساب المدير الأساسي محمي من الحذف.', 'The primary administrator account is protected.'],
+  accountDeletedSyncQueued: ['حُذف الحساب من وصلة وأُضيف حذفه من Firestore إلى قائمة المزامنة.', 'The Waslah account was deleted and Firestore deletion was queued.'],
+  accountDeletedLocal: ['حُذف الحساب من وصلة. مزامنة Firestore غير مفعّلة.', 'The Waslah account was deleted. Firestore sync is disabled.'],
+  account_removal_pending: ['يجري إنهاء حذف هذا الرقم من Firebase. حاول مجددًا بعد اكتمال المزامنة.', 'Deletion for this number is pending in Firebase. Try again after sync completes.'],
+});

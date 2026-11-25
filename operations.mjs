@@ -83,6 +83,25 @@ export function createOperations({ get, all, run, input, fail, stamp }) {
       audit(account.id, actor, 'city', account.city, city);
     }
   }
+  function deleteAccount(account, reopen) {
+    const { id, phone } = account;
+    for (const request of all("SELECT * FROM requests WHERE agent_id=? AND customer_id<>? AND status IN ('new','in_progress','needs_info')", id, id)) {
+      reopen(request, 'admin');
+    }
+    run('UPDATE requests SET agent_id=NULL WHERE agent_id=?', id);
+    const ownedRequests = 'SELECT id FROM requests WHERE customer_id=?';
+    for (const [table, personColumn] of [['ratings', 'agent_id'], ['offers', 'agent_id'], ['messages', 'user_id'], ['events', 'user_id']]) {
+      run(`DELETE FROM ${table} WHERE ${personColumn}=? OR request_id IN (${ownedRequests})`, id, id);
+    }
+    for (const table of ['tracking', 'attachments']) run(`DELETE FROM ${table} WHERE request_id IN (${ownedRequests})`, id);
+    run('DELETE FROM requests WHERE customer_id=?', id);
+    for (const table of ['sessions', 'registration_evidence', 'registration_tracking', 'registration_invites']) {
+      run(`DELETE FROM ${table} WHERE user_id=?`, id);
+    }
+    run('DELETE FROM account_audit WHERE user_id=? OR actor_id=?', id, id);
+    run('DELETE FROM phone_challenges WHERE phone=?', phone);
+    run('DELETE FROM users WHERE id=?', id);
+  }
   const catalogView = row => row && ({
     id: row.id, category: row.category, specialty: row.specialty, active: Boolean(row.active),
     name: [row.name_ar, row.name_en], description: [row.description_ar, row.description_en],
@@ -106,5 +125,5 @@ export function createOperations({ get, all, run, input, fail, stamp }) {
     }
     return catalogView(get('SELECT * FROM catalog_services WHERE id=?', id));
   }
-  return { audit, auditFor, updateIdentity, catalog, service, saveService };
+  return { audit, auditFor, updateIdentity, deleteAccount, catalog, service, saveService };
 }

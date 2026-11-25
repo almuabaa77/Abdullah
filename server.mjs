@@ -14,6 +14,7 @@ import { registrationName } from './public/registration-name.js';
 import { preciseLocation } from './public/registration-fields.js';
 import { createRegistration, registrationPacket } from './registration.mjs';
 import { lookupAddress } from './geocoding.mjs';
+import { createAccountSync, firebaseAccountStore, migrateAccountSync } from './firebase-accounts.mjs';
 import { createMarketplace, isActive, migrateMarketplace } from './marketplace.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -145,9 +146,11 @@ function openDatabase(path) {
   `);
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'needs_registration')) {
+    const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
+    if (!userColumns.has('needs_registration')) {
       db.exec('ALTER TABLE users ADD COLUMN needs_registration INTEGER NOT NULL DEFAULT 0');
     }
+    if (!userColumns.has('firebase_uid')) db.exec('ALTER TABLE users ADD COLUMN firebase_uid TEXT');
     if (!db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'account_expires')) {
       db.exec('ALTER TABLE sessions ADD COLUMN account_expires INTEGER');
     }
@@ -159,6 +162,7 @@ function openDatabase(path) {
   }
   migrateMarketplace(db);
   migrateOperations(db);
+  migrateAccountSync(db);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   return db;
 }
@@ -169,6 +173,7 @@ export function makeApp({
   firebase,
   verifyFirebase, confirmFirebase = exchangeFirebaseCode, verificationClock = Date.now,
   geocodingKey = process.env.GOOGLE_GEOCODING_API_KEY, placesKey = process.env.GOOGLE_PLACES_API_KEY, reverseAddress = lookupAddress,
+  accountStore, accountSyncInterval = 1500,
 } = {}) {
   const production = process.env.NODE_ENV === 'production';
   const provider = process.env.AUTH_PROVIDER;
@@ -209,12 +214,25 @@ export function makeApp({
   const cookieName = process.env.FIREBASE_HOSTING === '1' ? '__session' : 'waslah_session';
   const dbPath = database ?? (process.env.DATABASE_PATH || resolve(root, production ? 'data/production.sqlite' : 'data/waslah.sqlite'));
   const db = openDatabase(dbPath);
+  let cloudAccounts = accountStore;
+  if (cloudAccounts === undefined) {
+    try {
+      cloudAccounts = firebaseAccountStore(firebase, process.env.FIREBASE_SERVICE_ACCOUNT_JSON, process.env.FIREBASE_DELETE_AUTH_USERS === '1');
+    } catch {
+      console.warn('[waslah] Firebase account sync configuration is invalid. Check FIREBASE_SERVICE_ACCOUNT_JSON and the Firebase project.');
+      cloudAccounts = null;
+    }
+  }
   const get = (sql, ...args) => db.prepare(sql).get(...args);
   const all = (sql, ...args) => db.prepare(sql).all(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
   const createUser = (phone, name, role, approval, needsRegistration = 0) => run(
-    'INSERT OR IGNORE INTO users(phone,name,role,approval,created,needs_registration) VALUES(?,?,?,?,?,?)', phone, name, role, approval, now(), needsRegistration);
+    'INSERT OR IGNORE INTO users(id,phone,name,role,approval,created,needs_registration) SELECT last_id+1,?,?,?,?,?,? FROM account_sequence WHERE id=1',
+    phone, name, role, approval, now(), needsRegistration);
   const byPhone = phone => get('SELECT * FROM users WHERE phone = ?', phone);
+  function checkPendingRemoval(phone) {
+    if (cloudAccounts && get("SELECT 1 FROM account_sync WHERE phone=? AND operation='delete'", phone)) fail(409, 'account_removal_pending');
+  }
   const transaction = action => {
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -239,6 +257,7 @@ export function makeApp({
       throw new StartupConfigurationError('ADMIN_PHONE already belongs to a non-admin account.');
     }
   }
+  const stopAccountSync = createAccountSync({ get, run, transaction, store: cloudAccounts, interval: accountSyncInterval });
   const limits = new Map();
   const cleanup = setInterval(() => {
     const time = Date.now();
@@ -305,7 +324,8 @@ export function makeApp({
     return response.json();
   }
 
-  function completePhoneLogin(phone, data, req, res) {
+  function completePhoneLogin(phone, data, req, res, firebaseUid) {
+    checkPendingRemoval(phone);
     let user = byPhone(phone);
     if (user?.approval === 'blocked') fail(403, 'account_blocked');
     if (!user) {
@@ -315,6 +335,7 @@ export function makeApp({
       createUser(phone, name, data.role, 'pending', 1);
       user = byPhone(phone);
     }
+    if (firebaseUid && user.firebase_uid !== firebaseUid) run('UPDATE users SET firebase_uid=? WHERE id=?', firebaseUid, user.id);
     const token = tokenFrom(req);
     if (token) run('DELETE FROM sessions WHERE token = ?', token);
     return send(res, 200, setSession(res, user));
@@ -363,10 +384,13 @@ export function makeApp({
       const challenge = input(data.challenge, 48, true);
       const session = registration.reserve(phone, challenge);
       let valid;
+      let firebaseUid;
       try {
         if (session && verifyIdentity) {
           const proof = await confirmFirebase(firebase, session, code, req.headers.origin);
-          valid = !!proof && verifiedPhone(await verifyIdentity(proof), firebase.projectId) === phone;
+          const claims = proof && await verifyIdentity(proof);
+          valid = verifiedPhone(claims, firebase.projectId) === phone;
+          if (valid && typeof claims.sub === 'string' && claims.sub.length <= 128) firebaseUid = claims.sub;
         } else if (!session && sms) {
           const check = await sms('VerificationCheck', { To: phone, Code: code });
           valid = check.status === 'approved';
@@ -383,7 +407,7 @@ export function makeApp({
       if (!valid && locked) fail(429, 'verification_locked', { retryAt: locked, serverTime: verificationClock() });
       if (!valid) fail(400, 'invalid_code');
       if (!accepted) fail(400, 'verification_expired');
-      return completePhoneLogin(phone, data, req, res);
+      return completePhoneLogin(phone, data, req, res, firebaseUid);
     }
     if (pathname === '/api/auth/firebase') fail(404, 'not_found');
     const token = tokenFrom(req);
@@ -399,7 +423,7 @@ export function makeApp({
     if (reviewOnly) fail(403, 'review_session_only');
     if (method === 'POST' && pathname === '/api/registration/invitation') {
       const { code } = await body(req);
-      if (typeof code !== 'string' || !/^\d{8}$/.test(code)) fail(400, 'invalid_invitation');
+      if (typeof code !== 'string' || !/^(?:\d{6}|\d{8})$/.test(code)) fail(400, 'invalid_invitation');
       registration.redeemInvitation(user.id, code);
       return send(res, 200, registrationUser(user));
     }
@@ -582,8 +606,10 @@ export function makeApp({
       if (user.role !== 'admin') fail(403, 'forbidden');
       const pendingInvites = new Set(all('SELECT user_id FROM registration_invites WHERE used IS NULL').map(row => row.user_id));
       const references = new Map(all('SELECT user_id,reference FROM registration_tracking').map(row => [row.user_id, row.reference]));
+      const queued = new Map(all('SELECT phone,failures FROM account_sync').map(row => [row.phone, row.failures]));
       return send(res, 200, market.directory().map(account => ({
         ...account, invitationPending: pendingInvites.has(account.id), trackingReference: references.get(account.id) || null,
+        firebaseSync: !cloudAccounts ? 'disabled' : queued.has(account.phone) ? (queued.get(account.phone) ? 'retrying' : 'queued') : 'synced',
       })));
     }
     if (method === 'POST' && pathname === '/api/admin/users') {
@@ -594,11 +620,12 @@ export function makeApp({
       if (!name) fail(400, 'invalid_registration_name');
       if (!['customer', 'agent'].includes(data.role)) fail(400, 'invalid_input');
       return send(res, 201, transaction(() => {
+        checkPendingRemoval(phone);
         if (byPhone(phone)) fail(409, 'phone_in_use');
         const { lastInsertRowid: id } = createUser(phone, name, data.role, 'pending', 1);
         const invitation = registration.issueInvitation(id);
         ops.audit(id, user.id, 'invitation', null, 'issued');
-        return { user: registrationUser(byPhone(phone)), ...invitation };
+        return { user: registrationUser(byPhone(phone)), ...invitation, firebaseSync: cloudAccounts ? 'queued' : 'disabled' };
       }));
     }
     const inviteMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/invitation$/);
@@ -610,7 +637,7 @@ export function makeApp({
         const account = get("SELECT * FROM users WHERE id=? AND role<>'admin' AND approval='pending'", id);
         if (!account || !registration.invitationPending(id)) fail(409, 'invitation_unavailable');
         ops.audit(id, user.id, 'invitation', 'issued', 'reissued');
-        return { user: registrationUser(account), ...registration.issueInvitation(id) };
+        return { user: registrationUser(account), ...registration.issueInvitation(id), firebaseSync: cloudAccounts ? 'queued' : 'disabled' };
       }));
     }
     const userMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
@@ -622,6 +649,19 @@ export function makeApp({
     if (userMatch && method === 'GET') {
       if (user.role !== 'admin') fail(403, 'forbidden');
       return send(res, 200, ops.auditFor(Number(userMatch[1])));
+    }
+    if (userMatch && method === 'DELETE') {
+      if (user.role !== 'admin') fail(403, 'forbidden');
+      const { confirmation } = await actionBody();
+      const id = Number(userMatch[1]);
+      return send(res, 200, transaction(() => {
+        const account = get('SELECT * FROM users WHERE id=?', id);
+        if (!account) fail(404, 'not_found');
+        if (account.role === 'admin') fail(403, 'admin_account_protected');
+        if (normalizePhone(confirmation) !== account.phone) fail(400, 'confirm_account_phone');
+        ops.deleteAccount(account, market.reopen);
+        return { deleted: true, firebaseSync: cloudAccounts ? 'queued' : 'disabled' };
+      }));
     }
     if (userMatch && method === 'PATCH') {
       if (user.role !== 'admin') fail(403, 'forbidden');
@@ -699,7 +739,7 @@ export function makeApp({
   }
 
   const server = createWebServer(firebase, api);
-  server.on('close', () => { clearInterval(cleanup); db.close(); });
+  server.on('close', () => { clearInterval(cleanup); stopAccountSync(); db.close(); });
   return server;
 }
 

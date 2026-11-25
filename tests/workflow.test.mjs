@@ -4,13 +4,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { makeApp } from '../server.mjs';
 import { lookupAddress } from '../geocoding.mjs';
 
 const testPin = '637592';
 const adminPhone = '0550001017';
-async function start(t, { sms = true, database = ':memory:', marketClock, verificationClock, geocodingKey, reverseAddress } = {}) {
+async function start(t, { sms = true, database = ':memory:', marketClock, verificationClock, geocodingKey, reverseAddress, accountStore } = {}) {
   const pending = new Set();
   const verifySms = sms ? async (operation, values) => {
     if (operation === 'Verifications') {
@@ -20,7 +21,7 @@ async function start(t, { sms = true, database = ':memory:', marketClock, verifi
     const approved = values.Code === testPin && pending.delete(values.To);
     return { status: approved ? 'approved' : 'pending' };
   } : undefined;
-  const server = makeApp({ database, adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, geocodingKey, reverseAddress, assistantKey: '' });
+  const server = makeApp({ database, adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, geocodingKey, reverseAddress, accountStore, accountSyncInterval: 15, assistantKey: '' });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
@@ -204,7 +205,7 @@ test('administrator invitations bind a unique phone and can be redeemed only onc
   await admin('/admin/users', 'POST', details, 401);
   await login(admin, adminPhone);
   const first = await admin('/admin/users', 'POST', details, 201);
-  assert.match(first.code, /^\d{8}$/);
+  assert.match(first.code, /^\d{6}$/);
   assert.equal(first.user.invitationPending, true);
   assert.match(first.user.tracking.reference, /^WSR-[A-F0-9]{16}$/);
   const conflict = await admin('/admin/users', 'POST', { ...details, phone: '+966550001068' }, 409);
@@ -217,7 +218,7 @@ test('administrator invitations bind a unique phone and can be redeemed only onc
   assert.equal(account.tracking.reference, first.user.tracking.reference);
   await invited('/registration', 'POST', evidence, 403);
   const replacement = await admin('/admin/users/' + account.id + '/invitation', 'POST', {});
-  const invalid = replacement.code === '00000000' ? '00000001' : '00000000';
+  const invalid = replacement.code === '000000' ? '000001' : '000000';
   await invited('/registration/invitation', 'POST', { code: invalid }, 400);
   const redeemed = await invited('/registration/invitation', 'POST', { code: replacement.code });
   assert.equal(redeemed.invitationPending, false);
@@ -542,4 +543,81 @@ test('map lookup provides the street and measures distance to the nearest return
     landmark: { name: 'حديقة الحي', distance: 111 },
   });
   assert.equal(calls.length, 2);
+});
+
+async function until(check, description) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await delay(20);
+  }
+  assert.fail(description);
+}
+
+test('Firestore synchronization saves private account metadata, retries failures, and removes deleted documents', async t => {
+  const documents = new Map();
+  let failOnce = true;
+  const pendingPhone = '+966550001077';
+  const base = await start(t, { accountStore: {
+    async upsert(phone, document) {
+      if (phone === pendingPhone && failOnce) { failOnce = false; throw new Error('temporary outage'); }
+      documents.set(phone, document);
+    },
+    async remove(phone) { documents.delete(phone); },
+  } });
+  const admin = client(base);
+  const customer = client(base);
+  await login(admin, adminPhone);
+  const created = await admin('/admin/users', 'POST', { phone: pendingPhone, name: 'سالم عمر الحربي', role: 'customer' }, 201);
+  assert.match(created.code, /^\d{6}$/);
+  assert.equal(created.firebaseSync, 'queued');
+  await until(() => documents.has(pendingPhone), 'Firestore job should retry the failed write');
+  const synced = documents.get(pendingPhone);
+  assert.equal(synced.phone, pendingPhone);
+  assert.equal(synced.name, created.user.name);
+  assert.equal(synced.role, 'customer');
+  assert.match(synced.invitation.codeHash, /^[a-f0-9]{64}$/);
+  assert.equal(Object.hasOwn(synced.invitation, 'code'), false);
+  await login(customer, pendingPhone);
+  await customer('/registration/invitation', 'POST', { code: created.code });
+  await until(() => documents.get(pendingPhone)?.invitation?.usedAt, 'Firestore should receive the redemption timestamp');
+  assert.equal(documents.get(pendingPhone).invitation.codeHash, null);
+  await customer('/admin/users/' + created.user.id, 'DELETE', { confirmation: pendingPhone }, 403);
+  await admin('/admin/users/' + created.user.id, 'DELETE', { confirmation: '0550001078' }, 400);
+  const removed = await admin('/admin/users/' + created.user.id, 'DELETE', { confirmation: pendingPhone });
+  assert.deepEqual(removed, { deleted: true, firebaseSync: 'queued' });
+  assert.equal((await customer('/me')).user, null);
+  await until(() => !documents.has(pendingPhone), 'Firestore should remove the account');
+  const replacement = await admin('/admin/users', 'POST', { phone: pendingPhone, name: 'سالم عمر الحربي', role: 'customer' }, 201);
+  assert.ok(replacement.user.id > created.user.id);
+  assert.equal((await admin('/admin/users/1', 'DELETE', { confirmation: adminPhone }, 403)).error, 'admin_account_protected');
+});
+
+test('deleting an agent reopens customer requests and deleting the owner removes dependent data', async t => {
+  const base = await start(t);
+  const admin = client(base);
+  const customer = client(base);
+  const specialist = client(base);
+  await login(admin, adminPhone);
+  const person = await register(customer, admin, '0550001079', 'بدر عبيد العتيبي');
+  const agent = await register(specialist, admin, '0550001080', 'مراد فتحي صالح', 'agent');
+  const { id: service } = await publish(admin);
+  const { id } = await customer('/requests', 'POST', {
+    service, details: 'تمديد الزيارة', file: { name: 'visit.pdf', data: Buffer.from('%PDF-1.4\n').toString('base64') },
+  }, 201);
+  const path = '/requests/' + id;
+  await admin(path, 'PATCH', { agent_id: agent.id });
+  await specialist(path + '/messages', 'POST', { text: 'تم استلام الطلب' }, 201);
+  await admin('/admin/users/' + agent.id, 'DELETE', { confirmation: agent.phone });
+  assert.equal((await specialist('/me')).user, null);
+  const reopened = await customer(path);
+  assert.equal(reopened.agent_id, null);
+  assert.equal(reopened.status, 'new');
+  assert.equal(reopened.mode, 'admin');
+  assert.equal(reopened.attachment, 'visit.pdf');
+  assert.deepEqual(reopened.messages, []);
+  await admin('/admin/users/' + person.id, 'DELETE', { confirmation: person.phone });
+  assert.equal((await customer('/me')).user, null);
+  await admin(path, 'GET', undefined, 404);
+  await admin(path + '/attachment', 'GET', undefined, 404);
 });
