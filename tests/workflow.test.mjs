@@ -5,7 +5,7 @@ import { makeApp } from '../server.mjs';
 
 const testPin = '637592';
 const adminPhone = '0550001017';
-async function start(t, { sms = true, marketClock, verificationClock } = {}) {
+async function start(t, { sms = true, marketClock, verificationClock, geocodingKey, reverseAddress } = {}) {
   const pending = new Set();
   const verifySms = sms ? async (operation, values) => {
     if (operation === 'Verifications') {
@@ -15,7 +15,7 @@ async function start(t, { sms = true, marketClock, verificationClock } = {}) {
     const approved = values.Code === testPin && pending.delete(values.To);
     return { status: approved ? 'approved' : 'pending' };
   } : undefined;
-  const server = makeApp({ database: ':memory:', adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, assistantKey: '' });
+  const server = makeApp({ database: ':memory:', adminPhone: sms ? adminPhone : undefined, verifySms, marketClock, verificationClock, geocodingKey, reverseAddress, assistantKey: '' });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
@@ -52,6 +52,7 @@ test('serves the home page and frontend assets from the public folder', async t 
   assert.equal(metadata.display, 'standalone');
   for (const icon of metadata.icons) assert.equal((await fetch(base + icon.src, { method: 'HEAD' })).status, 200);
   assert.equal((await fetch(base + '/sw.js', { method: 'HEAD' })).status, 200);
+  assert.equal((await fetch(base + '/offline.html', { method: 'HEAD' })).status, 200);
 });
 
 test('serves the app shell for HTML navigation without masking missing APIs or assets', async t => {
@@ -125,6 +126,7 @@ test('mobile signup, approval, scoped service delivery and bilingual assistant',
   await admin('/admin/users/' + registered.id, 'PATCH', { approval: 'approved' }, 409);
   await customer('/registration', 'POST', { ...evidence, location: { ...evidence.location, accuracy: 100 } }, 400);
   await customer('/registration', 'POST', evidence);
+  assert.equal((await customer('/registration', 'POST', evidence)).needsRegistration, false);
   assert.deepEqual(await admin('/admin/users/' + registered.id + '/registration'), evidence);
   await customer('/admin/users/' + registered.id + '/registration', 'GET', undefined, 403);
   await admin('/admin/users/' + registered.id, 'PATCH', { approval: 'approved' }, 409);
@@ -163,6 +165,27 @@ test('mobile signup, approval, scoped service delivery and bilingual assistant',
   assert.match((await customer('/assistant', 'POST', { question: 'How do I track my request?', lang: 'en' })).answer, /request/i);
   await customer('/auth/logout', 'POST', {});
   assert.equal((await customer('/me')).user, null);
+});
+
+test('address lookup is limited to an incomplete registration and keeps the map key private', async t => {
+  const base = await start(t, { geocodingKey: 'private-map-key', reverseAddress: async (key, location, lang) => {
+    assert.equal(key, 'private-map-key');
+    assert.deepEqual(location, evidence.location);
+    assert.equal(lang, 'ar');
+    return 'طريق الملك عبدالعزيز، الرياض';
+  } });
+  const account = client(base);
+  const config = await account('/config');
+  assert.equal(config.addressLookup, true);
+  assert.ok(!JSON.stringify(config).includes('private-map-key'));
+  await account('/registration/address', 'POST', { location: evidence.location }, 401);
+  await login(account, '0550001088', { name: 'سعد ناصر الشمري', role: 'customer' });
+  await account('/registration/address', 'POST', { location: { ...evidence.location, accuracy: 99 } }, 400);
+  assert.deepEqual(await account('/registration/address', 'POST', { location: evidence.location, lang: 'ar' }), {
+    address: 'طريق الملك عبدالعزيز، الرياض',
+  });
+  await account('/registration', 'POST', evidence);
+  await account('/registration/address', 'POST', { location: evidence.location }, 403);
 });
 
 test('runtime never exposes test accounts or codes and reports unavailable SMS accurately', async t => {

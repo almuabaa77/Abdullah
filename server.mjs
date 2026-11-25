@@ -11,7 +11,9 @@ import { answerConversation, prepareConversation } from './assistant.mjs';
 import { exchangeFirebaseCode, readFirebaseConfig, verifiedPhone, verifierFor } from './firebase-provider.mjs';
 import { normalizePhone } from './public/phone.js';
 import { registrationName } from './public/registration-name.js';
+import { preciseLocation } from './public/registration-fields.js';
 import { createRegistration, registrationPacket } from './registration.mjs';
+import { lookupAddress } from './geocoding.mjs';
 import { createMarketplace, isActive, migrateMarketplace } from './marketplace.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -155,6 +157,7 @@ export function makeApp({
   adminPhone = process.env.ADMIN_PHONE, assistantKey = process.env.OPENAI_API_KEY,
   firebase,
   verifyFirebase, confirmFirebase = exchangeFirebaseCode, verificationClock = Date.now,
+  geocodingKey = process.env.GOOGLE_GEOCODING_API_KEY, reverseAddress = lookupAddress,
 } = {}) {
   const production = process.env.NODE_ENV === 'production';
   const provider = process.env.AUTH_PROVIDER;
@@ -308,7 +311,7 @@ export function makeApp({
       get('SELECT id FROM users LIMIT 1');
       return send(res, 200, { ok: true });
     }
-    if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), firebase, ai: !!assistantKey, market: true });
+    if (method === 'GET' && pathname === '/api/config') return send(res, 200, { sms: !!(sms || verifyIdentity), firebase, ai: !!assistantKey, market: true, addressLookup: !!geocodingKey });
     if (pathname === '/api/demo') fail(404, 'not_found');
     if (method === 'POST' && pathname === '/api/auth/check') {
       const phone = phoneNumber((await body(req)).phone);
@@ -375,12 +378,28 @@ export function makeApp({
     const user = token && get('SELECT u.* FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.token = ? AND s.expires > ?', token, Date.now());
     if (method === 'GET' && pathname === '/api/me') return send(res, 200, { user: user ? publicUser(user) : null });
     if (!user) fail(401, 'unauthorized');
-    if (method === 'POST' && pathname === '/api/registration') {
+    if (method === 'POST' && pathname === '/api/registration/address') {
       if (user.approval !== 'pending' || !user.needs_registration) fail(403, 'forbidden');
+      if (!geocodingKey) fail(503, 'address_lookup_unavailable');
+      const { location, lang } = await body(req);
+      if (!preciseLocation(location)) fail(400, 'invalid_location');
+      rate('registration-address:' + user.id, 12, 3_600_000);
+      let address;
+      try { address = await reverseAddress(geocodingKey, location, lang === 'en' ? 'en' : 'ar'); }
+      catch { fail(503, 'address_lookup_unavailable'); }
+      return send(res, 200, { address });
+    }
+    if (method === 'POST' && pathname === '/api/registration') {
+      if (user.approval !== 'pending') fail(403, 'forbidden');
+      if (!user.needs_registration) {
+        if (get('SELECT 1 FROM registration_evidence WHERE user_id=?', user.id)) return send(res, 200, publicUser(user));
+        fail(403, 'forbidden');
+      }
       const packet = registrationPacket(await body(req, 2_820_000), fail);
       return send(res, 200, transaction(() => {
         const current = get('SELECT * FROM users WHERE id=?', user.id);
-        if (current.approval !== 'pending' || !current.needs_registration) fail(409, 'invalid_transition');
+        if (current.approval !== 'pending') fail(409, 'invalid_transition');
+        if (!current.needs_registration) return publicUser(current);
         registration.saveEvidence(user.id, packet);
         run('UPDATE users SET needs_registration=0 WHERE id=?', user.id);
         return publicUser({ ...current, needs_registration: 0 });

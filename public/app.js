@@ -2,6 +2,7 @@ import { categories, legacyServiceNames, statuses, roles } from './catalog.js';
 import { copy } from './copy.js';
 import { normalizePhone } from './phone.js';
 import { registrationName } from './registration-name.js';
+import { preciseLocation, validNationalId } from './registration-fields.js';
 import { activeLimit, cities, specialties, suggestedSpecialty } from './market.js';
 
 const app = document.querySelector('#app');
@@ -38,7 +39,10 @@ async function api(path, method = 'GET', payload) {
   const response = await fetch('/api' + path, {
     method, headers: payload === undefined ? {} : { 'Content-Type': 'application/json' },
     body: payload === undefined ? undefined : JSON.stringify(payload),
+    signal: path === '/registration' ? AbortSignal.timeout?.(25_000) : undefined,
   });
+  if (response.status === 413) throw new Error('too_large');
+  if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('server_error');
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error || 'error'), { retryAt: data.retryAt, serverTime: data.serverTime });
   return data;
@@ -103,13 +107,24 @@ function languageBtn() {
   return `<button class="language-button" data-action="language" aria-label="${t('language')}">${icon('globe-2')} <span>${state.lang === 'ar' ? 'English' : 'العربية'}</span></button>`;
 }
 let installPrompt;
+let installationComplete = false;
 function installControl() {
-  if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) return '';
+  if (installationComplete || matchMedia('(display-mode: standalone)').matches || navigator.standalone) return '';
   return `<button class="language-button" data-action="install" aria-label="${t('installApp')}">${icon('download')} <span>${t('installApp')}</span></button>`;
 }
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; });
-window.addEventListener('appinstalled', () => { installPrompt = undefined; app.querySelectorAll('[data-action="install"]').forEach(button => button.remove()); });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+window.addEventListener('appinstalled', () => {
+  installPrompt = undefined;
+  installationComplete = true;
+  app.querySelectorAll('[data-action="install"]').forEach(button => button.remove());
+});
+if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
+function installationHelp() {
+  if (!window.isSecureContext) return 'installSecure';
+  if (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'installIos';
+  if (/Android/i.test(navigator.userAgent)) return 'installAndroid';
+  return 'installDesktop';
+}
 function header() {
   const current = state.route === 'dashboard' ? 'dashboardTitle' : navigation().find(([route]) => route === state.route)?.[2] || (state.route === 'settings' ? 'profile' : state.route);
   const unread = state.events.some(event => !event.seen);
@@ -469,6 +484,19 @@ function auth() {
 }
 function pending() {
   if (state.user.approval === 'pending' && state.user.needsRegistration) return registrationForm();
+  if (state.user.approval === 'pending') {
+    return authFrame(`<section class="review-state" aria-labelledby="review-heading">
+      <span class="review-mark" aria-hidden="true">${icon('clipboard-check')}</span>
+      <h1 id="review-heading">${t('pendingTitle')}</h1><p>${t('reviewDescription')}</p>
+      <ol class="review-steps" aria-label="${t('reviewSteps')}">
+        <li>${icon('check')}<span>${t('reviewPhone')}</span></li>
+        <li>${icon('check')}<span>${t('reviewReceived')}</span></li>
+        <li aria-current="step">${icon('hourglass')}<strong>${t('reviewActive')}</strong></li>
+      </ol>
+      <p class="review-connection" data-review-status role="status"></p>
+      <div class="pending-actions"><button class="button primary" data-action="check-approval">${icon('refresh-cw')}${t('checkApproval')}</button><button class="button secondary" data-action="logout">${t('logout')}</button></div>
+    </section>`);
+  }
   const rejected = state.user.approval === 'rejected';
   const suspended = state.user.approval === 'suspended';
   return authFrame(`<span class="tile-icon ${rejected || suspended ? 'amber' : 'purple'}">${icon(rejected || suspended ? 'circle-alert' : 'clock-3')}</span>
@@ -478,18 +506,47 @@ function pending() {
 
 let registrationDraft = {};
 let registrationCamera;
+let reviewCheckedAt;
+let reviewDisconnected = false;
+function updateReviewStatus() {
+  const item = app.querySelector('[data-review-status]');
+  if (!item) return;
+  const message = !navigator.onLine || reviewDisconnected ? t('reviewOffline')
+    : reviewCheckedAt ? t('reviewUpdated') + ' ' + localeTime(reviewCheckedAt) : t('reviewConnecting');
+  if (item.textContent !== message) item.textContent = message;
+}
+async function refreshRegistrationStatus() {
+  const account = state.user;
+  try {
+    const { user } = await api('/me');
+    if (state.user !== account) return;
+    reviewCheckedAt = Date.now();
+    reviewDisconnected = false;
+    if (!user || user.approval !== account.approval || user.needsRegistration !== account.needsRegistration) {
+      state.user = user;
+      if (!user?.needsRegistration) registrationDraft = {};
+      if (user) await refresh();
+      render();
+    }
+  } catch {
+    if (state.user === account) reviewDisconnected = true;
+  }
+  updateReviewStatus();
+}
 function stopRegistrationCamera() {
   registrationCamera?.stream.getTracks().forEach(track => track.stop());
   registrationCamera = undefined;
 }
 function registrationForm() {
-  const location = registrationDraft.location;
+  const { location, addressStatus } = registrationDraft;
   return authFrame(`<h1>${t('registrationEvidence')}</h1><p>${t('registrationPrivacy')}</p>
-    <form class="form-stack" data-form="registration">
+    <form class="form-stack" data-form="registration" novalidate>
       <label>${t('nationalId')}<input name="nationalId" inputmode="numeric" dir="ltr" minlength="10" maxlength="10" value="${escape(registrationDraft.nationalId)}" required></label>
       <label>${t('registrationAddress')}<textarea name="address" minlength="10" maxlength="240" required>${escape(registrationDraft.address)}</textarea></label>
-      <button type="button" class="button secondary" data-action="registration-location">${icon('map-pin')}${t('captureLocation')}</button>
+      <button type="button" class="button secondary" data-action="registration-location">${icon('map-pin')}${t(state.config.addressLookup ? 'captureLocationAndAddress' : 'captureLocation')}</button>
+      ${state.config.addressLookup ? `<p class="muted fine-print">${t('addressLookupPrivacy')}</p>` : ''}
       ${location ? `<p class="muted" role="status">${t('locationAccuracy')} <bdi>±${Math.round(location.accuracy)} m</bdi></p>` : ''}
+      ${addressStatus ? `<p class="muted" role="status">${t(addressStatus)}</p>` : ''}
       <div class="registration-images">${[['selfie', 'selfie'], ['identity', 'identityPhoto']].map(([kind, label]) => `<figure>
         ${registrationDraft[kind] ? `<img alt="${t(label)}" src="data:image/jpeg;base64,${registrationDraft[kind]}">` : ''}
         <button type="button" class="button secondary" data-action="registration-camera" data-photo="${kind}">${icon('camera')}${t(label)}</button>
@@ -498,6 +555,7 @@ function registrationForm() {
         <button class="button primary" type="button" data-action="registration-capture">${t('capturePhoto')}</button>
         <button class="button secondary" type="button" data-action="registration-cancel">${t('cancel')}</button>
       </div></div>
+      <p class="registration-feedback" id="registration-feedback" role="alert" tabindex="-1" hidden></p>
       <button class="button primary" type="submit">${t('submitRegistration')}</button>
     </form><button class="text-button auth-switch" data-action="logout">${t('logout')}</button>`);
 }
@@ -524,30 +582,84 @@ async function activateRegistrationCamera(kind) {
   registrationCamera = { stream, video, kind };
   video.srcObject = stream;
   preview.hidden = false;
+  await video.play().catch(() => {});
   preview.scrollIntoView({ block: 'nearest' });
 }
 function captureRegistrationPhoto() {
   const { video, kind } = registrationCamera || {};
   if (!video?.videoWidth) throw new Error('registration_camera_unavailable');
   const canvas = document.createElement('canvas');
-  const scale = Math.min(1, 1440 / Math.max(video.videoWidth, video.videoHeight));
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-  registrationDraft[kind] = canvas.toDataURL('image/jpeg', 0.86).split(',')[1];
+  let photo;
+  for (const [size, quality] of [[1440, 0.82], [1280, 0.7], [1050, 0.63], [900, 0.55]]) {
+    const scale = Math.min(1, size / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const image = canvas.toDataURL('image/jpeg', quality);
+    if (image.startsWith('data:image/jpeg;base64,') && image.length <= 310_000) {
+      photo = image.split(',')[1];
+      break;
+    }
+  }
+  if (!photo) throw new Error('registration_photo_too_large');
+  registrationDraft[kind] = photo;
   render();
 }
 async function captureRegistrationLocation() {
   if (!navigator.geolocation) throw new Error('invalid_location');
   const draft = registrationDraft;
-  const { coords } = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {
-    enableHighAccuracy: true, maximumAge: 0, timeout: 20_000,
-  })).catch(() => { throw new Error('location_permission'); });
+  const coords = await new Promise((resolve, reject) => {
+    function finish(callback, value) {
+      clearTimeout(timeout);
+      navigator.geolocation.clearWatch(watch);
+      callback(value);
+    }
+    const timeout = setTimeout(() => finish(reject, new Error('invalid_location')), 20_000);
+    const watch = navigator.geolocation.watchPosition(({ coords }) => {
+      if (preciseLocation(coords)) finish(resolve, coords);
+    }, error => {
+      finish(reject, new Error(error.code === 1 ? 'location_permission' : 'invalid_location'));
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 });
+  });
   if (draft !== registrationDraft) return;
   const { latitude, longitude, accuracy } = coords;
-  if (accuracy > 50) throw new Error('invalid_location');
-  registrationDraft.location = { latitude, longitude, accuracy };
+  draft.location = { latitude, longitude, accuracy };
+  draft.addressStatus = 'address_enter_manually';
+  const previousAddress = draft.address;
+  if (state.config.addressLookup) {
+    try {
+      const { address } = await api('/registration/address', 'POST', { location: draft.location, lang: state.lang });
+      if (address && draft.address === previousAddress && (!draft.address?.trim() || draft.address === draft.autoAddress)) {
+        draft.address = address;
+        draft.autoAddress = address;
+        draft.addressStatus = 'address_check_suggestion';
+      }
+    } catch { draft.addressStatus = 'address_lookup_unavailable'; }
+  }
+  if (draft !== registrationDraft) return;
   render();
+}
+
+function registrationError(form, error) {
+  const item = form.querySelector('#registration-feedback');
+  for (const field of form.querySelectorAll('[aria-invalid]')) {
+    field.removeAttribute('aria-invalid');
+    field.removeAttribute('aria-describedby');
+  }
+  const fields = {
+    invalid_national_id: '[name="nationalId"]', invalid_registration_address: '[name="address"]',
+    invalid_location: '[data-action="registration-location"]', registration_selfie_required: '[data-photo="selfie"]',
+    registration_id_photo_required: '[data-photo="identity"]',
+  };
+  const field = fields[error] && form.querySelector(fields[error]);
+  item.hidden = !error;
+  const message = error === 'too_large' ? 'registration_upload_limit' : error;
+  item.textContent = error ? t(copy[message] ? message : 'registration_submit_failed') : '';
+  if (error) item.focus();
+  if (field) {
+    field.setAttribute('aria-invalid', 'true');
+    field.setAttribute('aria-describedby', item.id);
+  }
 }
 
 function render() {
@@ -564,6 +676,7 @@ function render() {
   }
   drawIcons();
   updateVerificationTimer();
+  updateReviewStatus();
 }
 function navigate(route, filter = 'all') {
   state.route = route;
@@ -832,12 +945,7 @@ async function refreshVisiblePage() {
   refreshingPage = true;
   try {
     if (state.user.approval !== 'approved') {
-      const { user } = await api('/me');
-      if (user?.id === state.user?.id && user.approval !== state.user.approval) {
-        state.user = user;
-        await refresh();
-        render();
-      }
+      await refreshRegistrationStatus();
       return;
     }
     if (dialog.open && dialog.dataset.live) {
@@ -883,6 +991,8 @@ async function refreshVisiblePage() {
 }
 setInterval(() => { refreshVisiblePage().catch(() => {}); }, 4500);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshVisiblePage().catch(() => {}); });
+window.addEventListener('online', () => { updateReviewStatus(); refreshVisiblePage().catch(() => {}); });
+window.addEventListener('offline', updateReviewStatus);
 
 async function submitMarket(id, action, payload = {}) {
   marketBusy = true;
@@ -972,7 +1082,7 @@ document.addEventListener('click', async event => {
     if (!action) return;
     if (action === 'install') {
       if (installPrompt) { const prompt = installPrompt; installPrompt = undefined; await prompt.prompt(); }
-      else openDialog(`${modalHeading(t('installApp'), t('installHelp'))}`);
+      else openDialog(`${modalHeading(t('installApp'))}<p>${t(installationHelp())}</p>`);
       return;
     }
     if (action === 'registration-camera' || action === 'registration-location') {
@@ -980,10 +1090,17 @@ document.addEventListener('click', async event => {
       try {
         if (action === 'registration-camera') await activateRegistrationCamera(target.dataset.photo);
         else await captureRegistrationLocation();
+      } catch (error) {
+        const form = target.closest('form');
+        if (form?.isConnected) registrationError(form, error.message);
       } finally { target.disabled = false; }
       return;
     }
-    if (action === 'registration-capture') return captureRegistrationPhoto();
+    if (action === 'registration-capture') {
+      try { captureRegistrationPhoto(); }
+      catch (error) { registrationError(target.closest('form'), error.message); }
+      return;
+    }
     if (action === 'registration-cancel') return render();
     if (action === 'language') {
       state.lang = state.lang === 'ar' ? 'en' : 'ar';
@@ -1022,6 +1139,8 @@ document.addEventListener('click', async event => {
     if (action === 'logout') {
       await api('/auth/logout', 'POST', {});
       registrationDraft = {};
+      reviewCheckedAt = undefined;
+      reviewDisconnected = false;
       Object.assign(state, { user: null, login: {}, authStep: 'phone', authMode: 'login', menu: '', route: 'dashboard', chats: [], assistantBusy: false });
       if (dialog.open) dialog.close();
       return render();
@@ -1032,7 +1151,7 @@ document.addEventListener('click', async event => {
       target.dataset.waiting = '1';
       target.disabled = true;
       try {
-        if (action === 'check-approval') await sessionCheck();
+        if (action === 'check-approval') await refreshRegistrationStatus();
         else {
           showAuthError();
           try { await sendCode(state.login.phone); }
@@ -1126,10 +1245,23 @@ document.addEventListener('submit', async event => {
       await refresh();
       render();
     } else if (mode === 'registration') {
-      state.user = await api('/registration', 'POST', {
-        ...registrationDraft, nationalId: translatedDigits(String(data.get('nationalId')).trim()), address: String(data.get('address')).trim(),
-      });
+      registrationError(form);
+      const nationalId = translatedDigits(String(data.get('nationalId')).trim());
+      const address = String(data.get('address')).trim();
+      const { location, selfie, identity } = registrationDraft;
+      if (!validNationalId(nationalId)) throw new Error('invalid_national_id');
+      if (address.length < 10 || address.length > 240) throw new Error('invalid_registration_address');
+      if (!preciseLocation(location)) throw new Error('invalid_location');
+      if (!selfie) throw new Error('registration_selfie_required');
+      if (!identity) throw new Error('registration_id_photo_required');
+      if (button) button.textContent = t('registrationSubmitting');
+      const account = state.user;
+      const user = await api('/registration', 'POST', { nationalId, address, location, selfie, identity });
+      if (state.user !== account) return;
+      state.user = user;
       registrationDraft = {};
+      reviewCheckedAt = Date.now();
+      reviewDisconnected = false;
       render();
     } else if (mode === 'create') {
       const result = await api('/requests', 'POST', {
@@ -1189,9 +1321,17 @@ document.addEventListener('submit', async event => {
     } else if (mode === 'assistant') await ask(String(data.get('question')));
   } catch (error) {
     if (authForm) showAuthError(error);
+    else if (mode === 'registration' && form.isConnected) registrationError(form, error.message);
     else report(error);
   }
-  finally { if (button) { delete button.dataset.waiting; button.disabled = false; } updateVerificationTimer(); }
+  finally {
+    if (button) {
+      delete button.dataset.waiting;
+      button.disabled = false;
+      if (mode === 'registration') button.textContent = t('submitRegistration');
+    }
+    updateVerificationTimer();
+  }
 });
 
 setInterval(updateVerificationTimer, 250);

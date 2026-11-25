@@ -507,3 +507,52 @@ input[type=file]::file-selector-button { border: 0; border-radius: 6px; color: v
 .registration-review{min-inline-size:0;overflow-wrap:anywhere}
 .registration-review .review-check{display:flex;gap:.5rem;align-items:center;margin-block-start:.75rem}
 .registration-review .review-check input{width:auto}
+
+.registration-feedback {
+  margin: 0;
+  border-inline-start: 3px solid #a63345;
+  border-radius: 9px;
+  background: #fff2f4;
+  padding: .75rem;
+  color: #88283b;
+}
+[data-form="registration"] [aria-invalid="true"] { outline: 2px solid #a63345; outline-offset: 2px; }
+.review-state { display: grid; gap: .9rem; }
+.review-state h1, .review-state p { margin: 0; }
+.review-mark {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 17px;
+  color: var(--accent);
+  background: var(--soft);
+}
+.review-mark::after {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--accent);
+  border-radius: inherit;
+  content: "";
+  animation: review-ring 2.4s ease-out infinite;
+}
+@keyframes review-ring {
+  0% { transform: scale(.94); opacity: .5; }
+  75%, 100% { transform: scale(1.24); opacity: 0; }
+}
+.review-steps { display: grid; gap: .45rem; padding: 0; margin: .3rem 0; list-style: none; }
+.review-steps li {
+  display: flex;
+  gap: .65rem;
+  align-items: center;
+  padding: .65rem .8rem;
+  border-radius: 10px;
+  background: #f5f8f7;
+  color: #21594b;
+}
+.review-steps li[aria-current="step"] { background: var(--soft); color: var(--accent-dark); }
+.review-steps svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.review-connection { color: var(--muted); font-size: .88rem; }
+@media (prefers-reduced-motion: reduce) { .review-mark::after { animation: none; opacity: .3; } }

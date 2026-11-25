@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
+import { preciseLocation, validNationalId } from './public/registration-fields.js';
 
 export const codeLifetime = 120_000;
 const lockDuration = 31 * 60_000;
@@ -71,23 +72,17 @@ export function createRegistration({ get, run, transaction, fail, secret, clock 
 
 export function registrationPacket(data, fail) {
   const nationalId = data.nationalId;
-  if (typeof nationalId !== 'string' || !/^[12]\d{9}$/.test(nationalId)) fail(400, 'invalid_national_id');
-  const checksum = [...nationalId].reduce((sum, digit, index) => {
-    const value = Number(digit) * (index % 2 === 0 ? 2 : 1);
-    return sum + (value > 9 ? value - 9 : value);
-  }, 0);
-  if (checksum % 10 !== 0) fail(400, 'invalid_national_id');
+  if (!validNationalId(nationalId)) fail(400, 'invalid_national_id');
   const address = typeof data.address === 'string' ? data.address.trim() : '';
-  const { latitude, longitude, accuracy } = data.location || {};
-  if (address.length < 10 || address.length > 240 || !Number.isFinite(latitude) || Math.abs(latitude) > 90
-      || !Number.isFinite(longitude) || Math.abs(longitude) > 180
-      || !Number.isFinite(accuracy) || accuracy <= 0 || accuracy > 50) fail(400, 'invalid_location');
-  for (const photo of [data.selfie, data.identity]) {
+  if (address.length < 10 || address.length > 240) fail(400, 'invalid_registration_address');
+  if (!preciseLocation(data.location)) fail(400, 'invalid_location');
+  const { latitude, longitude, accuracy } = data.location;
+  for (const [photo, error] of [[data.selfie, 'registration_selfie_required'], [data.identity, 'registration_id_photo_required']]) {
     if (typeof photo !== 'string' || photo.length > 1_400_000
-      || !/^[A-Za-z0-9+/]+={0,2}$/.test(photo)) fail(400, 'registration_photo_required');
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(photo)) fail(400, error);
     const bytes = Buffer.from(photo, 'base64');
     if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8
-      || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) fail(400, 'registration_photo_required');
+      || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) fail(400, error);
   }
   return { nationalId, address, location: { latitude, longitude, accuracy }, selfie: data.selfie, identity: data.identity };
 }

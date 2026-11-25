@@ -1,12 +1,35 @@
-self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+const cacheName = 'waslah-offline-v2';
+const publicFiles = ['/offline.html', '/offline.css', '/assets/waslah-192.png'];
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(cacheName);
+    await cache.addAll(publicFiles);
+    await self.skipWaiting();
+  })());
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const versions = await caches.keys();
+    await Promise.all(versions.filter(name => name.startsWith('waslah-offline-') && name !== cacheName).map(name => caches.delete(name)));
+    await self.clients.claim();
+  })());
+});
 
 self.addEventListener('fetch', event => {
   const { request } = event;
-  if (request.method !== 'GET' || request.mode !== 'navigate'
-      || new URL(request.url).pathname.startsWith('/api/')) return;
-  event.respondWith(fetch(request).catch(() => new Response(
-    '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>وصلة</title><main><p lang="ar" dir="rtl">تحتاج وصلة إلى اتصال بالإنترنت. أعد فتح الصفحة بعد عودة الاتصال.</p><p lang="en">Waslah needs an internet connection. Reopen this page when you reconnect.</p></main>',
-    { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } },
-  )));
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+  if (request.mode === 'navigate') {
+    event.respondWith(fetch(request).catch(async () => {
+      const cache = await caches.open(cacheName);
+      return await cache.match('/offline.html') || Response.error();
+    }));
+  } else if (publicFiles.includes(url.pathname)) {
+    event.respondWith(fetch(request).catch(async () => {
+      const cache = await caches.open(cacheName);
+      return await cache.match(url.pathname) || Response.error();
+    }));
+  }
 });
