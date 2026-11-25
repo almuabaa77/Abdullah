@@ -31,4 +31,4 @@
 - للرفع اليدوي من قسم Node.js، أنشئ حزمة التشغيل باستخدام `npm run package:hostinger -- /path/to/halaqat.zip`. ارفع الملف المضغوط وحدد `start.cjs` في مجلد الجذر `./`. الحزمة تضم التطبيق مبنيًا، ويمكن تشغيل أمر البناء الافتراضي للتحقق من ملفاتها.
 - اربط قاعدة MySQL مخصصة للتطبيق. اضبط `DATABASE_URL` أو القيم `DB_HOST` و`DB_PORT` و`DB_NAME` و`DB_USER` و`DB_PASSWORD`. ينشئ التطبيق جدول `halaqat_workspaces` عند بدء التشغيل.
 - اضبط `FIREBASE_WEB_CONFIG` و`BOOTSTRAP_UID` في متغيرات تشغيل Hostinger. يستخدم تطبيق Hostinger تسجيل الدخول الفعلي عبر Firebase.
-- استخدم `/api/health` للتحقق من بدء الخادم واتصال MySQL. نسخة Hostinger تخزّن بياناتها في MySQL، ونسخة Sites تخزّن بياناتها في D1.
+- بعد النشر افتح `/api/health` للتحقق من وصول الطلبات إلى التطبيق. يظهر `app: halaqat-al-khair` مع حالة قاعدة البيانات `database`. تشير `ready` إلى جاهزية التخزين و`not_configured` إلى نقص متغيرات MySQL و`unavailable` إلى تعذّر الاتصال أو إنشاء الجدول. تبدأ الصفحة الرئيسية وفحص الصحة قبل اكتمال الاتصال بقاعدة البيانات. نسخة Hostinger تخزّن بياناتها في MySQL، ونسخة Sites تخزّن بياناتها في D1.

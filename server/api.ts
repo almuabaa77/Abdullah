@@ -11,7 +11,7 @@ export type Env = { FIREBASE_WEB_CONFIG?: string; BOOTSTRAP_UID?: string }
 type Identity = { id: string; phone?: string; workspace: string; bootstrap?: User }
 type Payload = Record<string, unknown>
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
-class ApiError extends Error { constructor(message: string, public status = 400) { super(message) } }
+export class ApiError extends Error { constructor(message: string, public status = 400) { super(message) } }
 const deny = (msg = 'ليست لديك صلاحية تنفيذ هذه العملية'): never => { throw new ApiError(msg, 403) }
 const clean = (x: unknown, max = 160) => typeof x === 'string' ? x.trim().slice(0, max) : ''
 const required = (x: unknown, max = 160) => { const v = clean(x, max); if (!v) throw new ApiError('أكمل الحقول المطلوبة'); return v }
