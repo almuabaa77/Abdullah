@@ -11,7 +11,7 @@ function previewApi(): Plugin {
     configureServer(server) {
       mkdirSync('.preview', { recursive: true })
       const db = new DatabaseSync('.preview/workspaces.sqlite')
-      db.exec(readFileSync('db/migrations/0000_workspace.sql','utf8').replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'))
+      db.exec(readFileSync('drizzle/0000_workspace.sql','utf8').replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'))
       const repo: Repository = {
         async read(id) { return db.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(id) as Awaited<ReturnType<Repository['read']>> ?? null },
         async create(id,state) { db.prepare('INSERT OR IGNORE INTO workspaces(id,data) VALUES(?,?)').run(id,JSON.stringify(state)) },

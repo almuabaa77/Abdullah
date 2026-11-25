@@ -7,7 +7,7 @@
 - تثبيت الاعتماديات عبر `npm ci`.
 - تشغيل المعاينة عبر `npm run dev` والتحقق من الأنواع عبر `npm run check`.
 - بناء حزمة Worker وملفات PWA عبر `npm run build`. نقطة الدخول هي `dist/server/index.js`.
-- تطبيق `db/migrations/0000_workspace.sql` على قاعدة D1 المربوطة باسم `DB`.
+- تطبيق `drizzle/0000_workspace.sql` على قاعدة D1 المربوطة باسم `DB`.
 
 ## الحسابات
 

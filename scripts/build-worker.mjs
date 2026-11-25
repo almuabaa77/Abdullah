@@ -27,4 +27,4 @@ await build({entryPoints:['server/worker.ts'],outfile:'dist/server/index.js',bun
   }}]})
 await mkdir('dist/.openai',{recursive:true})
 await copyFile('.openai/hosting.json','dist/.openai/hosting.json')
-await cp('db/migrations','dist/db/migrations',{recursive:true})
+await cp('drizzle','dist/drizzle',{recursive:true})
