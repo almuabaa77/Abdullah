@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Award, BookOpen, CalendarDays, Check, ChevronDown, CircleCheck, Clock3, Ellipsis, ListFilter, Plus, Search, Sparkles, UserCheck, Users } from 'lucide-react'
-import { balanceFor, circleMeets, segmentLabel, statusFor, surahs } from './domain'
+import { balanceFor, circleMeets, isRecitationDue, recitationStatus, segmentLabel, statusFor, surahs } from './domain'
+import { RecitationBadge } from './recitation-roster'
 import { Avatar, Badge, Empty, StudentIndicators, dateLabel, matches, nameFor, useWorkspace } from './ui'
 
 export function Dashboard() {
@@ -15,16 +16,16 @@ export function Dashboard() {
   const complete = students.filter(s=>statusFor(records.get(s.id))==='complete').length
   const present = students.filter(s=>records.get(s.id)?.attendance==='present').length
   const absent = students.filter(s=>records.get(s.id)?.attendance==='absent').length
-  const recited = students.filter(s=>records.get(s.id)?.memorization.length).length
+  const recited = students.filter(s=>recitationStatus(records.get(s.id))==='complete').length
   const reviewed = students.filter(s=>records.get(s.id)?.review.length).length
-  const pending = students.length - recited
+  const pending = students.filter(s=>isRecitationDue(records.get(s.id))).length
   const percent = students.length ? Math.round(complete / students.length * 100) : 0
-  const visible = students.filter(s=>matches(s,query) && (filter==='all' || filter==='incomplete' && statusFor(records.get(s.id))!=='complete' || statusFor(records.get(s.id))===filter))
+  const visible = students.filter(s=>matches(s,query) && (filter==='all' || filter==='incomplete' && statusFor(records.get(s.id))!=='complete' || filter==='due' && isRecitationDue(records.get(s.id)) || recitationStatus(records.get(s.id))===filter))
   const cards = [
     {title:t('إجمالي الطلاب','Total students'),value:students.length, detail:circle?.name || t('جميع الحلقات','All circles'), icon:Users,color:'green'},
     {title:t('الحضور اليوم','Attendance today'),value:present, detail:t(`${absent} غائب اليوم`,`${absent} absent today`),icon:UserCheck,color:'blue'},
-    {title:t('سجّلوا التسميع','Recitations recorded'),value:recited,detail:t('من طلاب الحلقة','Circle students'),icon:BookOpen,color:'gold'},
-    {title:t('بانتظار التسميع','Awaiting recitation'),value:pending,detail:t('لم يسجل لهم بعد','Awaiting a record'),icon:Clock3,color:'orange'},
+    {title:t('أتمّوا التسميع','Completed recitation'),value:recited,detail:t('من طلاب الحلقة','Circle students'),icon:BookOpen,color:'gold'},
+    {title:t('بانتظار التسميع','Awaiting recitation'),value:pending,detail:t('لم يسمّعوا أو سمّعوا جزئيًا','Waiting or partially recited'),icon:Clock3,color:'orange'},
   ]
   const name = data.sample && en ? 'Abdulrahman' : data.user?.name.split(' ')[0]
   return <>
@@ -62,16 +63,16 @@ export function Dashboard() {
           <label className="search"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('ابحث عن طالب...','Search for a student...')} aria-label={t('ابحث عن طالب','Search students')} /></label>
           <label className="circle-picker filter-picker"><ListFilter size={17}/><select value={filter} onChange={e=>setFilter(e.target.value)} aria-label={t('تصفية الطلاب','Filter students')}>
             <option value="all">{t('كل الحالات','All statuses')}</option><option value="incomplete">{t('غير المكتملين','Incomplete')}</option>
-            <option value="complete">{t('مكتمل','Complete')}</option><option value="partial">{t('مكتمل جزئيًا','Partial')}</option>
-            <option value="pending">{t('لم يسجل بعد','Not recorded')}</option><option value="absent">{t('غائب','Absent')}</option><option value="leave">{t('مستأذن','On leave')}</option>
+            <option value="due">{t('بانتظار التسميع','To recite')}</option><option value="complete">{t('أتمّ التسميع','Recited')}</option><option value="partial">{t('تسميع جزئي','Partial')}</option>
+            <option value="awaiting">{t('لم يسمّع بعد','Awaiting recitation')}</option><option value="absent">{t('غائب','Absent')}</option><option value="leave">{t('مستأذن','On leave')}</option>
           </select><ChevronDown size={14}/></label>
         </div>
         <div className="roster-list">{visible.map(student => {
-          const d = records.get(student.id), status = statusFor(d)
+          const d = records.get(student.id), status = recitationStatus(d)
           return <article className={'student-row row-' + status} key={student.id}>
             <div className="student-top">
               <button className="student-name" onClick={()=>open(student)}><Avatar student={student}/><span>{nameFor(student,en)}{status==='complete' && <CircleCheck size={15} className="complete-mark"/>}</span></button>
-              <div className="student-right"><Badge status={status}/>
+              <div className="student-right"><RecitationBadge record={d}/>
                 <div className="relative"><button className="icon-button mini" aria-label={t('خيارات الطالب','Student actions')} aria-expanded={overflow===student.id} onClick={()=>setOverflow(overflow===student.id?'':student.id)}><Ellipsis size={18}/></button>
                 {overflow===student.id && <div className="popover small-pop">{([['recite',t('تسجيل التسميع','Record recitation')],['attendance',t('تعديل الحضور','Edit attendance')],['schedule',t('تعديل الجدولة','Edit schedule')],['points',t('تعديل النقاط','Adjust points')]] as const).map(([mode,label])=><button type="button" key={mode} onClick={()=>{setOverflow('');open(student,mode)}}>{label}</button>)}</div>}</div>
               </div>

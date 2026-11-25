@@ -1,3 +1,4 @@
+import { normalizeMobile } from '../src/phone-number'
 import { balanceFor, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type Daily, type Exam, type Role, type State, type Student, type User, type View } from '../src/domain'
 import { createState } from './seed'
 
@@ -25,11 +26,19 @@ function validDate(x: unknown) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(+parsed) || parsed.toISOString().slice(0,10) !== date) throw new ApiError('تاريخ غير صالح')
   return date
 }
-function phoneFor(x: unknown) {
-  const n = clean(x, 30).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[ ()-]/g, '')
-  const phone = n.startsWith('05') ? '+966' + n.slice(1) : n
-  if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new ApiError('أدخل رقم جوال صحيحًا مع رمز الدولة')
+function phoneFor(x:unknown) {
+  const phone=normalizeMobile(clean(x,30))
+  if(!phone)throw new ApiError('أدخل رقم جوال صحيحًا مع رمز الدولة')
   return phone
+}
+type FirebaseConfig = { apiKey:string; authDomain:string; projectId:string; appId:string }
+function firebaseConfig(env:Env):FirebaseConfig|null {
+  if(!env.FIREBASE_WEB_CONFIG)return null
+  try {
+    const {apiKey,authDomain,projectId,appId}=JSON.parse(env.FIREBASE_WEB_CONFIG)
+    if (![apiKey,authDomain,projectId,appId].every(v=>typeof v==='string'&&v.trim()))throw new Error()
+    return {apiKey,authDomain,projectId,appId}
+  } catch {throw new ApiError('إعدادات خدمة التحقق بالجوال غير مكتملة',503)}
 }
 const isStaff = (user: User) => user.role === 'teacher' || user.role === 'admin'
 const scope = (s: State, u: User) => s.students.filter(st => u.role === 'admin'
@@ -63,14 +72,21 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
 async function identify(request: Request, env: Env): Promise<Identity | null> {
   const token = request.headers.get('authorization')?.match(/^Bearer (\S+)$/)?.[1]
   if (token) {
-    if (!env.FIREBASE_WEB_CONFIG) throw new ApiError('خدمة التحقق بالجوال غير متصلة', 503)
-    const { apiKey } = JSON.parse(env.FIREBASE_WEB_CONFIG)
+    const config=firebaseConfig(env)
+    if(!config)throw new ApiError('خدمة التحقق بالجوال غير متصلة',503)
+    const { apiKey }=config
     const reply = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: token })
     })
+    if(reply.status===429||reply.status>=500)throw new ApiError('تعذر الوصول إلى خدمة التحقق بالجوال',503)
     const profile = (await reply.json() as { users?: { localId: string; phoneNumber?: string; disabled?: boolean }[] }).users?.[0]
     if (!reply.ok || !profile?.phoneNumber || profile.disabled) throw new ApiError('انتهت جلسة التحقق، سجّل الدخول مجددًا', 401)
     const { localId: id, phoneNumber: phone } = profile
+    try {
+      const part=token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')
+      const claims=JSON.parse(atob(part))
+      if(claims.aud!==config.projectId||claims.sub!==id||claims.firebase?.sign_in_provider!=='phone')throw new Error()
+    } catch {throw new ApiError('سجّل الدخول بواسطة رمز الجوال للمتابعة',401)}
     return { id, phone, workspace: 'school', bootstrap: id === env.BOOTSTRAP_UID ? { id, phone, name: 'إدارة جامع الخير', role: 'admin', status: 'active' } : undefined }
   }
   const id = request.headers.get('oai-authenticated-user-id')
@@ -356,7 +372,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
   try {
     const url = new URL(request.url)
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
-    if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({ firebase:phoneEnabled ? JSON.parse(env.FIREBASE_WEB_CONFIG!) : null },{headers})
+    if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
     if (!identity && request.method !== 'GET') throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})

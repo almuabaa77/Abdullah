@@ -1,82 +1,119 @@
-import { useState } from 'react'
-import { BookOpen, CalendarDays, CircleHelp, Clock3, FileText, ListChecks, Send, Sparkles, Star, UserCheck } from 'lucide-react'
-import { segmentLabel, surahs, validateSegments, type Daily, type Student } from './domain'
-import { dateLabel, normal, useWorkspace, type WizardMode } from './ui'
-import { StudentPicker } from './wizard'
+import { useEffect, useRef, useState } from 'react'
+import { BookOpen, CalendarDays, CircleCheck, Clock3, FileText, ListChecks, MessageSquare, Plus, RotateCcw, Send, Sparkles, Star, UserCheck, Users } from 'lucide-react'
+import { isRecitationDue, recitationStatus, segmentLabel, type Daily, type Student } from './domain'
+import { Avatar, dateLabel, nameFor, statusText, useWorkspace } from './ui'
+import { parseCommand, type Intent } from './assistant-command'
+import { RecitationBadge, StudentPicker } from './recitation-roster'
 
-type Intent = WizardMode | 'review' | 'remaining' | 'report'
-type Bot = { id:number; text:string; from:'user'|'bot'; pick?:Intent; student?:Student; preset?:Partial<Daily>; remaining?:boolean }
+type Exchange = {id:number; command:string; intent?:Intent; student?:Student; preset?:Partial<Daily>; error?:string}
+
 export function Assistant() {
   const {t,data,en,open,go} = useWorkspace()
   const [text,setText] = useState('')
-  const [messages,setMessages] = useState<Bot[]>([])
-  const [selected,setSelected] = useState<Student>()
+  const [exchanges,setExchanges] = useState<Exchange[]>([])
+  const [view,setView] = useState<'assistant'|'students'>('assistant')
+  const conversation = useRef<HTMLDivElement>(null)
+  const counter = useRef(0)
+  const students = data.students.filter(s=>s.active)
+  const today = new Map(data.daily.filter(d=>d.date===data.date).map(d=>[d.studentId,d]))
+  const completed = students.filter(s=>recitationStatus(today.get(s.id))==='complete').length
+  const remaining = students.filter(s=>isRecitationDue(today.get(s.id)))
+  const progress = students.length ? Math.round(completed/students.length*100) : 0
   const shortcuts = [
-    ['recite',BookOpen,t('إضافة تسميع','Add recitation')],['review',Clock3,t('تسجيل مراجعة','Log revision')],['schedule',CalendarDays,t('جدولة الحفظ والمراجعة','Plan the next assignment')],
-    ['attendance',UserCheck,t('تسجيل الحضور والغياب','Mark attendance')],['points',Star,t('تعديل النقاط','Adjust points')],
-    ['report',FileText,t('عرض تقرير طالب','View a student report')],['remaining',ListChecks,t('عرض الطلاب المتبقين','Show remaining students')]
+    ['recite',BookOpen,t('إضافة تسميع','Record recitation'),t('الحفظ الجديد والمراجعة','Memorization and revision'),'green'],
+    ['review',RotateCcw,t('تسجيل مراجعة','Log revision'),t('ابدأ من مرحلة المراجعة','Start at the revision step'),'gold'],
+    ['schedule',CalendarDays,t('جدولة الطالب','Plan an assignment'),t('الحفظ والمراجعة القادمة','Upcoming work'),'blue'],
+    ['attendance',UserCheck,t('تسجيل الحضور','Mark attendance'),t('الحضور والغياب والاستئذان','Attendance, absence and leave'),'green'],
+    ['points',Star,t('تعديل النقاط','Adjust points'),t('مكافأة أو خصم','Bonus or deduction'),'gold'],
+    ['report',FileText,t('تقرير طالب','Student report'),t('افتح سجل الطالب','Open a student record'),'blue'],
   ] as const
-  const remaining = data.students.filter(s=>s.active && !data.daily.some(d=>d.studentId===s.id&&d.date===data.date&&d.memorizationStatus==='complete'&&d.reviewStatus==='complete'&&d.attendance==='present'&&(d.nextMemorization.length||d.nextReview.length)))
-  const append = (text:string,extra:Partial<Bot>={}) => setMessages(m=>[...m,{id:m.length,text,from:'bot',...extra}])
-  const ask = (intent:Intent,text:string,student?:Student,preset?:Partial<Daily>) => {
-    append(text,{from:'user'})
-    if(intent==='remaining'){append(t(`عدد الطلاب المتبقين ${remaining.length}`,`${remaining.length} students remaining`),{remaining:true});return}
-    if(student){setSelected(student);append(t('راجع بيانات العملية قبل اعتمادها.','Review the entry before confirming it.'),{pick:intent,student,preset});return}
-    append(t('اختر طالبًا للمتابعة.','Select a student to continue.'),{pick:intent,preset})
+  const append = (command:string,details:Omit<Exchange,'id'|'command'>={}) => {
+    const id=counter.current++
+    setExchanges(previous=>[...previous,{id,command,...details}])
+    setView('assistant')
   }
-  function submit() {
-    const msg = text.trim()
-    if(!msg)return
-    const n = normal(msg).replace(/[٠-٩]/g,n=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(n)))
-    const candidates = data.students.filter(s=>s.active && (n.includes(normal(s.name)) || Boolean(s.latin && n.includes(normal(s.latin)))))
-    const firstNameMatches = data.students.filter(s=>s.active && [s.name,s.latin||''].some(name=>name.trim() && n.split(/[\s،,.]+/).includes(normal(name.split(' ')[0]))))
-    const student = candidates.length===1?candidates[0]: firstNameMatches.length===1?firstNameMatches[0]:candidates.length===0&&firstNameMatches.length===0?selected:undefined
-    const intent:Intent|undefined = /متبق|غير مكتمل|remaining|incomplete/.test(n)?'remaining':/تقرير|report/.test(n)?'report':/جدول|موعد|schedule|assign/.test(n)?'schedule':/حضور|غاب|غياب|غائب|حاضر|مستاذن|اذن|attendance|absent|present/.test(n)?'attendance':/نقط|points/.test(n)?'points':/مراجع|revision|review/.test(n)?'review':/تسميع|حفظ|سمع|recit|memoriz/.test(n)?'recite':undefined
+  useEffect(()=>{
+    const feed=conversation.current
+    if(exchanges.length&&feed&&view==='assistant') feed.scrollTop=feed.scrollHeight
+  },[exchanges.length,view])
+
+  function submit(command:string) {
+    const query=command.trim()
+    if(!query)return
     setText('')
-    if(!intent){append(msg,{from:'user'});append(t('اختر إحدى العمليات أدناه أو اكتب أمرًا يتضمن العملية واسم الطالب.','Choose an action below or type an action and a student’s name.'));return}
-    const preset:Partial<Daily> = {}
-    if(intent==='attendance') preset.attendance=/غائب|غاب|غياب|absent/.test(n)?'absent':/مستاذن|leave/.test(n)?'leave':/حاضر|حضور|present/.test(n)?'present':undefined
-    if(intent==='points'){const point=n.match(/-?\d+/)?.[0];if(point) preset.bonus=(/خصم|subtract|deduct/.test(n)?-1:1)*Math.abs(Number(point))}
-    if(intent==='review'||intent==='recite'||intent==='schedule'){
-      const fromTo = n.match(/(?:من|from)\s*(?:الاية\s*|اية\s*|verse\s*)?(\d+)\s*(?:الي|الى|to|[-–])\s*(?:الاية\s*|اية\s*|verse\s*)?(\d+)/) || n.match(/(\d+)\s*[-–]\s*(\d+)/)
-      const chapter = [...surahs].sort((a,b)=>b.name.length - a.name.length).find(s=>[normal(s.name),normal(s.en)].some(name=>n.includes(name)))
-      if(chapter&&fromTo){
-        try{
-          const segments=validateSegments([{surah:chapter.id,from:Number(fromTo[1]),to:Number(fromTo[2])}])
-          if(intent==='recite'){preset.memorization=segments;preset.memorizationStatus='complete'}
-          if(intent==='review'){preset.review=segments;preset.reviewStatus='complete'}
-          if(intent==='schedule')preset.nextMemorization=segments
-        }catch(e){append(msg,{from:'user'});append((e as Error).message);return}
-      }
-    }
-    ask(intent,msg,student,preset)
+    try{append(query,parseCommand(query,students))}
+    catch{append(query,{error:t('تحقق من أرقام الآيات وتداخل المقاطع، ثم أعد إرسال الأمر.','Check the verse numbers and overlapping segments, then try again.')})}
   }
-  const card = (s:Student,intent:Intent,preset?:Partial<Daily>) => {
-    const prev = data.daily.filter(d=>d.studentId===s.id).sort((a,b)=>b.date.localeCompare(a.date))[0]
-    const segment = preset?.memorization||preset?.review||preset?.nextMemorization
-    return <div className="assistant-student">
-      <strong>{en&&s.latin?s.latin:s.name}</strong>
-      {prev&&<p>{t('الجدولة السابقة','Previous assignment')} · {dateLabel(prev.nextDate,en)} · {segmentLabel(prev.nextMemorization,en)||'—'}</p>}
-      {segment?.length&&<p>{segmentLabel(segment,en)}</p>}
-      {preset?.attendance&&<p>{({present:t('حاضر','Present'),absent:t('غائب','Absent'),leave:t('مستأذن','On leave'),excused:t('بعذر','Excused'),pending:t('لم يسجل','Pending')})[preset.attendance]}</p>}
-      {preset?.bonus!==undefined&&<p>{t('تعديل النقاط','Points adjustment')} · {preset.bonus}</p>}
-      <button className="btn btn-primary compact" onClick={()=>{if(intent==='report'){sessionStorage.setItem('report-student',s.id);go('records')} else open(s,intent==='review'||intent==='remaining'?'recite':intent,preset)}}>{intent==='report'?t('فتح التقرير','Open report'):t('مراجعة العملية','Review entry')}</button>
-    </div>
+
+  const select = (id:number,student:Student) => setExchanges(items=>items.map(item=>item.id===id?{...item,student}:item))
+  const openEntry = (student:Student,intent:Intent,preset?:Partial<Daily>) => {
+    if(intent==='report'){sessionStorage.setItem('report-student',student.id);go('records');return}
+    open(student,intent==='remaining'?'recite':intent,preset)
   }
-  return <section className="panel assistant-page">
-    <div className="assistant-header"><span className="stat-icon tint-green"><Sparkles size={22}/></span><div><h1>{t('المساعد الذكي','Smart assistant')}</h1><p>{t('مساعدك لتسجيل مهام الحلقة اليومية','Your assistant for daily circle tasks')}</p></div></div>
-    <div className="assistant-feed" aria-live="polite">
-      <div className="bot-line"><span className="bot-icon"><Sparkles size={18}/></span><div className="chat-bubble"><strong>{t('السلام عليكم! كيف يمكنني مساعدتك؟','Assalamu alaikum! How can I help?')}</strong><p>{t('اختر مهمة سريعة أو اكتب أمرًا باسم الطالب.','Choose a quick action or type a request with a student’s name.')}</p></div></div>
-      {messages.map(m=><div key={m.id} className={m.from==='bot'?'bot-line':'user-line'}>{m.from==='bot'&&<span className="bot-icon"><Sparkles size={17}/></span>}<div className="chat-bubble">
-        <p>{m.text}</p>
-        {m.remaining&&remaining.length>0&&<StudentPicker students={remaining} select={s=>append(t('راجع العملية لهذا الطالب.','Review an entry for this student.'),{pick:'recite',student:s})}/>}
-        {m.pick&&(m.student?card(m.student,m.pick,m.preset):<StudentPicker select={s=>{setSelected(s);append(t('راجع بيانات العملية قبل اعتمادها.','Review the entry before confirming it.'),{pick:m.pick,student:s,preset:m.preset})}}/>)}
-      </div></div>)}
+  const last = exchanges.at(-1)
+  const example = t('سجّل تسميع عبدالله سورة النبأ من 37 إلى 40','Record Abdullah Al-Naba from 37 to 40')
+  return <div className="recitation-workspace">
+    <header className="workbench-hero">
+      <div className="workbench-hero-art"/>
+      <div className="workbench-hero-copy"><span className="workbench-date"><CalendarDays size={15}/>{dateLabel(data.date,en,true)}</span>
+      <h1>{t('المساعد الذكي','Smart assistant')}</h1>
+      <p>{t('سجّل التسميع وتابع طلاب الحلقة من مكان واحد.','Record recitations and follow your circle in one place.')}</p></div>
+      <button className="btn btn-gold" onClick={()=>open()}><Plus size={18}/>{t('تسميع جديد','New recitation')}</button>
+    </header>
+    <nav className="workbench-mobile-tab" aria-label={t('أقسام المساعد','Assistant views')}>
+      <button className={view==='assistant'?'selected':''} aria-pressed={view==='assistant'} onClick={()=>setView('assistant')}><MessageSquare size={17}/>{t('المساعد','Assistant')}</button>
+      <button className={view==='students'?'selected':''} aria-pressed={view==='students'} onClick={()=>setView('students')}><Users size={17}/>{t('الطلاب','Students')}<span>{remaining.length}</span></button>
+    </nav>
+    <div className="workbench-grid" data-mobile-view={view}>
+      <section className="panel workbench-chat" aria-label={t('محادثة المساعد','Assistant conversation')}>
+        <header className="workbench-panel-head"><span className="workbench-icon"><Sparkles size={21}/></span><div><h2>{t('مساحة العمل','Workspace')}</h2><p>{t('اختر عملية أو اكتب طلبك','Choose an action or type a request')}</p></div>
+          {exchanges.length>0&&<button className="icon-button" title={t('محادثة جديدة','New conversation')} aria-label={t('محادثة جديدة','New conversation')} onClick={()=>setExchanges([])}><Plus size={20}/></button>}
+        </header>
+        <div className="workbench-feed" ref={conversation}>
+          {!exchanges.length&&<div className="workbench-start">
+            <div className="workbench-welcome"><span className="workbench-welcome-icon"><Sparkles size={25}/></span><h2>{t('كيف تريد المتابعة اليوم؟','What would you like to do today?')}</h2><p>{t('ابدأ بإحدى العمليات السريعة أو اكتب طلبك باسم الطالب.','Start with a quick action or write a request with a student’s name.')}</p></div>
+            <div className="workbench-actions">{shortcuts.map(([intent,Icon,title,desc,tint])=><button className="workbench-action" key={intent} onClick={()=>append(title,{intent})}><span className={'stat-icon tint-'+tint}><Icon size={21}/></span><span><strong>{title}</strong><small>{desc}</small></span></button>)}</div>
+            <button className="example-command" type="button" onClick={()=>setText(example)}><MessageSquare size={15}/><span>{example}</span></button>
+          </div>}
+          {exchanges.map(exchange=>{
+            const student=exchange.student
+            const previous=student&&data.daily.filter(d=>d.studentId===student.id&&d.date<data.date&&(d.nextMemorization.length||d.nextReview.length)).sort((a,b)=>b.date.localeCompare(a.date))[0]
+            const assignment=previous&&(exchange.intent==='review'?previous.nextReview:previous.nextMemorization)
+            const segments=exchange.preset?.memorization||exchange.preset?.review||exchange.preset?.nextMemorization||exchange.preset?.nextReview
+            return <article key={exchange.id} className="workbench-exchange">
+              <p className="workbench-user-message">{exchange.command}</p>
+              <div className="workbench-reply"><span className="bot-icon"><Sparkles size={17}/></span><div className="workbench-answer">
+                {exchange.error?<p role="alert">{exchange.error}</p>:!exchange.intent?<p>{t('اذكر العملية واسم الطالب، أو اختر واحدة من العمليات السريعة.','Include an action and a student’s name, or choose a quick action.')}</p>:student?<div className="assistant-review-card">
+                  <div className="assistant-review-name"><Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><span>{t('راجع البيانات قبل اعتمادها','Review before confirming')}</span></div><RecitationBadge record={today.get(student.id)}/></div>
+                  {!!assignment?.length&&<p><strong>{t('الجدولة السابقة','Previous assignment')}</strong> · {segmentLabel(assignment,en)}</p>}
+                  {!!segments?.length&&<p><strong>{t('المقاطع','Segments')}</strong> · {segmentLabel(segments,en)}</p>}
+                  {exchange.preset?.attendance&&<p>{statusText(exchange.preset.attendance,t)}</p>}
+                  {exchange.preset?.bonus!==undefined&&<p>{t('تعديل النقاط','Points adjustment')} · {exchange.preset.bonus}</p>}
+                  <button className="btn btn-primary compact" onClick={()=>openEntry(student,exchange.intent!,exchange.preset)}>{exchange.intent==='report'?t('فتح التقرير','Open report'):t('مراجعة العملية','Review entry')}</button>
+                </div>:<>
+                  <strong>{exchange.intent==='remaining'?t(`${remaining.length} طلاب بانتظار إتمام التسميع`,`${remaining.length} students to recite`):t('اختر الطالب','Select a student')}</strong>
+                  {last?.id===exchange.id&&<StudentPicker compact students={exchange.intent==='remaining'?remaining:students} defaultFilter={exchange.intent==='recite'||exchange.intent==='remaining'?'due':'all'} select={s=>select(exchange.id,s)}/>}
+                </>}
+              </div></div>
+            </article>
+          })}
+        </div>
+        <footer className="workbench-compose">
+          {exchanges.length>0&&<div className="workbench-shortcuts">{shortcuts.map(([intent,Icon,title])=><button className="shortcut" key={intent} onClick={()=>append(title,{intent})}><Icon size={15}/>{title}</button>)}</div>}
+          <form onSubmit={e=>{e.preventDefault();submit(text)}} className="compose-form"><input value={text} onChange={e=>setText(e.target.value)} aria-label={t('اكتب طلبك للمساعد','Type a request')} placeholder={t('اكتب طلبك للمساعد…','Type a request…')} maxLength={500}/><button className="btn btn-primary" type="submit" aria-label={t('إرسال','Send')} disabled={!text.trim()}><Send size={19}/><span>{t('إرسال','Send')}</span></button></form>
+        </footer>
+      </section>
+      <aside className="workbench-side">
+        <section className="panel workbench-progress">
+          <div className="section-title"><div><h2>{t('تسميع اليوم','Today’s recitations')}</h2><p>{t('الحفظ الجديد في الحلقة','Memorization in your circle')}</p></div><span className="stat-icon tint-green"><ListChecks size={20}/></span></div>
+          <div className="workbench-progress-value"><strong>{progress}%</strong><span>{t(`${completed} من ${students.length} أتمّوا التسميع`,`${completed} of ${students.length} recited`)}</span></div>
+          <div className="bar-track" role="progressbar" aria-valuenow={progress} aria-label={t('نسبة التسميع','Recitation progress')}><i style={{width:progress+'%'}}/></div>
+          <div className="workbench-totals"><div><CircleCheck size={16}/><strong>{completed}</strong><span>{t('أتمّوا التسميع','Recited')}</span></div><button type="button" onClick={()=>append(t('عرض الطلاب المتبقين','Show remaining students'),{intent:'remaining'})}><Clock3 size={16}/><strong>{remaining.length}</strong><span>{t('بانتظار التسميع','To recite')}</span></button></div>
+        </section>
+        <section className="panel workbench-roster"><div className="section-title"><div><h2>{t('طلاب الحلقة','Circle students')}</h2><p>{t('اختر طالبًا لتسجيل تسميعه','Select a student to record recitation')}</p></div><span className="stat-icon tint-gold"><Users size={19}/></span></div>
+          <StudentPicker compact students={students} select={s=>open(s)}/>
+        </section>
+      </aside>
     </div>
-    <div className="assistant-composer">
-      <div className="shortcut-grid">{shortcuts.map(([intent,Icon,label])=><button className="shortcut" key={intent} onClick={()=>ask(intent,label)}><Icon size={16}/>{label}</button>)}</div>
-      <form onSubmit={e=>{e.preventDefault();submit()}} className="compose-form"><input value={text} onChange={e=>setText(e.target.value)} aria-label={t('اكتب أمرًا','Type a command')} placeholder={t('مثال: سجل تسميع عبدالله سورة النبأ من 37 إلى 40','Example: record Abdullah Al-Naba from 37 to 40')}/><button className="btn btn-primary" type="submit" aria-label={t('إرسال','Send')} disabled={!text.trim()}><Send size={18}/></button></form>
-      <p className="small-text muted"><CircleHelp size={14}/>{t('راجع المقاطع والنقاط قبل الاعتماد.','Review segments and points before confirming.')}</p>
-    </div>
-  </section>
+  </div>
 }

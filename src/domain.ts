@@ -104,3 +104,13 @@ export const statusFor = (d?: Daily) => {
   return 'pending'
 }
 export const idFor = () => crypto.randomUUID()
+
+export type RecitationStatus = 'complete' | 'awaiting' | 'partial' | 'absent' | 'leave'
+export function recitationStatus(record?: Daily): RecitationStatus {
+  if (record?.memorization.length && record.memorizationStatus === 'complete') return 'complete'
+  if (record?.memorization.length && record.memorizationStatus === 'partial') return 'partial'
+  if (record?.attendance === 'absent') return 'absent'
+  if (record?.attendance === 'leave' || record?.attendance === 'excused') return 'leave'
+  return 'awaiting'
+}
+export const isRecitationDue = (record?: Daily) => ['awaiting', 'partial'].includes(recitationStatus(record))

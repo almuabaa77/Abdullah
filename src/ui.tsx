@@ -1,11 +1,11 @@
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, CircleMinus, CircleX, Clock3, Star, X } from 'lucide-react'
 import { segmentLabel, statusFor, type Daily, type Student, type View } from './domain'
 
 export type Tr = (ar: string, en: string) => string
 export type Action = (action: string, values?: Record<string, unknown>, op?: string) => Promise<View>
 export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves'
-export type WizardMode = 'recite' | 'attendance' | 'schedule' | 'points'
+export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>) => void
@@ -44,8 +44,34 @@ export function Badge({ status, label }: {status:string,label?:string}) {
 export function Empty({ title, body, action }: { title:string; body?:string; action?:ReactNode }) {
   return <div className="empty"><div className="empty-icon"><BookOpen size={22} /></div><strong>{title}</strong>{body && <p>{body}</p>}{action}</div>
 }
-export function Modal({ title, children, close, wide = false }: { title:string; children:ReactNode; close:()=>void; wide?:boolean }) {
-  return <div className="modal-backdrop" onClick={e=>{ if (e.target === e.currentTarget) close() }}><section className={'modal' + (wide ? ' modal-wide' : '')} role="dialog" aria-modal="true" aria-label={title} onKeyDown={e=>{if (e.key === 'Escape') close()}}><div className="modal-head"><h2>{title}</h2><button className="icon-button" type="button" onClick={close} aria-label="Close"><X size={19}/></button></div>{children}</section></div>
+export function Modal({ title, children, close, wide = false, appearance = '' }: {
+  title:string; children:ReactNode; close:()=>void; wide?:boolean; appearance?:string
+}) {
+  const {t} = useWorkspace()
+  const panel = useRef<HTMLElement>(null)
+  const heading = useId()
+  useEffect(()=>{
+    const previous=document.activeElement
+    const overflow=document.body.style.overflow
+    document.body.style.overflow='hidden'
+    const dialog=panel.current
+    if(dialog&&!dialog.contains(previous)) dialog.focus()
+    return ()=>{document.body.style.overflow=overflow;if(previous instanceof HTMLElement&&previous.isConnected)previous.focus()}
+  },[])
+  return <div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)close()}}>
+    <section ref={panel} tabIndex={-1} className={['modal',wide?'modal-wide':'',appearance].filter(Boolean).join(' ')} role="dialog" aria-modal="true" aria-labelledby={heading}
+      onKeyDown={e=>{
+        if(e.key==='Escape'){e.stopPropagation();close();return}
+        if(e.key!=='Tab')return
+        const items=[...e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]')].filter(el=>el.getClientRects().length)
+        const first=items[0],last=items.at(-1)
+        if(e.shiftKey&&(document.activeElement===first||document.activeElement===e.currentTarget)){e.preventDefault();last?.focus()}
+        else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}
+      }}>
+      <div className="modal-head"><h2 id={heading}>{title}</h2><button className="icon-button" type="button" onClick={close} aria-label={t('إغلاق','Close')}><X size={20}/></button></div>
+      {children}
+    </section>
+  </div>
 }
 export function dateLabel(date:string, en:boolean, wide = false) {
   if (!date) return '—'

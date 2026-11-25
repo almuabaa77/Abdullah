@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, UserCheck, WifiOff, X } from 'lucide-react'
+import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
 import { idFor, type Daily, type Student, type View } from './domain'
 import { Context, Brand, Empty, RoleName, type Page, type Tr, type WizardMode } from './ui'
 import { Dashboard, StudentHome } from './dashboard'
@@ -9,8 +9,9 @@ import { Assistant } from './assistant'
 import { Records } from './records'
 import { ChatPage, Exams, Leaves, More, Store } from './features'
 import { Admin } from './admin'
-import type { PhoneAuth } from './phone'
+import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
+import './workbench.css'
 
 type InstallEvent = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
 const pages = ['home','assistant','records','chat','more','admin','store','exams','leaves']
@@ -42,6 +43,8 @@ function App() {
   const [role,setRole] = useState('admin')
   const [auth,setAuth] = useState<PhoneAuth|null>(null)
   const [authReady,setAuthReady] = useState(false)
+  const [phoneAvailability,setPhoneAvailability] = useState<PhoneAvailability>('loading')
+  const [phoneAttempt,retryPhone] = useState(0)
   const [token,setToken] = useState('')
   const [data,setData] = useState<View>(emptyData)
   const [loading,setLoading] = useState(true)
@@ -71,15 +74,28 @@ function App() {
   },[])
   useEffect(()=>{
     let active=true
-    if(!navigator.onLine){setAuthReady(true);return}
-    fetch('/api/config').then(async res=>res.ok?await res.json() as {firebase?:unknown}:{}).then(async config=>{
-      if(!config.firebase||!active)return
-      const {connectPhone}=await import('./phone')
-      const next=await connectPhone(setToken)
-      if(active)setAuth(next)
-    }).catch(()=>{}).finally(()=>{if(active)setAuthReady(true)})
-    return ()=>{active=false}
-  },[])
+    let unsubscribe:(()=>void)|undefined
+    const controller=new AbortController()
+    setPhoneAvailability('loading')
+    const receive=(next:string)=>{if(active)setToken(next)}
+    const setup=async ()=>{
+      try {
+        const response=await fetch('/api/config',{signal:controller.signal})
+        if(!response.ok)throw new Error()
+        const {firebase}=await response.json()
+        if(!active)return
+        if(!firebase){setPhoneAvailability('disabled');return}
+        const {connectPhone}=await import('./phone')
+        const result=await connectPhone(firebase,receive)
+        if(!active){result.unsubscribe();return}
+        unsubscribe=result.unsubscribe
+        setAuth(result.auth);setPhoneAvailability('ready')
+      } catch {if(active)setPhoneAvailability('unavailable')}
+      finally {if(active)setAuthReady(true)}
+    }
+    void setup()
+    return ()=>{active=false;controller.abort();unsubscribe?.()}
+  },[phoneAttempt])
   useEffect(()=>{
     if(!authReady)return
     const controller=new AbortController()
@@ -147,12 +163,13 @@ function App() {
     ['exams',CalendarDays,t('الاختبارات','Assessments')],['leaves',UserCheck,t('الاستئذانات','Leave requests')],
     ...(data.user?.role==='admin'?[['admin',ShieldCheck,t('لوحة الإدارة','Administration')]] as const:[]),
   ] as const
+  const assistantOpen=Boolean(show&&teacher&&page==='assistant')
   const label=[...nav,...extras].find(([p])=>p===page)?.[2]||t('الرئيسية','Home')
   const userName=data.sample&&en?({admin:'Abdulrahman Al-Sarhan',teacher:'Abdulrahman Al-Sarhan',student:'Abdullah Al-Shehri',parent:'Student guardian'} as Record<string,string>)[role]:data.user?.name
   const workspace = {data,en,t,post,go,tell,open}
   const exit = async () => {if(auth){const {endPhone}=await import('./phone');await endPhone(auth);setToken('');go('home')}}
   return <Context.Provider value={workspace}>
-    <div className={'app-shell '+(show?'':'intro-shell')}>
+    <div className={['app-shell',show?'':'intro-shell',assistantOpen?'assistant-shell':''].filter(Boolean).join(' ')}>
       {show&&<aside className="sidebar">
         <button className="brand-button" onClick={()=>go('home')} aria-label={t('الصفحة الرئيسية','Home')}><Brand/></button>
         <div className="sidebar-divider"/>
@@ -174,6 +191,7 @@ function App() {
           <div className="topbar-actions">
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {show&&<>
+              {!token&&<button type="button" className="phone-topbar" onClick={()=>setPhone(true)} aria-label={t('الدخول أو التسجيل بالجوال','Sign in or register by phone')}><Smartphone size={17}/><span>{t('الدخول بالجوال','Mobile sign-in')}</span></button>}
               <div className="topbar-rule" />
               <div className="relative"><button className="icon-button notification-trigger" onClick={()=>setOpenPanel(openPanel==='notices'?'':'notices')} aria-label={t('الإشعارات','Notifications')} aria-expanded={openPanel==='notices'}><Bell size={21}/>{notices.length>0&&<i/>}</button>
               {openPanel==='notices'&&<div className="popover notifications"><div className="section-title"><h2>{t('الإشعارات','Notifications')}</h2><button className="text-button" onClick={()=>void post('notice-read').catch(e=>tell(e.message,true))}>{t('تحديد الكل كمقروء','Mark all read')}</button></div>
@@ -186,16 +204,16 @@ function App() {
             </>}
           </div>
         </header>
-        <main className="main-content" id="main">
+        <main className={'main-content'+(assistantOpen?' assistant-content':'')} id="main">
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
-          {loading||!authReady?<div className="loading-layout" aria-label={t('جارٍ التحميل','Loading')}><div/><div/><div/></div>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:unregistered?<section className="panel section-panel intro-card"><h1>{t('إنشاء حساب','Create an account')}</h1><p>{t('أرسل طلبك إلى إدارة الحلقات لاعتماد الحساب.','Submit your request for approval.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<section className="panel section-panel intro-card"><Brand/><h1>{t('مرحبًا بك في حلقات الخير','Welcome to Al-Khair Quran Circles')}</h1><p>{t('سجّل الدخول لمتابعة الحفظ والمراجعة والحضور.','Sign in to follow recitation, revision and attendance.')}</p><button className="btn btn-primary" onClick={()=>setPhone(true)}><LogIn size={18}/>{t('الدخول برقم الجوال','Sign in with mobile')}</button></section>:
-          <div className="screen" key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='admin'&&data.user?.role==='admin'?<Admin/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
+          {loading||!authReady?<div className="loading-layout" aria-label={t('جارٍ التحميل','Loading')}><div/><div/><div/></div>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<section className="panel section-panel intro-card"><Brand/><h1>{t('مرحبًا بك في حلقات الخير','Welcome to Al-Khair Quran Circles')}</h1><p>{t('سجّل الدخول لمتابعة الحفظ والمراجعة والحضور.','Sign in to follow recitation, revision and attendance.')}</p><button className="btn btn-primary" onClick={()=>setPhone(true)}><LogIn size={18}/>{t('الدخول برقم الجوال','Sign in with mobile')}</button></section>:
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='admin'&&data.user?.role==='admin'?<Admin/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>
       {show&&<nav className="mobile-nav" aria-label={t('القائمة الرئيسية','Main navigation')}>{nav.map(([p,Icon,label])=><button key={p} className={p===page?'active':''} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={21}/><span>{label}</span></button>)}</nav>}
     </div>
     {wizard&&show&&teacher&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
-    {phone&&<Suspense fallback={null}><PhoneModal auth={auth} close={()=>setPhone(false)}/></Suspense>}
+    {phone&&<Suspense fallback={null}><PhoneModal auth={auth} availability={phoneAvailability} retry={()=>retryPhone(n=>n+1)} close={()=>setPhone(false)}/></Suspense>}
     {toast&&<div className={'toast '+(toast.error?'toast-error':'')} role={toast.error?'alert':'status'}>{toast.error?<CircleAlert size={19}/>:<Check size={19}/>}<span>{toast.text}</span><button className="icon-button mini" onClick={()=>setToast(undefined)} aria-label={t('إغلاق','Close')}><X size={16}/></button></div>}
   </Context.Provider>
 }
