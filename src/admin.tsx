@@ -36,7 +36,7 @@ export function Admin({liveRecords=false,mobileMenuOpen,closeMobileMenu}:{liveRe
   const pageTitle = nav.find(([id])=>id===tab)?.[2]
   const accountStatus = (status:string) => status==='pending'?t('بانتظار الاعتماد','Pending approval'):undefined
   return <div className="page-stack">
-    <section className="panel section-panel"><div className="section-title"><div><h1>{t('لوحة الإدارة','Administration')}</h1><p>{t('إدارة الحلقات والحسابات وسجلات المنصة','Manage circles, accounts and school records')}</p></div><span className="stat-icon tint-green"><ShieldCheck size={21}/></span></div></section>
+    <section className="panel section-panel admin-hero"><div className="section-title"><div><h1>{t('لوحة الإدارة','Administration')}</h1><p>{t('إدارة الحلقات والحسابات وسجلات المنصة','Manage circles, accounts and school records')}</p></div><span className="stat-icon tint-green"><ShieldCheck size={21}/></span></div></section>
     <div className="admin-grid">
       <nav className="panel admin-nav" aria-label={t('أقسام الإدارة','Administration sections')}>{nav.map(([id,Icon,label])=><button type="button" className={id===tab?'selected':''} aria-current={id===tab?'page':undefined} key={id} onClick={()=>openTab(id)}><Icon size={17}/>{label}</button>)}</nav>
       <section className="panel section-panel admin-main">

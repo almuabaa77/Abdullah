@@ -1,10 +1,9 @@
-import { BookOpen, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
+import { LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
 import { useWorkspace } from './ui'
 
 export function Welcome({signIn}:{signIn:()=>void}) {
   const {t,go} = useWorkspace()
   return <section className="welcome-screen">
-    <div className="welcome-visual" aria-hidden="true"><span><BookOpen size={25}/></span></div>
     <div className="welcome-content">
       <h1>{t('أهلًا بك في حلقات الخير','Welcome to Al-Khair Circles')}</h1>
       <p>{t('تابع الحفظ والمراجعة والحضور من مكان واحد.','Follow memorization, revision and attendance in one place.')}</p>
@@ -13,6 +12,7 @@ export function Welcome({signIn}:{signIn:()=>void}) {
         <a href="/admin" className="text-button" onClick={event=>{if(!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){event.preventDefault();go('admin')}}}><ShieldCheck size={16}/>{t('دخول الإدارة','Administration sign-in')}</a>
       </div>
     </div>
+    <div className="welcome-visual" aria-hidden="true"/>
   </section>
 }
 
