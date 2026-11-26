@@ -10,6 +10,7 @@ import { Records } from './records'
 import { ChatPage, Exams, Leaves, More, Store } from './features'
 import { AccountAccess } from './account-access'
 import { watchRecordRevisions } from './live-records'
+import { Starting, Welcome } from './welcome'
 import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
@@ -26,13 +27,16 @@ const emptyData:View = {
 }
 const PhoneSignIn = lazy(()=>import('./phone').then(m=>({default:m.PhoneSignIn})))
 const Admin = lazy(()=>import('./admin').then(m=>({default:m.Admin})))
+class WorkspaceError extends Error {
+  constructor(message:string, readonly status:number) {super(message)}
+}
 async function request(token:string,role:string,body?:Record<string,unknown>,signal?:AbortSignal):Promise<View> {
   const response = await fetch('/api/workspace',{method:body?'POST':'GET',headers:{
     ...(body?{'Content-Type':'application/json'}:{}),
     ...(token?{'Authorization':'Bearer '+token}:{'X-Preview-Role':role}),
   },body:body?JSON.stringify(body):undefined,signal,cache:'no-store'})
   const value = await response.json() as View & {error?:string}
-  if(!response.ok || value.error) throw new Error(value.error || 'Unable to load the workspace')
+  if(!response.ok || value.error) throw new WorkspaceError(value.error || 'Unable to load the workspace',response.status)
   return value
 }
 function retryWhenOnline() {
@@ -51,11 +55,13 @@ function App() {
   const [authReady,setAuthReady] = useState(false)
   const [phoneAvailability,setPhoneAvailability] = useState<PhoneAvailability>('loading')
   const [phoneAttempt,retryPhone] = useState(0)
-  const [token,setToken] = useState('')
-  const [loadedToken,setLoadedToken] = useState('')
+  const [session,setSession] = useState({token:'',uid:''})
+  const {token,uid} = session
+  const [loadedUid,setLoadedUid] = useState<string>()
   const [data,setData] = useState<View>(emptyData)
   const [loading,setLoading] = useState(true)
   const [loadError,setLoadError] = useState('')
+  const [sessionExpired,setSessionExpired] = useState(false)
   const [openPanel,setOpenPanel] = useState<'notices'|'profile'|''>('')
   const [phone,setPhone] = useState(false)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
@@ -71,6 +77,7 @@ function App() {
   const lastStreamMessage = useRef(0)
   const lastRevision = useRef(0)
   const refreshWorkspace = useRef<()=>void>(()=>{})
+  const refreshedUid = useRef('')
   const t:Tr = (ar,english)=>en?english:ar
   const go = useCallback((p:Page,replace=false) => {
     const url = p==='admin' ? '/admin' : p==='home' ? '/' : '/#'+p
@@ -101,33 +108,40 @@ function App() {
     let active=true
     let unsubscribe:(()=>void)|undefined
     const controller=new AbortController()
+    const timeout=window.setTimeout(()=>controller.abort(),12000)
     setPhoneAvailability('loading')
-    const receive=(next:string)=>{if(active)setToken(next)}
+    const receive=(next:string,userId:string)=>{if(active)setSession(current=>current.token===next&&current.uid===userId?current:{token:next,uid:userId})}
     const setup=async ()=>{
       try {
-        const response=await fetch('/api/config',{signal:controller.signal})
+        const [response,{connectPhone}]=await Promise.all([fetch('/api/config',{signal:controller.signal}),import('./phone')])
         if(!response.ok)throw new Error()
         const {firebase}=await response.json()
         if(!active)return
         if(!firebase){setPhoneAvailability('disabled');return}
-        const {connectPhone}=await import('./phone')
         const result=await connectPhone(firebase,receive)
         if(!active){result.unsubscribe();return}
         unsubscribe=result.unsubscribe
         setAuth(result.auth);setPhoneAvailability('ready')
       } catch {if(active)setPhoneAvailability('unavailable')}
-      finally {if(active)setAuthReady(true)}
+      finally {window.clearTimeout(timeout);if(active)setAuthReady(true)}
     }
     void setup()
-    return ()=>{active=false;controller.abort();unsubscribe?.()}
+    return ()=>{active=false;window.clearTimeout(timeout);controller.abort();unsubscribe?.()}
   },[phoneAttempt])
+  useEffect(()=>{
+    if(phoneAvailability!=='unavailable')return
+    const reconnect=()=>retryPhone(value=>value+1)
+    window.addEventListener('online',reconnect)
+    return ()=>window.removeEventListener('online',reconnect)
+  },[phoneAvailability])
   useEffect(()=>{
     if(!authReady)return
     const controller=new AbortController()
     let active = true
     let pulling = false
     let queued = false
-    setLoading(true);setLoadError('')
+    const pending = loadedUid!==uid || Boolean(loadError)
+    if(pending){setLoading(true);setLoadError('')}
     const pull = async (initial = false) => {
       if(pulling){queued=true;return}
       pulling=true
@@ -137,24 +151,32 @@ function App() {
         setData(previous=>initial||previous.user?.id!==result.user?.id||previous.revision<=result.revision?result:previous)
         setUnregistered(Boolean(token&&!result.user&&!result.accountAccess))
         setLoadError('')
+        setSessionExpired(false)
+        refreshedUid.current=''
         const adminId = token&&result.user?.role==='admin'&&result.user.status==='active' ? result.user.id : undefined
         if(adminId&&adminId!==routedAdmin.current&&currentPage()!=='admin')go('admin',true)
         routedAdmin.current=adminId
       } catch(e){
-        if(active&&initial)setLoadError((e as Error).message)
+        const expired = e instanceof WorkspaceError&&e.status===401
+        if(active&&expired&&uid&&auth?.currentUser?.uid===uid&&refreshedUid.current!==uid) {
+          refreshedUid.current=uid
+          const renewed=await auth.currentUser.getIdToken(true).catch(()=>undefined)
+          if(active&&renewed&&renewed!==token){setSession({token:renewed,uid});return}
+        }
+        if(active&&(initial||expired)){setSessionExpired(expired);setLoadError((e as Error).message)}
       } finally {
         pulling=false
-        if(active&&initial){setLoadedToken(token);setLoading(false)}
+        if(active&&initial){setLoadedUid(uid);setLoading(false)}
         if(active&&queued){queued=false;void pull()}
       }
     }
     const refresh=()=>{if(navigator.onLine)void pull()}
     refreshWorkspace.current=refresh
-    void pull(true)
+    void pull(pending)
     const timer=window.setInterval(()=>{if(Date.now()-lastStreamMessage.current>14000&&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))refresh()},6500)
     window.addEventListener('online',refresh);window.addEventListener('focus',refresh)
     return ()=>{active=false;refreshWorkspace.current=()=>{};controller.abort();clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh)}
-  },[authReady,token,role,recheck,go])
+  },[authReady,auth,token,uid,role,recheck,go])
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(undefined),4700);return()=>clearTimeout(timer)},[toast])
   const post = async (action:string,values:Record<string,unknown>={},op:string=idFor()) => {
     const body={...values,action,op}
@@ -187,7 +209,7 @@ function App() {
     })).catch(()=>{})
   },[data.notices,data.user?.id,en])
 
-  const loadingView = loading||!authReady||loadedToken!==token
+  const loadingView = loading||!authReady||loadedUid!==uid
   const show = !loadingView&&!loadError&&data.user?.status==='active'
   const adminPage = page==='admin'
   const workspaceVisible=show&&!adminPage
@@ -238,7 +260,8 @@ function App() {
     if(!auth)return
     const {endPhone}=await import('./phone')
     await endPhone(auth)
-    setData(emptyData);setToken('');setUnregistered(false);setWizard(undefined)
+    setData(emptyData);setSession({token:'',uid:''});setUnregistered(false);setWizard(undefined);setSessionExpired(false);setLoadError('')
+    refreshedUid.current=''
     routedAdmin.current=undefined
     go(next)
   },[auth,go])
@@ -256,7 +279,7 @@ function App() {
       ? <div className="panel"><Empty title={t('صلاحية الإدارة مطلوبة','Administration access required')} body={t('يمكنك المتابعة باستخدام حساب مدير معتمد.','Use an authorized administration account to continue.')} action={token?<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>:undefined}/></div>
       : <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/></div>}><PhoneSignIn {...phoneProps} administration/></Suspense>
   return <Context.Provider value={workspace}>
-    <div className={['app-shell',workspaceVisible?'':'intro-shell',assistantOpen?'assistant-shell':''].filter(Boolean).join(' ')}>
+    <div data-role={show?data.user?.role:undefined} className={['app-shell',workspaceVisible?'':'intro-shell',assistantOpen?'assistant-shell':''].filter(Boolean).join(' ')}>
       {workspaceVisible&&<aside className="sidebar">
         <button className="brand-button" onClick={()=>go('home')} aria-label={t('الصفحة الرئيسية','Home')}><Brand/></button>
         <div className="sidebar-divider"/>
@@ -294,7 +317,7 @@ function App() {
         </header>
         <main className={'main-content'+(assistantOpen?' assistant-content':'')} id="main">
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
-          {loadingView?<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<section className="panel section-panel intro-card"><Brand/><h1>{t('مرحبًا بك في حلقات الخير','Welcome to Al-Khair Quran Circles')}</h1><p>{t('سجّل الدخول لمتابعة الحفظ والمراجعة والحضور.','Sign in to follow recitation, revision and attendance.')}</p><button className="btn btn-primary" onClick={()=>setPhone(true)}><LogIn size={18}/>{t('الدخول برقم الجوال','Sign in with mobile')}</button><a className="text-button" href="/admin" onClick={e=>{if(!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go('admin')}}}>{t('دخول الإدارة','Administration sign-in')}</a></section>:
+          {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={()=>setPhone(true)}/>:
           <div className={'screen'+(assistantOpen?' assistant-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>

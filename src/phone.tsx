@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Check, KeyRound, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
 import { getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app'
-import { browserSessionPersistence, getAuth, onIdTokenChanged, RecaptchaVerifier, setPersistence, signInWithPhoneNumber, signOut, type Auth, type ConfirmationResult } from 'firebase/auth'
+import { browserLocalPersistence, getAuth, onIdTokenChanged, RecaptchaVerifier, setPersistence, signInWithPhoneNumber, signOut, type Auth, type ConfirmationResult } from 'firebase/auth'
 import { Modal, useWorkspace, type Tr } from './ui'
 import { asciiDigits, normalizeMobile } from './phone-number'
 
 export type PhoneAuth = Auth
 export type PhoneAvailability = 'loading'|'disabled'|'ready'|'unavailable'
-export async function connectPhone(config:FirebaseOptions, receive:(token:string)=>void) {
+export async function connectPhone(config:FirebaseOptions, receive:(token:string, uid:string)=>void) {
   const app = getApps().some(app=>app.name==='halaqat-phone') ? getApp('halaqat-phone') : initializeApp(config,'halaqat-phone')
   const auth = getAuth(app)
-  await setPersistence(auth,browserSessionPersistence)
   await auth.authStateReady()
-  receive(await auth.currentUser?.getIdToken() || '')
+  // Migrate sessions from the previous session-only setting. The SDK stores and rotates credentials.
+  await setPersistence(auth,browserLocalPersistence).catch(()=>{})
+  const current = auth.currentUser
+  receive(await current?.getIdToken() || '',current?.uid || '')
   const unsubscribe=onIdTokenChanged(auth,user=>{
-    if(!user){receive('');return}
-    void user.getIdToken().then(token=>{if(auth.currentUser===user)receive(token)}).catch(()=>{})
+    if(!user){receive('','');return}
+    void user.getIdToken().then(token=>{if(auth.currentUser===user)receive(token,user.uid)}).catch(()=>{})
   })
   return {auth,unsubscribe}
 }
@@ -57,7 +59,7 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
   const phoneField=useRef<HTMLInputElement>(null)
   const seconds=Math.min(60,Math.max(0,Math.ceil((last+60000-now)/1000)))
   useEffect(()=>()=>captcha.current?.clear(),[])
-  useEffect(()=>{if(confirm)codeField.current?.focus();else if(availability==='ready')phoneField.current?.focus()},[confirm,availability])
+  useEffect(()=>{if(confirm)codeField.current?.focus();else if(availability==='ready'&&matchMedia('(pointer:fine)').matches)phoneField.current?.focus()},[confirm,availability])
   useEffect(()=>{
     if(seconds<=0)return
     const timer=window.setInterval(()=>setNow(Date.now()),1000)
@@ -105,12 +107,16 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
         {availability==='loading'?<p className="hint-line"><LoaderCircle className="spinner" size={17}/>{t('جارٍ الاتصال بخدمة التحقق…','Connecting to phone verification…')}</p>:availability==='disabled'?
           <p className="hint-line"><ShieldCheck size={17}/>{t('تفعيل الرسائل النصية بانتظار إعداد مشروع Firebase للمنصة.','SMS verification is awaiting the platform’s Firebase setup.')}</p>:availability==='unavailable'?
           <div className="error-box"><span>{t('تعذر الاتصال بخدمة التحقق.','Could not connect to verification.')}</span><button type="button" className="text-button" onClick={retry}>{t('إعادة المحاولة','Try again')}</button></div>
-        :confirm?<><label>{t('الرمز المكوّن من 6 أرقام','6-digit code')}<input ref={codeField} className="code-field" dir="ltr" value={code} onChange={e=>{setCode(asciiDigits(e.target.value).replace(/\D/g,'').slice(0,6));setError('')}} inputMode="numeric" autoComplete="one-time-code" maxLength={12} required/></label>
+        :confirm?<><label className="otp-label" htmlFor="phone-otp">{t('الرمز المكوّن من 6 أرقام','6-digit code')}</label>
+          <div className="otp-entry" dir="ltr">
+            <input id="phone-otp" name="one-time-code" pattern="[0-9]{6}" ref={codeField} value={code} onChange={e=>{setCode(asciiDigits(e.target.value).replace(/\D/g,'').slice(0,6));setError('')}} inputMode="numeric" autoComplete="one-time-code" maxLength={12} aria-invalid={!!error} aria-describedby={error?'phone-error':undefined} required/>
+            <div className="otp-slots" aria-hidden="true">{Array.from({length:6},(_,index)=><span className={code[index]?'filled':index===code.length?'current':''} key={index}>{code[index]||'·'}</span>)}</div>
+          </div>
           <div className="phone-controls"><button className="text-button" type="button" disabled={!!busy} onClick={()=>{setConfirm(undefined);setError('');setCode('')}}>{t('تعديل الرقم','Edit number')}</button><button className="text-button" type="button" disabled={!!busy||seconds>0} onClick={()=>void send(number)}>{seconds?t(`إعادة الإرسال بعد ${seconds} ث`,`Resend in ${seconds}s`):t('إعادة إرسال الرمز','Resend code')}</button></div>
         </>:<label>{t('رقم الجوال','Mobile number')}<input ref={phoneField} type="tel" dir="ltr" inputMode="tel" autoComplete="tel" maxLength={28} value={phone} onChange={e=>{setPhone(e.target.value);setError('')}} placeholder="05X XXX XXXX" required/></label>}
         <div ref={captchaHost} className="recaptcha-host"/>
-        {error&&<p className="error-box" role="alert">{error}</p>}
-        {availability==='ready'&&!confirm&&!administration&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('تتحقق Firebase من الرقم، وتراجع الإدارة طلبات الحسابات الجديدة.','Firebase verifies the number. Administration reviews new account requests.')}</p>}
+        {error&&<p id="phone-error" className="error-box" role="alert">{error}</p>}
+        {availability==='ready'&&!confirm&&!administration&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('ستبقى جلسة الدخول محفوظة على هذا الجهاز بعد التحقق.','Your sign-in stays on this device after verification.')}</p>}
       </div>
       {availability==='ready'&&<div className="modal-foot phone-foot"><button type="submit" className="btn btn-primary full" disabled={!!busy||(confirm?code.length!==6:!phone.trim()||seconds>0)}>
         {busy?<LoaderCircle className="spinner" size={18}/>:confirm?<Check size={18}/>:<Smartphone size={18}/>}

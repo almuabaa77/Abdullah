@@ -269,3 +269,67 @@
   .workbench-grid {min-height:145px}
   .assistant-content {overflow:auto}
 }
+
+:root {--app-chrome:#0b503d;--bg:#f4f8f5;--green:#125b45;--text:#162f26;--muted:#536c60;--border:#dce9e0;background:var(--app-chrome)}
+body {background:var(--bg)}
+.app-shell {--role-tint:#eaf4ed;--role-edge:#7aaa90;--role-surface:#f4f8f5;background:var(--role-surface)}
+.app-shell[data-role="teacher"] {--role-tint:#e4f3eb;--role-edge:#66a489;--role-surface:#f2f8f4}
+.app-shell[data-role="parent"] {--role-tint:#e6f2f2;--role-edge:#71a8a5;--role-surface:#f2f8f7}
+.app-shell[data-role="student"] {--role-tint:#f8eed6;--role-edge:#caa35e;--role-surface:#f7f8f2}
+.app-shell[data-role="admin"] {--role-tint:#e7f0ee;--role-edge:#79a496}
+.app-shell .nav-item.active,.app-shell .profile-avatar {background:var(--role-tint);color:var(--green)}
+.app-shell .nav-item.active i {background:var(--role-edge)}
+.app-shell .topbar {height:calc(69px + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);background:linear-gradient(to bottom,var(--app-chrome) env(safe-area-inset-top),var(--paper) 0)}
+.teacher-dashboard .teacher-overview {background:linear-gradient(125deg,#fff 42%,var(--role-tint));border-top-color:var(--role-edge)}
+.teacher-actions .btn-primary {box-shadow:0 4px 12px #0b503d23}
+.teacher-metric[aria-pressed="true"] {background:var(--role-tint);border-color:var(--role-edge);box-shadow:inset 0 0 0 1px var(--role-edge)}
+.learner-hero {border-bottom:3px solid var(--role-edge)}
+.learner-hero .hero-date {background:var(--role-tint);color:#214c3a;border-color:transparent}
+.summary-panel {border-top:3px solid var(--role-edge)}
+.summary-panel.points-wallet,.wallet-header {background:var(--role-tint)}
+.wallet-header .balance-pill {background:var(--paper);color:var(--green)}
+.welcome-screen {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);width:min(100%,1000px);margin:clamp(18px,6vh,66px) auto 0;min-height:350px;overflow:hidden;border-radius:26px;border:1px solid var(--border);background:var(--paper);box-shadow:0 18px 55px #153d2410}
+.welcome-visual {display:grid;align-items:end;justify-items:start;padding:22px;background:linear-gradient(145deg,#0b503d10,#06453376),url('/assets/hero.webp') center/cover,#0b503d}
+.welcome-visual span {display:grid;place-items:center;width:52px;aspect-ratio:1;color:#f3d492;background:#0b503de6;border:1px solid #f3d4928a;border-radius:15px}
+.welcome-content {display:grid;align-content:center;justify-items:start;gap:14px;padding:clamp(20px,5vw,46px)}
+.welcome-content h1 {font-size:clamp(1.65rem,3.4vw,2.65rem);letter-spacing:-.03em;max-width:18ch}
+.welcome-content p {max-width:36ch}
+.welcome-actions {display:grid;gap:13px;margin-block-start:6px}
+.welcome-actions .btn {min-height:50px}
+.welcome-actions a {display:flex;align-items:center;gap:6px;justify-self:start}
+.starting-screen {display:grid;justify-items:center;align-content:center;min-height:52vh;gap:16px}
+.starting-screen img {border-radius:17px}
+.starting-screen span {display:flex;align-items:center;gap:8px;color:var(--green)}
+.modal.phone-dialog {border:1px solid var(--border);border-radius:22px;box-shadow:0 22px 70px #0b503d45}
+.phone-dialog .modal-head {background:#f5faf6}
+.phone-dialog .phone-icon {background:#e6f3eb;color:var(--green);border:1px solid #d5eade}
+.phone-dialog .modal-body {gap:14px}
+.phone-dialog .phone-foot .btn {min-height:49px}
+.otp-label {margin-bottom:-6px}
+.otp-entry {position:relative;min-width:0}
+.phone-dialog .otp-entry input {position:absolute;inset:0;z-index:1;opacity:0;width:100%;height:100%;margin:0}
+.otp-slots {display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:clamp(4px,1.5vw,9px)}
+.otp-slots span {display:grid;place-items:center;min-height:50px;background:#f4f8f5;border:1px solid #c8dbcf;border-radius:11px;color:#638174;font-size:1.55rem;font-weight:700;font-family:DM,Plex,sans-serif}
+.otp-slots .filled {color:#134c37;background:#e7f4eb}
+.otp-entry:focus-within .current,.otp-entry:focus-within:has(input:valid) .otp-slots {outline:2px solid #2a8261;outline-offset:2px;border-radius:11px}
+.otp-entry:has(input[aria-invalid="true"]) .otp-slots span {border-color:#b45c56}
+@media(max-width:850px) {
+  .app-shell .topbar {height:calc(62px + env(safe-area-inset-top))}
+  .app-shell .mobile-nav {background:var(--app-chrome);border-top:1px solid #2e715c;padding:6px max(6px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left))}
+  .app-shell .mobile-nav button {color:#e5f2e9;min-width:0}
+  .app-shell .mobile-nav button.active {background:var(--role-tint);color:#0b503d}
+  .intro-shell::after {content:'';position:fixed;inset-inline:0;bottom:0;height:env(safe-area-inset-bottom);background:var(--app-chrome);pointer-events:none}
+}
+@media(max-width:620px) {
+  .welcome-screen {grid-template-columns:minmax(0,1fr);min-height:0;border-radius:20px}
+  .welcome-visual {min-height:clamp(130px,24vh,230px);padding:14px}
+  .welcome-visual span {width:42px;border-radius:11px}
+  .welcome-content {padding:20px;gap:10px}
+  .welcome-actions {width:100%}
+  .phone-dialog .phone-progress {gap:5px}
+  .phone-dialog .modal-head {padding:9px 14px}
+  .phone-dialog .modal-body {gap:11px}
+}
+@media(prefers-reduced-motion:reduce) {
+  .modal,.screen {animation:none}
+}

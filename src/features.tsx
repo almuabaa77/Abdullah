@@ -49,7 +49,7 @@ export function Store() {
   const balance = student?balanceFor(student,data):0
   const p = data.prizes.find(p=>p.id===selected)
   return <div className="page-stack">
-    <div className="panel section-panel"><div className="section-title"><div><h1>{t('متجر النقاط','Points shop')}</h1><p>{t('استبدل نقاطك بجوائز الحلقة','Redeem your points for circle rewards')}</p></div><span className="count-pill balance-pill"><Star size={17}/>{balance} {t('نقطة','points')}</span></div></div>
+    <div className="panel section-panel wallet-header"><div className="section-title"><div><h1>{t('متجر النقاط','Points shop')}</h1><p>{t('استبدل نقاطك بجوائز الحلقة','Redeem your points for circle rewards')}</p></div><span className="count-pill balance-pill"><Star size={17}/>{balance} {t('نقطة','points')}</span></div></div>
     <div className="summary-grid">{data.prizes.filter(x=>x.active).map((p,i)=><article key={p.id} className="panel prize-card">
       <div className={'prize-image tint-'+(i%2?'gold':'green')}>{p.image?<img src={p.image} alt={p.name} loading="lazy" referrerPolicy="no-referrer"/>:i%2?<Gift size={48}/>:<BookOpen size={48}/>}</div>
       <h2>{p.name}</h2><p>{p.description}</p><div className="split-line"><strong><Star size={16}/>{p.price} {t('نقطة','points')}</strong><span>{p.stock?t(`${p.stock} متوفرة`,`${p.stock} in stock`):t('نفدت الكمية','Out of stock')}</span></div>
