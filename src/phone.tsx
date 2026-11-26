@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Check, KeyRound, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
 import { getApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app'
-import { browserLocalPersistence, getAuth, initializeRecaptchaConfig, onIdTokenChanged, PhoneAuthProvider, RecaptchaVerifier, setPersistence, signInWithCredential, signInWithPhoneNumber, signOut, type Auth, type ConfirmationResult } from 'firebase/auth'
+import { browserLocalPersistence, getAuth, initializeRecaptchaConfig, onIdTokenChanged, PhoneAuthProvider, setPersistence, signInWithCredential, signInWithPhoneNumber, signOut, type Auth } from 'firebase/auth'
 import { Modal, useWorkspace, type Tr } from './ui'
 import { asciiDigits, normalizeMobile } from './phone-number'
+import { BrowserCheckError, prepareSmsVerifier } from './sms-verifier'
 
 export type PhoneAuth = Auth
 export type PhoneAvailability = 'loading'|'disabled'|'ready'|'unavailable'
@@ -23,8 +24,10 @@ export async function connectPhone(config:FirebaseOptions, receive:(token:string
 }
 const cooldownKey='halaqat-last-sms-request'
 const pendingKey='halaqat-pending-sms'
+const numberKey='halaqat-sms-number'
 const cooldownMs=60_000
-type Captcha = {verifier:RecaptchaVerifier; ready:Promise<number>; request?:Promise<ConfirmationResult>}
+const recoveryMs=10*cooldownMs
+type Captcha = ReturnType<typeof prepareSmsVerifier>
 type PendingSms = {destination:string; verificationId:string; requestedAt:number}
 
 function lastSmsRequest() {
@@ -38,7 +41,7 @@ function recoverSms():PendingSms|undefined {
   try {
     const pending=JSON.parse(sessionStorage.getItem(pendingKey) ?? 'null')
     const age=Date.now()-pending?.requestedAt
-    if(age>=0&&age<10*cooldownMs&&typeof pending.destination==='string'&&normalizeMobile(pending.destination)===pending.destination&&typeof pending.verificationId==='string'&&pending.verificationId)return pending
+    if(age>=0&&age<recoveryMs&&typeof pending.destination==='string'&&normalizeMobile(pending.destination)===pending.destination&&typeof pending.verificationId==='string'&&pending.verificationId)return pending
     sessionStorage.removeItem(pendingKey)
   } catch {/* Storage may be unavailable. */}
 }
@@ -50,11 +53,42 @@ function rememberSms(pending?:PendingSms) {
   } catch {/* Verification still works without session storage. */}
 }
 
+function rememberNumber(destination?:string) {
+  try {
+    if(destination)sessionStorage.setItem(numberKey,JSON.stringify({destination,time:Date.now()}))
+    else sessionStorage.removeItem(numberKey)
+  } catch {/* The page can keep the number in memory. */}
+}
+
+function recoverNumber() {
+  try {
+    const saved=JSON.parse(sessionStorage.getItem(numberKey) ?? 'null')
+    const age=Date.now()-saved?.time
+    if(age>=0&&age<recoveryMs&&typeof saved.destination==='string')return normalizeMobile(saved.destination) ?? ''
+    sessionStorage.removeItem(numberKey)
+  } catch {/* Storage may be unavailable. */}
+  return ''
+}
+
+function writeSmsTime(time:number) {
+  try {
+    if(time)sessionStorage.setItem(cooldownKey,String(time))
+    else sessionStorage.removeItem(cooldownKey)
+  } catch {/* The countdown still works in memory. */}
+}
+
 function errorCode(error:unknown) {
   return typeof error==='object'&&error!==null&&'code' in error ? error.code : ''
 }
 
+function browserCheckRejected(error:unknown) {
+  return error instanceof BrowserCheckError || [
+    'auth/captcha-check-failed','auth/invalid-app-credential','auth/missing-app-credential','auth/missing-recaptcha-token',
+  ].includes(String(errorCode(error)))
+}
+
 function smsError(error:unknown,t:Tr) {
+  if(browserCheckRejected(error))return t('تعذر إكمال فحص المتصفح. اطلب الرمز مجددًا لإعادة الفحص.','The browser check could not finish. Request the code again to restart the check.')
   switch(errorCode(error)) {
     case 'auth/invalid-phone-number': return t('تحقق من رقم الجوال ورمز الدولة.','Check the mobile number and its country code.')
     case 'auth/invalid-verification-code': return t('الرمز غير صحيح. تحقق من الرسالة وحاول مجددًا.','That code is incorrect. Check the message and try again.')
@@ -67,16 +101,13 @@ function smsError(error:unknown,t:Tr) {
     case 'auth/operation-not-allowed':
     case 'auth/billing-not-enabled':
     case 'auth/app-not-authorized': return t('خدمة الرسائل بحاجة إلى ضبط المشروع أو تفويض هذا النطاق في Firebase.','The SMS service needs Firebase configuration or domain authorization.')
-    case 'auth/invalid-app-credential':
-    case 'auth/captcha-check-failed':
-    case 'auth/missing-app-credential': return t('تعذر التحقق من المتصفح. أعد المحاولة.','Browser verification failed. Try again.')
     default: return t('تعذر إتمام التحقق الآن. أعد المحاولة.','Verification could not be completed. Try again.')
   }
 }
 
 export function PhoneSignIn({auth,availability,retry,close,administration=false}:{auth:PhoneAuth|null;availability:PhoneAvailability;retry:()=>void;close?:()=>void;administration?:boolean}) {
   const {t,en} = useWorkspace()
-  const [phone,setPhone] = useState('')
+  const [phone,setPhone] = useState(recoverNumber)
   const [code,setCode] = useState('')
   const [pending,setPending] = useState(recoverSms)
   const [error,setError] = useState('')
@@ -84,8 +115,10 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
   const [last,setLast] = useState(()=>Math.max(lastSmsRequest(),pending?.requestedAt??0))
   const [now,setNow] = useState(Date.now)
   const [slow,setSlow] = useState(false)
+  const [stage,setStage] = useState<'browser'|'manual'|'provider'>('browser')
   const captchaHost=useRef<HTMLDivElement>(null)
   const captcha=useRef<Captcha|null>(null)
+  const activeCaptcha=useRef<Captcha|null>(null)
   const inFlight=useRef(false)
   const codeField=useRef<HTMLInputElement>(null)
   const phoneField=useRef<HTMLInputElement>(null)
@@ -96,15 +129,12 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
     if(!auth||availability!=='ready'||!host)return
     auth.languageCode=en?'en':'ar'
     void initializeRecaptchaConfig(auth).catch(()=>{})
-    const verifier=new RecaptchaVerifier(auth,host,{size:'invisible',badge:'inline'})
-    const prepared:Captcha={verifier,ready:verifier.render()}
+    const prepared=prepareSmsVerifier(auth,host)
     captcha.current=prepared
-    // Firebase can retry rendering if background preparation fails.
-    void prepared.ready.catch(()=>{})
     return ()=>{
+      const current=captcha.current
       captcha.current=null
-      // Let the SDK finish resetting an in-flight verifier before destroying it.
-      void Promise.allSettled([prepared.ready,prepared.request]).then(()=>verifier.clear())
+      if(current&&current!==activeCaptcha.current)current.clear()
     }
   },[auth,availability,en])
   useEffect(()=>{if(pending)codeField.current?.focus();else if(availability==='ready'&&matchMedia('(pointer:fine)').matches)phoneField.current?.focus()},[pending,availability])
@@ -114,28 +144,65 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
     return ()=>window.clearInterval(timer)
   },[seconds>0])
   useEffect(()=>{
-    if(busy!=='send')return
-    const timer=window.setTimeout(()=>setSlow(true),8000)
+    if(busy!=='send'||stage!=='browser')return
+    const timer=window.setTimeout(()=>setSlow(true),5000)
     return ()=>window.clearTimeout(timer)
-  },[busy])
+  },[busy,stage])
 
   async function send(value:string) {
-    const prepared=captcha.current
-    if(!auth||!prepared||inFlight.current||Math.max(last,lastSmsRequest())+cooldownMs>Date.now())return
+    const host=captchaHost.current
     const destination=normalizeMobile(value)
-    if(!destination)return
+    const previousLast=Math.max(last,lastSmsRequest())
+    if(!auth||!host||!destination||inFlight.current||previousLast+cooldownMs>Date.now())return
     inFlight.current=true
-    setBusy('send');setSlow(false);setError('')
+    setBusy('send');setStage('browser');setSlow(false);setError('')
+    rememberNumber(destination)
+    let dispatchedAt=0
+    const recordDispatch=()=>{dispatchedAt=Date.now();writeSmsTime(dispatchedAt);setStage('provider')}
+    const clearDispatch=()=>{if(dispatchedAt&&lastSmsRequest()===dispatchedAt)writeSmsTime(previousLast);dispatchedAt=0}
+    const request=async (check:Captcha)=>{
+      activeCaptcha.current=check
+      check.verifier.onVerified=recordDispatch
+      try {return await signInWithPhoneNumber(auth,destination,check.verifier)}
+      finally {
+        check.verifier.onVerified=undefined
+        activeCaptcha.current=null
+        if(captcha.current!==check)check.clear()
+      }
+    }
     try {
-      prepared.request=signInWithPhoneNumber(auth,destination,prepared.verifier)
-      const result=await prepared.request
+      let result
+      const automatic=captcha.current ?? prepareSmsVerifier(auth,host)
+      captcha.current=automatic
+      try {result=await request(automatic)}
+      catch(err) {
+        if(!browserCheckRejected(err)||captcha.current!==automatic||!host.isConnected)throw err
+        clearDispatch()
+        captcha.current=null
+        automatic.clear()
+        const manual=prepareSmsVerifier(auth,host,true)
+        captcha.current=manual
+        setStage('manual')
+        try {result=await request(manual)}
+        finally {
+          if(captcha.current===manual){manual.clear();captcha.current=null}
+        }
+      }
       const sent=Date.now()
       setLast(sent);setNow(sent)
       const next={destination,verificationId:result.verificationId,requestedAt:sent}
       setPending(next);setCode('');rememberSms(next)
-      try{sessionStorage.setItem(cooldownKey,String(sent))}catch{/* The in-memory countdown still works. */}
-    } catch(err) {setError(smsError(err,t))}
-    finally {prepared.request=undefined;inFlight.current=false;setBusy('')}
+      writeSmsTime(sent)
+    } catch(err) {
+      if(errorCode(err)==='auth/network-request-failed') {
+        const uncertain=dispatchedAt||Date.now()
+        writeSmsTime(uncertain);setLast(uncertain);setNow(Date.now())
+        setError(t('لم يصل تأكيد إرسال الرمز. يمكنك طلب رمز جديد بعد انتهاء العدّاد.','SMS dispatch could not be confirmed. You can request another code when the timer ends.'))
+      } else {
+        clearDispatch()
+        setError(smsError(err,t))
+      }
+    } finally {inFlight.current=false;setBusy('')}
   }
 
   function editNumber() {
@@ -152,7 +219,7 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
     setError('');setBusy('verify')
     try {
       await signInWithCredential(auth,PhoneAuthProvider.credential(pending.verificationId,code))
-      rememberSms();close?.()
+      rememberSms();rememberNumber();close?.()
     }
     catch(err){
       const reason=errorCode(err)
@@ -170,7 +237,7 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
           <i/><span className={pending?'active':''}><KeyRound size={15}/> {t('رمز التحقق','Security code')}</span>
         </div>
         <div className="phone-intro"><span className="phone-icon">{pending?<KeyRound size={27}/>:administration?<ShieldCheck size={27}/>:<Smartphone size={27}/>}</span><Heading>{pending?t('أدخل رمز التحقق','Enter the security code'):administration?t('دخول الإدارة','Administration sign-in'):t('الدخول أو إنشاء حساب','Sign in or create an account')}</Heading>
-          {pending?<p>{t('أرسلنا رمزًا من 6 أرقام إلى','A 6-digit code was sent to')} <bdi>{pending.destination}</bdi></p>:<p>{administration?t('أدخل رقم جوال حساب الإدارة للتحقق برسالة نصية.','Verify the administration account’s mobile number by SMS.'):t('تحقّق من رقم جوالك لمتابعة الدخول أو طلب حساب جديد.','Verify your number to sign in or request a new account.')}</p>}
+          {pending?<p>{t('طُلب إرسال رمز من 6 أرقام إلى','A 6-digit code was requested for')} <bdi>{pending.destination}</bdi></p>:<p>{administration?t('أدخل رقم جوال حساب الإدارة للتحقق برسالة نصية.','Verify the administration account’s mobile number by SMS.'):t('تحقّق من رقم جوالك لمتابعة الدخول أو طلب حساب جديد.','Verify your number to sign in or request a new account.')}</p>}
         </div>
         {availability==='loading'?<p className="hint-line"><LoaderCircle className="spinner" size={17}/>{t('جارٍ الاتصال بخدمة التحقق…','Connecting to phone verification…')}</p>:availability==='disabled'?
           <p className="hint-line"><ShieldCheck size={17}/>{t('تفعيل الرسائل النصية بانتظار إعداد مشروع Firebase للمنصة.','SMS verification is awaiting the platform’s Firebase setup.')}</p>:availability==='unavailable'?
@@ -184,12 +251,13 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
         </>:<label>{t('رقم الجوال','Mobile number')}<input ref={phoneField} type="tel" dir="ltr" inputMode="tel" autoComplete="tel" maxLength={28} readOnly={!!busy} value={phone} onChange={e=>{setPhone(e.target.value);setError('')}} placeholder="05X XXX XXXX" required/></label>}
         <div ref={captchaHost} className="recaptcha-host"/>
         {error&&<p id="phone-error" className="error-box" role="alert">{error}</p>}
-        {busy==='send'&&slow&&<p className="hint-line" role="status">{t('قد يستغرق فحص المتصفح لحظات. أكمل اختبار التحقق إذا ظهر.', 'The browser check may take a moment. Complete the verification challenge if it appears.')}</p>}
+        {busy==='send'&&stage==='browser'&&slow&&<div className="hint-line sms-progress"><span role="status">{t('فحص المتصفح يستغرق وقتًا أطول.', 'The browser check is taking longer.')}</span><button type="button" className="text-button" onClick={()=>activeCaptcha.current?.verifier.useManualCheck()}>{t('عرض مربع التحقق','Show verification checkbox')}</button></div>}
+        {busy==='send'&&stage==='manual'&&<p className="hint-line" role="status">{t('أكمل مربع التحقق هنا وسيُطلب الرمز تلقائيًا.', 'Complete the checkbox here. Your code will be requested automatically.')}</p>}
         {availability==='ready'&&!pending&&!administration&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('ستبقى جلسة الدخول محفوظة على هذا الجهاز بعد التحقق.','Your sign-in stays on this device after verification.')}</p>}
       </div>
       {availability==='ready'&&<div className="modal-foot phone-foot"><button type="submit" className="btn btn-primary full" disabled={!!busy||(pending?code.length!==6:!target||seconds>0)}>
         {busy?<LoaderCircle className="spinner" size={18}/>:pending?<Check size={18}/>:<Smartphone size={18}/>}
-        {busy==='send'?t('جارٍ طلب إرسال الرمز…','Requesting your code…'):busy==='verify'?t('جارٍ التحقق من الرمز…','Verifying the code…'):pending?t('تحقّق ومتابعة','Verify and continue'):seconds?t(`طلب رمز بعد ${seconds} ث`,`Request a code in ${seconds}s`):t('إرسال رمز التحقق','Send verification code')}
+        {busy==='send'?(stage==='provider'?t('جارٍ طلب إرسال الرمز…','Requesting your code…'):t('جارٍ فحص المتصفح…','Checking your browser…')):busy==='verify'?t('جارٍ التحقق من الرمز…','Verifying the code…'):pending?t('تحقّق ومتابعة','Verify and continue'):seconds?t(`طلب رمز بعد ${seconds} ث`,`Request a code in ${seconds}s`):t('إرسال رمز التحقق','Send verification code')}
       </button></div>}
     </form>
   return administration ? <section className="panel intro-card phone-dialog">{form}</section>

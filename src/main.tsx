@@ -24,6 +24,7 @@ const currentPage = ():Page => {
   const fragment = location.hash.slice(1)
   return pages.includes(fragment) ? fragment as Page : 'home'
 }
+const phoneRequested = () => new URLSearchParams(location.search).get('signin')==='phone'
 const emptyData:View = {
   user:null,date:'',revision:0,phoneEnabled:false,sample:false,students:[],users:[],circles:[],daily:[],closed:[],notices:[],links:[],prizes:[],orders:[],exams:[],leaves:[],rules:{memorization:4,review:4,attendance:2,chat:true},chats:[],audit:[],
 }
@@ -68,7 +69,7 @@ function App() {
   const [sessionExpired,setSessionExpired] = useState(false)
   const [availableUpdate,setAvailableUpdate] = useState<string>()
   const [openPanel,setOpenPanel] = useState<'notices'|'profile'|'navigation'|''>('')
-  const [phone,setPhone] = useState(false)
+  const [phone,setPhone] = useState(phoneRequested)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
   const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>;circleId?:string}>()
   const [online,setOnline] = useState(navigator.onLine)
@@ -86,13 +87,21 @@ function App() {
   const t:Tr = (ar,english)=>en?english:ar
   const go = useCallback((p:Page,replace=false) => {
     const url = p==='admin' ? '/admin' : p==='home' ? '/' : '/#'+p
-    if (location.pathname+location.hash!==url) {
+    if (location.pathname+location.hash!==url||phoneRequested()) {
       if (replace) history.replaceState(null,'',url)
       else history.pushState(null,'',url)
     }
     setPage(p);setOpenPanel('');setPhone(false)
     window.scrollTo({top:0,behavior:'instant'})
   },[])
+  const changePhone = useCallback((open:boolean) => {
+    const url=new URL(location.href)
+    if(open)url.searchParams.set('signin','phone')
+    else url.searchParams.delete('signin')
+    if(url.href!==location.href)history.replaceState(history.state,'',url)
+    setPhone(open)
+  },[])
+  useEffect(()=>{if(phone&&token)changePhone(false)},[phone,token,changePhone])
   const tell = useCallback((text:string,error=false)=>setToast({text,error}),[])
   const changeLanguage = ()=>setEn(!en)
   useEffect(()=>{document.documentElement.lang=en?'en':'ar';document.documentElement.dir=en?'ltr':'rtl';localStorage.setItem('halaqat-language',en?'en':'ar')},[en])
@@ -107,7 +116,7 @@ function App() {
     const nav=()=>{
       const next=currentPage()
       if(next==='admin'&&location.pathname!=='/admin')history.replaceState(null,'','/admin')
-      setPage(next);setOpenPanel('')
+      setPage(next);setOpenPanel('');setPhone(phoneRequested())
     }
     nav()
     const change=()=>setOnline(navigator.onLine)
@@ -289,7 +298,7 @@ function App() {
     if(data.accountAccess!=='closed'||!token||!auth)return
     void signOut('home').then(()=>tell(en?'Your platform account has been deleted.':'حُذف حسابك من المنصة وأُغلقت الجلسة.')).catch(error=>tell(error.message,true))
   },[data.accountAccess,token,auth,en,signOut,tell])
-  const openPhone = () => { if(adminPage)go('home'); setPhone(true) }
+  const openPhone = () => { if(adminPage)go('home'); changePhone(true) }
   const loadingLabel=t('جارٍ التحميل','Loading')
   const phoneProps={auth,availability:phoneAvailability,retry:()=>retryPhone(n=>n+1)}
   const adminContent = adminAccess
@@ -336,16 +345,16 @@ function App() {
           </div>
         </header>
         <main className={'main-content'+(assistantOpen?' assistant-content':'')+(chatOpen?' chat-main':'')} id="main">
-          {availableUpdate&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
+          {availableUpdate&&!phone&&(!adminPage||token)&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
-          {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={()=>setPhone(true)}/>:
+          {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone}/>:
           <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>
       {workspaceVisible&&openPanel==='navigation'&&<Modal title={t('القائمة الرئيسية','Main navigation')} close={()=>setOpenPanel('')} appearance="mobile-menu"><nav className="modal-body mobile-menu-links">{[...nav,...extras].map(([p,Icon,title])=><button type="button" key={p} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={19}/>{title}</button>)}</nav></Modal>}
     </div>
     {wizard&&teacher&&(workspaceVisible||adminPage&&adminAccess)&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
-    {phone&&!adminPage&&<Suspense fallback={null}><PhoneSignIn {...phoneProps} close={()=>setPhone(false)}/></Suspense>}
+    {phone&&!adminPage&&!token&&<Suspense fallback={null}><PhoneSignIn {...phoneProps} close={()=>changePhone(false)}/></Suspense>}
     {toast&&<div className={'toast '+(toast.error?'toast-error':'')} role={toast.error?'alert':'status'}>{toast.error?<CircleAlert size={19}/>:<Check size={19}/>}<span>{toast.text}</span><button className="icon-button mini" onClick={()=>setToast(undefined)} aria-label={t('إغلاق','Close')}><X size={16}/></button></div>}
   </Context.Provider>
 }

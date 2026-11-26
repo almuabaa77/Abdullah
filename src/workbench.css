@@ -135,6 +135,7 @@
 .phone-controls {display:flex;gap:6px;align-items:center;justify-content:space-between}
 .code-field {font-family:DM,Arial,sans-serif;font-size:1.42rem;letter-spacing:.46em;text-align:center}
 .recaptcha-host:empty {display:none}
+.sms-progress {flex-wrap:wrap}
 .signup-verified {justify-self:start;color:#145f40;background:#e7f5e8;border-radius:24px;padding:3px 8px;display:flex;align-items:center;gap:5px;font-size:.84rem;font-weight:600}
 .account-access h1 {font-size:clamp(1.2rem,3vw,1.55rem)}
 .account-access p {overflow-wrap:anywhere;line-height:1.75}
