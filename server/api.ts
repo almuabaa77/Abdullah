@@ -394,9 +394,17 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
       }
       const state = JSON.parse(current.data) as State
       let user = state.users.find(x => x.id === identity.id) ?? null
-      if (!user && identity.bootstrap) {
-        state.users.push(identity.bootstrap)
-        if (!(await repo.write(identity.workspace,current.revision,state))) continue
+      if (identity.bootstrap && (!user || (identity.phone && user.status === 'pending'))) {
+        if (user) {
+          user.role = identity.bootstrap.role
+          user.status = identity.bootstrap.status
+          user.phone = identity.bootstrap.phone
+          delete user.studentId
+          state.audit.push({ time:new Date().toISOString(),actor:user.name,action:'تفعيل المدير الأول',target:user.id })
+        } else {
+          state.users.push(identity.bootstrap)
+        }
+        await repo.write(identity.workspace,current.revision,state)
         continue
       }
       if (!user && identity.phone) {
