@@ -11,6 +11,7 @@ import { ChatPage, Exams, Leaves, More, Store } from './features'
 import { AccountAccess } from './account-access'
 import { watchRecordRevisions } from './live-records'
 import { Starting, Welcome } from './welcome'
+import { applyAppUpdate, watchAppUpdates } from './app-updates'
 import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
@@ -64,6 +65,7 @@ function App() {
   const [loading,setLoading] = useState(true)
   const [loadError,setLoadError] = useState('')
   const [sessionExpired,setSessionExpired] = useState(false)
+  const [availableUpdate,setAvailableUpdate] = useState<string>()
   const [openPanel,setOpenPanel] = useState<'notices'|'profile'|''>('')
   const [phone,setPhone] = useState(false)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
@@ -93,6 +95,7 @@ function App() {
   const tell = useCallback((text:string,error=false)=>setToast({text,error}),[])
   const changeLanguage = ()=>setEn(!en)
   useEffect(()=>{document.documentElement.lang=en?'en':'ar';document.documentElement.dir=en?'ltr':'rtl';localStorage.setItem('halaqat-language',en?'en':'ar')},[en])
+  useEffect(()=>watchAppUpdates(setAvailableUpdate),[])
   useEffect(()=>{
     const nav=()=>{
       const next=currentPage()
@@ -216,6 +219,9 @@ function App() {
   },[data.notices,data.user?.id,en])
 
   const loadingView = loading||!authReady||loadedUid!==uid
+  useEffect(()=>{
+    if(availableUpdate&&page==='home'&&!loadingView&&!loadError&&!token&&!data.user&&!data.accountAccess&&!phone) applyAppUpdate(availableUpdate,true)
+  },[availableUpdate,page,loadingView,loadError,token,data.user,data.accountAccess,phone])
   const show = !loadingView&&!loadError&&data.user?.status==='active'
   const adminPage = page==='admin'
   const workspaceVisible=show&&!adminPage
@@ -322,6 +328,7 @@ function App() {
           </div>
         </header>
         <main className={'main-content'+(assistantOpen?' assistant-content':'')} id="main">
+          {availableUpdate&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
           {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={()=>setPhone(true)}/>:
           <div className={'screen'+(assistantOpen?' assistant-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
@@ -335,6 +342,3 @@ function App() {
   </Context.Provider>
 }
 createRoot(document.getElementById('root')!).render(<App/>)
-if(import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load',()=>{void navigator.serviceWorker.register('/sw.js').catch(()=>{})})
-}

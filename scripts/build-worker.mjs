@@ -1,4 +1,4 @@
-import { readdir, readFile, mkdir, copyFile, cp } from 'node:fs/promises'
+import { readdir, readFile, writeFile, mkdir, copyFile, cp } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { build } from 'esbuild'
@@ -7,19 +7,29 @@ const directory = 'dist/client'
 const types = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8',
   '.json':'application/json','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.png':'image/png','.webp':'image/webp'}
 const assets = {}
-let serviceWorker = ''
+let serviceWorker = await readFile('public/sw.js','utf8')
+const versionMeta = /(<meta name="app-version" content=")[^"]*(")/
 for (const file of (await readdir(directory,{recursive:true,withFileTypes:true})).filter(d=>d.isFile())) {
   const path = join(file.parentPath,file.name)
   const route = path === 'dist/client/index.html' ? '/' : path.slice(directory.length)
-  const bytes = await readFile(path)
-  if (route === '/sw.js') serviceWorker = bytes.toString()
-  else assets[route] = [types[extname(path)] || 'application/octet-stream',bytes.toString('base64')]
+  if (route==='/sw.js'||route==='/app-version.json') continue
+  let bytes = await readFile(path)
+  if (route==='/') bytes = Buffer.from(bytes.toString('utf8').replace(versionMeta,(_,prefix,suffix)=>prefix+'__BUILD_VERSION__'+suffix))
+  assets[route] = [types[extname(path)] || 'application/octet-stream',bytes.toString('base64')]
 }
-const version = createHash('sha256').update(JSON.stringify(assets)).digest('hex').slice(0,12)
-const preload = Object.keys(assets).filter(route => !/\/assets\/index-.*?\.js$/.test(route) || route === '/')
-for (const route of Object.keys(assets)) if (route.endsWith('.js') && !/firebase|phone/.test(route)) preload.push(route)
-serviceWorker = serviceWorker.replace('__BUILD_VERSION__',version).replace("'__PRECACHE_FILES__'",JSON.stringify([...new Set(preload)]))
+const routes = Object.keys(assets).sort()
+const version = createHash('sha256').update(JSON.stringify(routes.map(route=>[route,assets[route]]))).update(serviceWorker).digest('hex').slice(0,12)
+const html = Buffer.from(assets['/'][1],'base64').toString('utf8').replace('__BUILD_VERSION__',version)
+serviceWorker = serviceWorker.replace('__BUILD_VERSION__',version).replace("'__CACHEABLE_FILES__'",JSON.stringify(routes.filter(route=>route.startsWith('/assets/'))))
+const versionFile = JSON.stringify({version})
+assets['/'] = [types['.html'],Buffer.from(html).toString('base64')]
 assets['/sw.js'] = [types['.js'],Buffer.from(serviceWorker).toString('base64')]
+assets['/app-version.json'] = [types['.json'],Buffer.from(versionFile).toString('base64')]
+await Promise.all([
+  writeFile(join(directory,'index.html'),html),
+  writeFile(join(directory,'sw.js'),serviceWorker),
+  writeFile(join(directory,'app-version.json'),versionFile),
+])
 const embedAssets = {
   name:'embed-assets',
   setup(plugin) {

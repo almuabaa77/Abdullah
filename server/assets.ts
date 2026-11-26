@@ -10,6 +10,6 @@ export function serveAsset(request: Request) {
   const bytes = request.method === 'HEAD' ? null : Uint8Array.from(atob(data), c => c.charCodeAt(0))
   return new Response(bytes,{headers:{
     'Content-Type':type,'X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin',
-    'Cache-Control':assetPath === '/' || pathname === '/sw.js' || pathname === '/manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600',
+    'Cache-Control':assetPath === '/' || ['/sw.js','/manifest.webmanifest','/app-version.json'].includes(pathname) ? 'no-store' : 'public, max-age=3600',
   }})
 }

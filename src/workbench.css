@@ -271,6 +271,7 @@
 }
 
 :root {--app-chrome:#0b503d;--bg:#f4f8f5;--green:#125b45;--text:#162f26;--muted:#536c60;--border:#dce9e0;background:var(--app-chrome)}
+.update-banner {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:7px 12px;background:#e6f3eb;border:1px solid #c5decd;border-radius:10px;padding:8px 12px;margin-bottom:10px;color:#164d38;font-size:.88rem}
 body {background:var(--bg)}
 .app-shell {--role-tint:#eaf4ed;--role-edge:#7aaa90;--role-surface:#f4f8f5;background:var(--role-surface)}
 .app-shell[data-role="teacher"] {--role-tint:#e4f3eb;--role-edge:#66a489;--role-surface:#f2f8f4}
