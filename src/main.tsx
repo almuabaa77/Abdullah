@@ -57,6 +57,8 @@ function App() {
   const [phoneAttempt,retryPhone] = useState(0)
   const [session,setSession] = useState({token:'',uid:''})
   const {token,uid} = session
+  const activeUid = useRef(uid)
+  activeUid.current = uid
   const [loadedUid,setLoadedUid] = useState<string>()
   const [data,setData] = useState<View>(emptyData)
   const [loading,setLoading] = useState(true)
@@ -145,6 +147,7 @@ function App() {
     const pull = async (initial = false) => {
       if(pulling){queued=true;return}
       pulling=true
+      let retrying = false
       try {
         const result=await request(token,role,undefined,controller.signal)
         if(!active)return
@@ -161,13 +164,14 @@ function App() {
         if(active&&expired&&uid&&auth?.currentUser?.uid===uid&&refreshedUid.current!==uid) {
           refreshedUid.current=uid
           const renewed=await auth.currentUser.getIdToken(true).catch(()=>undefined)
-          if(active&&renewed&&renewed!==token){setSession({token:renewed,uid});return}
+          if(active&&renewed&&renewed!==token){retrying=true;setSession({token:renewed,uid});return}
         }
+        if(active&&initial)setData(emptyData)
         if(active&&(initial||expired)){setSessionExpired(expired);setLoadError((e as Error).message)}
       } finally {
         pulling=false
-        if(active&&initial){setLoadedUid(uid);setLoading(false)}
-        if(active&&queued){queued=false;void pull()}
+        if(active&&initial&&!retrying){setLoadedUid(uid);setLoading(false)}
+        if(active&&queued&&!retrying){queued=false;void pull()}
       }
     }
     const refresh=()=>{if(navigator.onLine)void pull()}
@@ -187,8 +191,10 @@ function App() {
       if(!navigator.onLine)await retryWhenOnline()
       result=await request(token,role,body)
     }
-    setData(previous=>previous.user?.id!==result.user?.id||previous.revision<=result.revision?result:previous)
-    setUnregistered(Boolean(token&&!result.user&&!result.accountAccess))
+    if(activeUid.current===uid){
+      setData(previous=>previous.user?.id!==result.user?.id||previous.revision<=result.revision?result:previous)
+      setUnregistered(Boolean(token&&!result.user&&!result.accountAccess))
+    }
     return result
   }
   const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>,circleId?:string) => setWizard({student,mode,preset,circleId})
