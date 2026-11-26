@@ -129,7 +129,7 @@
 .phone-progress>i {width:17px;height:1px;background:#dfe9de}
 .phone-intro {display:grid;justify-items:center;text-align:center;gap:6px;padding:7px 0}
 .phone-icon {display:grid;place-items:center;width:53px;height:53px;border-radius:15px;background:#edf6ed;color:var(--green)}
-.phone-intro h3 {font-size:1.26rem}
+.phone-intro h1,.phone-intro h3 {font-size:1.26rem}
 .phone-intro p,.phone-privacy {font-size:.86rem}
 .phone-privacy {display:flex;gap:6px;align-items:flex-start}
 .phone-controls {display:flex;gap:6px;align-items:center;justify-content:space-between}

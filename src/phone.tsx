@@ -41,7 +41,7 @@ function smsError(error:unknown,t:Tr) {
   }
 }
 
-export function PhoneModal({auth,availability,retry,close}:{auth:PhoneAuth|null;availability:PhoneAvailability;retry:()=>void;close:()=>void}) {
+export function PhoneSignIn({auth,availability,retry,close,administration=false}:{auth:PhoneAuth|null;availability:PhoneAvailability;retry:()=>void;close?:()=>void;administration?:boolean}) {
   const {t,en} = useWorkspace()
   const [phone,setPhone] = useState('')
   const [number,setNumber] = useState('')
@@ -87,20 +87,20 @@ export function PhoneModal({auth,availability,retry,close}:{auth:PhoneAuth|null;
     if(!confirm){await send(phone);return}
     if(code.length!==6)return
     setError('');setBusy('verify')
-    try{await confirm.confirm(code);close()}
+    try{await confirm.confirm(code);close?.()}
     catch(err){setError(smsError(err,t))}
     finally{setBusy('')}
   }
 
-  return <Modal title={t('حساب حلقات الخير','Al-Khair account')} close={()=>{if(!busy)close()}} appearance="phone-dialog">
-    <form onSubmit={submit}>
+  const Heading = administration ? 'h1' : 'h3'
+  const form = <form onSubmit={submit}>
       <div className="modal-body">
         <div className="phone-progress" aria-label={t('خطوات التحقق','Verification steps')}>
           <span className={confirm?'done':'active'}>{confirm?<Check size={15}/>:<Smartphone size={15}/>} {t('رقم الجوال','Mobile number')}</span>
           <i/><span className={confirm?'active':''}><KeyRound size={15}/> {t('رمز التحقق','Security code')}</span>
         </div>
-        <div className="phone-intro"><span className="phone-icon">{confirm?<KeyRound size={27}/>:<Smartphone size={27}/>}</span><h3>{confirm?t('أدخل رمز التحقق','Enter the security code'):t('الدخول أو إنشاء حساب','Sign in or create an account')}</h3>
-          {confirm?<p>{t('أرسلنا رمزًا من 6 أرقام إلى','A 6-digit code was sent to')} <bdi>{number}</bdi></p>:<p>{t('تحقّق من رقم جوالك لمتابعة الدخول أو طلب حساب جديد.','Verify your number to sign in or request a new account.')}</p>}
+        <div className="phone-intro"><span className="phone-icon">{confirm?<KeyRound size={27}/>:administration?<ShieldCheck size={27}/>:<Smartphone size={27}/>}</span><Heading>{confirm?t('أدخل رمز التحقق','Enter the security code'):administration?t('دخول الإدارة','Administration sign-in'):t('الدخول أو إنشاء حساب','Sign in or create an account')}</Heading>
+          {confirm?<p>{t('أرسلنا رمزًا من 6 أرقام إلى','A 6-digit code was sent to')} <bdi>{number}</bdi></p>:<p>{administration?t('أدخل رقم جوال حساب الإدارة للتحقق برسالة نصية.','Verify the administration account’s mobile number by SMS.'):t('تحقّق من رقم جوالك لمتابعة الدخول أو طلب حساب جديد.','Verify your number to sign in or request a new account.')}</p>}
         </div>
         {availability==='loading'?<p className="hint-line"><LoaderCircle className="spinner" size={17}/>{t('جارٍ الاتصال بخدمة التحقق…','Connecting to phone verification…')}</p>:availability==='disabled'?
           <p className="hint-line"><ShieldCheck size={17}/>{t('تفعيل الرسائل النصية بانتظار إعداد مشروع Firebase للمنصة.','SMS verification is awaiting the platform’s Firebase setup.')}</p>:availability==='unavailable'?
@@ -110,13 +110,14 @@ export function PhoneModal({auth,availability,retry,close}:{auth:PhoneAuth|null;
         </>:<label>{t('رقم الجوال','Mobile number')}<input ref={phoneField} type="tel" dir="ltr" inputMode="tel" autoComplete="tel" maxLength={28} value={phone} onChange={e=>{setPhone(e.target.value);setError('')}} placeholder="05X XXX XXXX" required/></label>}
         <div ref={captchaHost} className="recaptcha-host"/>
         {error&&<p className="error-box" role="alert">{error}</p>}
-        {availability==='ready'&&!confirm&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('تتحقق Firebase من الرقم، وتراجع الإدارة طلبات الحسابات الجديدة.','Firebase verifies the number. Administration reviews new account requests.')}</p>}
+        {availability==='ready'&&!confirm&&!administration&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('تتحقق Firebase من الرقم، وتراجع الإدارة طلبات الحسابات الجديدة.','Firebase verifies the number. Administration reviews new account requests.')}</p>}
       </div>
       {availability==='ready'&&<div className="modal-foot phone-foot"><button type="submit" className="btn btn-primary full" disabled={!!busy||(confirm?code.length!==6:!phone.trim()||seconds>0)}>
         {busy?<LoaderCircle className="spinner" size={18}/>:confirm?<Check size={18}/>:<Smartphone size={18}/>}
         {busy?t('جارٍ التحقق…','Verifying…'):confirm?t('تحقّق ومتابعة','Verify and continue'):seconds?t(`طلب رمز بعد ${seconds} ث`,`Request a code in ${seconds}s`):t('إرسال رمز التحقق','Send verification code')}
       </button></div>}
     </form>
-  </Modal>
+  return administration ? <section className="panel intro-card phone-dialog">{form}</section>
+    : <Modal title={t('حساب حلقات الخير','Al-Khair account')} close={()=>{if(!busy)close?.()}} appearance="phone-dialog">{form}</Modal>
 }
 export const endPhone = signOut

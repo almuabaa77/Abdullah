@@ -10,7 +10,7 @@ export function Admin() {
   const [edit,setEdit] = useState<Edit>()
   const [query,setQuery] = useState('')
   const [busy,setBusy] = useState(false)
-  if(data.user?.role!=='admin') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
+  if(data.user?.role!=='admin'||data.user.status!=='active') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
   const nav = [
     ['overview',LayoutGrid,t('الإحصاءات العامة','Overview')], ['people',Users,t('الحسابات وطلبات التسجيل','Accounts & enrollment')],
     ['students',Users,t('الطلاب','Students')],['circles',BookOpen,t('الحلقات','Circles')],['links',Link2,t('ربط الأبناء','Family links')],

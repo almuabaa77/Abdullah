@@ -11,7 +11,7 @@ self.addEventListener('fetch', event => {
   const {request} = event, url = new URL(request.url)
   if (request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/sw.js') return
   if (request.mode === 'navigate') {
-    if (url.pathname !== '/') return
+    if (!['/', '/admin', '/admin/'].includes(url.pathname)) return
     event.respondWith(fetch(request).catch(() => caches.match('/')))
   } else if (precache.includes(url.pathname)) event.respondWith(caches.open(cacheName).then(cache => cache.match(request)).then(entry => entry || fetch(request)))
 })
