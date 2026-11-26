@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
+import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, Menu, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
 import { idFor, type Daily, type Student, type View } from './domain'
-import { Context, Brand, Empty, RoleName, type Page, type Tr, type WizardMode } from './ui'
+import { Context, Brand, Empty, Modal, RoleName, type Page, type Tr, type WizardMode } from './ui'
 import { Dashboard, StudentHome } from './dashboard'
 import { EntryWizard } from './wizard'
 import { Assistant } from './assistant'
@@ -67,7 +67,7 @@ function App() {
   const [loadError,setLoadError] = useState('')
   const [sessionExpired,setSessionExpired] = useState(false)
   const [availableUpdate,setAvailableUpdate] = useState<string>()
-  const [openPanel,setOpenPanel] = useState<'notices'|'profile'|''>('')
+  const [openPanel,setOpenPanel] = useState<'notices'|'profile'|'navigation'|''>('')
   const [phone,setPhone] = useState(false)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
   const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>;circleId?:string}>()
@@ -97,6 +97,12 @@ function App() {
   const changeLanguage = ()=>setEn(!en)
   useEffect(()=>{document.documentElement.lang=en?'en':'ar';document.documentElement.dir=en?'ltr':'rtl';localStorage.setItem('halaqat-language',en?'en':'ar')},[en])
   useEffect(()=>watchAppUpdates(setAvailableUpdate),[])
+  useEffect(()=>{
+    const desktop=matchMedia('(min-width: 851px)')
+    const closeMenu=()=>{if(desktop.matches)setOpenPanel(current=>current==='navigation'?'':current)}
+    desktop.addEventListener('change',closeMenu)
+    return ()=>desktop.removeEventListener('change',closeMenu)
+  },[])
   useEffect(()=>{
     const nav=()=>{
       const next=currentPage()
@@ -287,7 +293,7 @@ function App() {
   const loadingLabel=t('جارٍ التحميل','Loading')
   const phoneProps={auth,availability:phoneAvailability,retry:()=>retryPhone(n=>n+1)}
   const adminContent = adminAccess
-    ? <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>}><Admin liveRecords={liveRecords}/></Suspense>
+    ? <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>}><Admin liveRecords={liveRecords} mobileMenuOpen={openPanel==='navigation'} closeMobileMenu={()=>setOpenPanel('')}/></Suspense>
     : token||data.user
       ? <div className="panel"><Empty title={t('صلاحية الإدارة مطلوبة','Administration access required')} body={t('يمكنك المتابعة باستخدام حساب مدير معتمد.','Use an authorized administration account to continue.')} action={token?<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>:undefined}/></div>
       : <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/></div>}><PhoneSignIn {...phoneProps} administration/></Suspense>
@@ -312,6 +318,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-title">{workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
           <div className="topbar-actions">
+            {(workspaceVisible||adminAccess)&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
             {adminPage&&<button className="icon-button" onClick={()=>go('home')} aria-label={t('العودة إلى المنصة','Back to the platform')} title={t('العودة إلى المنصة','Back to the platform')}><Home size={19}/></button>}
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {(workspaceVisible||adminAccess)&&<>
@@ -335,7 +342,7 @@ function App() {
           <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>
-      {workspaceVisible&&<nav className="mobile-nav" aria-label={t('القائمة الرئيسية','Main navigation')}>{nav.map(([p,Icon,label])=><button key={p} className={p===page?'active':''} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={21}/><span>{label}</span></button>)}</nav>}
+      {workspaceVisible&&openPanel==='navigation'&&<Modal title={t('القائمة الرئيسية','Main navigation')} close={()=>setOpenPanel('')} appearance="mobile-menu"><nav className="modal-body mobile-menu-links">{[...nav,...extras].map(([p,Icon,title])=><button type="button" key={p} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={19}/>{title}</button>)}</nav></Modal>}
     </div>
     {wizard&&teacher&&(workspaceVisible||adminPage&&adminAccess)&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
     {phone&&!adminPage&&<Suspense fallback={null}><PhoneSignIn {...phoneProps} close={()=>setPhone(false)}/></Suspense>}

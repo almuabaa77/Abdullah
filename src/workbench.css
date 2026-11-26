@@ -196,7 +196,7 @@
   .workbench-grid {grid-template-columns:minmax(0,1fr) minmax(240px,280px)}
 }
 @media(max-width:850px) {
-  .assistant-content {padding:10px max(10px,env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
+  .assistant-content {padding:10px max(10px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
   .workbench-hero {padding:12px 13px;border-radius:13px;gap:7px}
   .workbench-hero h1 {font-size:clamp(1.35rem,4.3vw,1.9rem)}
   .workbench-hero p {font-size:.82rem}
@@ -314,13 +314,6 @@ body {background:var(--bg)}
 .otp-slots .filled {color:#134c37;background:#e7f4eb}
 .otp-entry:focus-within .current,.otp-entry:focus-within:has(input:valid) .otp-slots {outline:2px solid #2a8261;outline-offset:2px;border-radius:11px}
 .otp-entry:has(input[aria-invalid="true"]) .otp-slots span {border-color:#b45c56}
-@media(max-width:850px) {
-  .app-shell .topbar {height:calc(62px + env(safe-area-inset-top))}
-  .app-shell .mobile-nav {background:var(--app-chrome);border-top:1px solid #2e715c;padding:6px max(6px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left))}
-  .app-shell .mobile-nav button {color:#e5f2e9;min-width:0}
-  .app-shell .mobile-nav button.active {background:var(--role-tint);color:#0b503d}
-  .intro-shell::after {content:'';position:fixed;inset-inline:0;bottom:0;height:env(safe-area-inset-bottom);background:var(--app-chrome);pointer-events:none}
-}
 @media(max-width:620px) {
   .welcome-screen {grid-template-columns:minmax(0,1fr);min-height:0;border-radius:20px}
   .welcome-visual {min-height:clamp(130px,24vh,230px);padding:14px}
@@ -335,12 +328,13 @@ body {background:var(--bg)}
   .modal,.screen {animation:none}
 }
 
-.app-shell {--header-size:calc(69px + env(safe-area-inset-top));--bottom-nav-size:0px}
+.app-shell {--header-size:calc(69px + env(safe-area-inset-top))}
 .app-shell .topbar {position:sticky;top:0;height:var(--header-size);z-index:25;box-shadow:0 4px 16px #1a4a3510}
 .admin-shell .admin-nav {position:sticky;top:calc(var(--header-size) + 12px);max-height:calc(100dvh - var(--header-size) - 26px);overflow:auto;padding:9px}
-.admin-shell .admin-nav button,.admin-more-menu button {min-height:43px;padding:8px 10px}
-.admin-more-menu button {display:flex;align-items:center;gap:10px;text-align:start;border:1px solid var(--border);border-radius:10px;color:#24543e}
-.admin-more-menu button.selected,.admin-more-menu button:hover {background:#e8f4ec}
+.admin-shell .admin-nav button {min-height:43px;padding:8px 10px}
+.mobile-menu {max-width:440px}
+.mobile-menu-links button {display:flex;align-items:center;gap:10px;min-height:43px;padding:8px 10px;text-align:start;border:1px solid var(--border);border-radius:10px;color:#24543e}
+.mobile-menu-links button[aria-current],.mobile-menu-links button:hover {background:#e8f4ec;color:var(--green)}
 .workbench-hero {padding-block:14px}
 .workbench-hero-actions {display:grid;gap:6px;justify-items:stretch;min-width:0}
 .workbench-hero-actions .circle-picker {background:#f4f9f6;max-width:170px}
@@ -351,7 +345,7 @@ body {background:var(--bg)}
 .workbench-action {border-color:#d4e7da}
 .chat-shell .app-body {height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 .chat-shell .topbar {flex:none}
-.chat-main {flex:1;min-height:0;width:100%;display:flex;flex-direction:column;margin:0;padding:0 0 var(--bottom-nav-size)}
+.chat-main {flex:1;min-height:0;width:100%;display:flex;flex-direction:column;margin:0;padding:0}
 .chat-main .update-banner,.chat-main .offline-banner {margin:5px 9px;flex:none}
 .chat-screen,.messenger {flex:1;min-height:0;min-width:0}
 .chat-screen {display:flex;animation:none}
@@ -382,25 +376,21 @@ body {background:var(--bg)}
 .messenger-messages .outgoing {background:#dff2e5;border-color:#cce7d3}
 .message footer {display:flex;align-items:center;justify-content:flex-end;gap:7px;font-size:.72rem;color:#4f6f5e;margin-top:3px}
 .message footer .text-button {min-height:26px}
-.messenger-composer {background:#fff;border-top:1px solid var(--border);padding:8px 12px;flex:none}
+.messenger-composer {background:#fff;border-top:1px solid var(--border);padding:8px 12px calc(8px + env(safe-area-inset-bottom));flex:none}
 .messenger-composer textarea {min-height:43px;max-height:110px;resize:vertical;flex:1;margin:0;font-size:16px}
 .messenger-reply {display:flex;align-items:center;gap:8px;background:#eef6ef;border-radius:8px;padding:4px 8px;margin-bottom:5px;font-size:.8rem}
 .messenger-reply span {flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 @media(max-width:850px) {
-  .app-shell {--header-size:calc(62px + env(safe-area-inset-top));--bottom-nav-size:calc(64px + env(safe-area-inset-bottom))}
-  .app-shell .topbar {height:var(--header-size)}
+  .app-shell {--header-size:calc(62px + env(safe-area-inset-top))}
+  .app-shell .topbar {height:var(--header-size);padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right))}
   .topbar-title,.topbar-title .brand>div {min-width:0}
   .topbar-title .brand strong {overflow:hidden;text-overflow:ellipsis}
   .topbar-actions {flex:none}
-  .app-shell .mobile-nav {height:var(--bottom-nav-size);background:var(--app-chrome)}
-  .app-shell .mobile-nav button {height:51px;line-height:1.15;gap:3px}
-  .app-shell .mobile-nav button svg {flex:none;width:19px;height:19px}
   .admin-shell .admin-grid {grid-template-columns:minmax(0,1fr)}
   .admin-shell .admin-nav {display:none}
-  .admin-shell .main-content {padding-bottom:calc(var(--bottom-nav-size) + 12px)}
   .messenger {display:flex}
   .messenger-directory,.messenger-thread {flex:1}
-  .messenger-directory {border-inline-end:0}
+  .messenger-directory {border-inline-end:0;padding-bottom:max(12px,env(safe-area-inset-bottom))}
   .messenger[data-thread="closed"] .messenger-thread,.messenger[data-thread="open"] .messenger-directory {display:none}
   .messenger-thread-head {padding:6px 8px}
   .messenger-thread-head>.stat-icon {display:none}
@@ -409,7 +399,7 @@ body {background:var(--bg)}
   .workbench-hero-actions .circle-picker {max-width:130px}
 }
 @media(max-width:400px) {
-  .admin-shell .topbar {gap:6px;padding-inline:10px}
+  .admin-shell .topbar {gap:6px}
   .admin-shell .topbar-title .brand {gap:6px}
   .admin-shell .topbar-title img {width:34px;height:34px;border-radius:9px}
   .admin-shell .topbar-title strong {font-size:.84rem}

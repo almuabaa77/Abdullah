@@ -99,7 +99,7 @@ small{font-size:.8rem}
 .profile-trigger:hover{background:#f2f6f0}
 .notification-trigger{position:relative}
 .notification-trigger i{position:absolute;width:8px;height:8px;border-radius:10px;background:#ce9e4d;border:1.6px solid white;top:7px;inset-inline-end:8px}
-.mobile-brand,.mobile-nav{display:none}
+.mobile-brand,.mobile-menu-trigger{display:none}
 .main-content{padding:23px clamp(16px,2.15vw,36px) 42px;margin:auto;max-width:1580px}
 .screen{animation:enter 180ms ease-out}
 @keyframes enter{from{opacity:.55;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
@@ -378,11 +378,9 @@ body:has(.modal-backdrop){overflow:hidden}
   .brand-small img{width:35px;height:35px;border-radius:9px}
   .brand-small span{font-size:.71rem}
   .topbar{height:62px;padding-inline:14px}
-  .main-content{padding:14px 15px calc(83px + env(safe-area-inset-bottom))}
-  .mobile-nav{display:flex;position:fixed;bottom:0;inset-inline:0;padding:5px 6px max(env(safe-area-inset-bottom),5px);z-index:35;background:#fffffff7;border-top:1px solid var(--border);box-shadow:0 -5px 30px #1939230c}
-  .mobile-nav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:51px;border-radius:9px;color:#526c5c;font-size:.73rem;text-align:center;padding:2px}
-  .mobile-nav button.active{color:var(--green);font-weight:700;background:#edf6ed}
-  .toast{bottom:calc(67px + env(safe-area-inset-bottom));inset-inline-end:10px}
+  .main-content{padding:14px 15px calc(18px + env(safe-area-inset-bottom))}
+  .mobile-menu-trigger{display:inline-flex;color:var(--green);background:var(--role-tint)}
+  .toast{bottom:calc(12px + env(safe-area-inset-bottom));inset-inline-end:10px}
 }
 @media(max-width:620px){
   .hero{min-height:192px}
@@ -445,7 +443,7 @@ body:has(.modal-backdrop){overflow:hidden}
 @media print{
   :root{background:#fff}
   body,.app-shell,.app-body,.main-content,.screen{display:block;margin:0;padding:0;width:100%;max-width:none}
-  .topbar,.sidebar,.mobile-nav,.records-page>.section-title,.records-filters,.record-tools,.toast,.offline-banner{display:none!important}
+  .topbar,.sidebar,.records-page>.section-title,.records-filters,.record-tools,.toast,.offline-banner{display:none!important}
   .print-brand{display:block;margin-bottom:15px}
   .records-page{padding:7px;box-shadow:none;border:0}
   .table-wrap{overflow:visible}
