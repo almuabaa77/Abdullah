@@ -1,44 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Award, Bell, BookOpen, CalendarDays, Check, ChevronLeft, Download, Flag, Gift, Globe, Link2, LockKeyhole, MessageCircle, Pin, Plus, Search, Send, ShieldCheck, Smartphone, Star, UserCheck, Users } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { Award, Bell, BookOpen, CalendarDays, ChevronLeft, Download, Gift, Globe, Link2, Plus, Send, Smartphone, Star, UserCheck, Users } from 'lucide-react'
 import { balanceFor, dateKey, idFor, type Exam, type Student } from './domain'
 import { Avatar, Badge, Brand, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
-
-export function ChatPage() {
-  const {data,t,en,post,tell} = useWorkspace()
-  const [id,setId] = useState('')
-  const [compose,setCompose] = useState('')
-  const [query,setQuery] = useState('')
-  const [reply,setReply] = useState('')
-  const [busy,setBusy] = useState(false)
-  const [choose,setChoose] = useState(false)
-  const [target,setTarget] = useState('')
-  const chats = data.chats.slice().sort((a,b)=>b.pinnedBy.length-a.pinnedBy.length)
-  const chat = chats.find(c=>c.id===id) || chats[0]
-  const user = data.user?.id
-  const msgCount = chat?.messages.length
-  useEffect(()=>{if(chat&&chat.messages.some(m=>user&&!m.readBy.includes(user)))void post('chat-read',{id:chat.id}).catch(()=>{})},[chat?.id,msgCount])
-  const act = async (action:string,payload:Record<string,unknown>) => {try {return await post(action,payload)}catch(e){tell((e as Error).message,true);return null}}
-  return <section className="panel chat-page">
-    <div className="chat-directory"><div className="section-title"><h2>{t('المحادثات','Conversations')}</h2><button className="icon-button" aria-label={t('محادثة جديدة','New conversation')} onClick={()=>setChoose(true)}><Plus size={20}/></button></div>
-      {chats.map(c=><button className={'thread-button '+(c.id===chat?.id?'selected':'')} key={c.id} onClick={()=>{setId(c.id);setReply('');setQuery('')}}><span className="stat-icon tint-green"><MessageCircle size={19}/></span><span><strong>{data.sample&&en&&c.id==='chat-1'?'Imam Asim Circle Group':c.title}</strong><small>{c.messages.at(-1)?.text||t('محادثة جديدة','New conversation')}</small></span>{c.pinnedBy.length>0&&<Pin size={14}/>}</button>)}
-      {!chats.length&&<p className="muted small-text">{t('لا توجد محادثات بعد','No conversations yet')}</p>}
-    </div>
-    <div className="chat-content">{!chat?<Empty title={t('ابدأ محادثة','Start a conversation')} body={t('اختر محادثة مصرحًا بها للمتابعة.','Select an authorized conversation to continue.')} action={<button className="btn btn-primary" onClick={()=>setChoose(true)}><Plus size={16}/>{t('محادثة جديدة','New conversation')}</button>}/>:<>
-      <div className="chat-head"><div><h2>{data.sample&&en&&chat.id==='chat-1'?'Imam Asim Circle Group':chat.title}</h2><p>{t('محادثة الحلقة','Circle chat')}</p></div><div className="chip-row">
-        <button className="icon-button" title={t('تثبيت المحادثة','Pin conversation')} aria-label={t('تثبيت المحادثة','Pin conversation')} aria-pressed={!!chat.pinnedBy.length} onClick={()=>void act('chat-pin',{id:chat.id})}><Pin size={17}/></button>
-        <button className="icon-button" title={t('الإبلاغ عن المحادثة','Report conversation')} aria-label={t('الإبلاغ عن المحادثة','Report conversation')} onClick={async()=>{if(window.confirm(t('إرسال بلاغ إلى الإدارة؟','Send a report to administration?'))&&await act('chat-report',{id:chat.id}))tell(t('تم إرسال البلاغ','Report sent'))}}><Flag size={17}/></button>
-        <button className="icon-button" title={t('حظر المحادثة','Block conversation')} aria-label={t('حظر المحادثة','Block conversation')} aria-pressed={!!chat.blockedBy.length} onClick={()=>void act('chat-block',{id:chat.id})}><LockKeyhole size={17}/></button>
-      </div></div>
-      <label className="search chat-search"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('بحث داخل المحادثة','Search conversation')} aria-label={t('بحث داخل المحادثة','Search conversation')}/></label>
-      <div className="message-list">{chat.messages.filter(m=>m.text.toLowerCase().includes(query.toLowerCase())).map(m=><div className={'message '+(m.from===user?'outgoing':'incoming')} key={m.id}>
-        <strong>{m.from===user?t('أنت','You'):data.users.find(u=>u.id===m.from)?.name || t('عضو الحلقة','Circle member')}</strong>{m.reply&&<blockquote>{chat.messages.find(x=>x.id===m.reply)?.text}</blockquote>}<p>{m.text}</p><div><small>{new Intl.DateTimeFormat(en?'en-GB':'ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}).format(new Date(m.time))}</small><button className="text-button" onClick={()=>setReply(m.id)}>{t('رد','Reply')}</button>{m.from===user&&m.readBy.length>1&&<Check size={14}/>}</div>
-      </div>)}</div>
-      {reply&&<div className="hint-line"><span>{chat.messages.find(x=>x.id===reply)?.text}</span><button className="text-button" onClick={()=>setReply('')}>{t('إلغاء الرد','Cancel reply')}</button></div>}
-      {chat.blockedBy.length>0?<div className="hint-line">{t('المحادثة محظورة','Conversation blocked')}</div>:<form className="compose-form" onSubmit={async e=>{e.preventDefault();if(!compose.trim())return;setBusy(true);if(await act('message',{id:chat.id,text:compose,reply})){setCompose('');setReply('')}setBusy(false)}}><input placeholder={t('اكتب رسالة…','Write a message…')} aria-label={t('اكتب رسالة','Write a message')} value={compose} onChange={e=>setCompose(e.target.value)} maxLength={3000}/><button className="btn btn-primary" aria-label={t('إرسال','Send')} disabled={busy||!compose.trim()}><Send size={18}/></button></form>}
-    </>}</div>
-    {choose&&<Modal title={t('محادثة جديدة','New conversation')} close={()=>setChoose(false)}><form onSubmit={async e=>{e.preventDefault();const newData=await act('chat-open',{studentId:target});if(newData){setId(newData.chats.find(c=>c.students.length===1&&c.students[0]===target&&c.members.includes(user||''))?.id||'');setChoose(false)}}}><div className="modal-body"><label>{t('الطالب','Student')}<select required value={target} onChange={e=>setTarget(e.target.value)}><option value="">{t('اختر طالبًا','Choose a student')}</option>{data.students.filter(s=>s.active).map(s=><option key={s.id} value={s.id}>{nameFor(s,en)}</option>)}</select></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={!target}>{t('فتح المحادثة','Open conversation')}</button></div></form></Modal>}
-  </section>
-}
 
 export function Store() {
   const {data,t,en,post,tell} = useWorkspace()
@@ -105,7 +68,6 @@ export function More({ changeLanguage, switchRole, currentRole, install }: {chan
     [CalendarDays,t('الاختبارات','Assessments'),()=>go('exams')],
     [UserCheck,t('الاستئذانات','Leave requests'),()=>go('leaves')],
     ...(staff?[[BookOpen,t('السجل والتقارير','Records and reports'),()=>go('records')]] as const:[]),
-    ...(data.user?.role==='admin'?[[ShieldCheck,t('لوحة الإدارة','Administration'),()=>go('admin')]] as const:[]),
     [Globe,t('English','العربية'),changeLanguage],
     [Smartphone,t('تثبيت التطبيق','Install application'),()=>{if(install)void install.prompt();else setModal('install')}],
     [Bell,t('الأذونات','Permissions'),()=>setModal('permissions')],

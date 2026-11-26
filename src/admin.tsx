@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Gift, History, LayoutGrid, Link2, MessageCircle, Plus, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Gift, History, LayoutGrid, Link2, MessageCircle, Plus, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import type { Circle, Prize, Student } from './domain'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
@@ -13,6 +13,7 @@ export function Admin({liveRecords=false}:{liveRecords?:boolean}) {
   const [edit,setEdit] = useState<Edit>()
   const [query,setQuery] = useState('')
   const [busy,setBusy] = useState(false)
+  const [menu,setMenu] = useState(false)
   if(data.user?.role!=='admin'||data.user.status!=='active') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
   const nav = [
     ['live',Activity,t('المتابعة المباشرة','Live monitoring')],
@@ -20,6 +21,8 @@ export function Admin({liveRecords=false}:{liveRecords?:boolean}) {
     ['duplicates',ShieldAlert,t('الأرقام المكررة','Duplicate numbers')],['students',Users,t('الطلاب','Students')],['circles',BookOpen,t('الحلقات','Circles')],['links',Link2,t('ربط الأبناء','Family links')],
     ['store',Gift,t('المتجر والطلبات','Store & orders')],['announcements',Bell,t('الإعلانات','Announcements')],['settings',Settings,t('النقاط وصلاحيات التواصل','Points & communication')],['audit',History,t('سجل العمليات','Audit log')]
   ] as const
+  const openTab = (id:string) => {setTab(id);setQuery('');setMenu(false);window.scrollTo({top:0,behavior:'instant'})}
+  const primary = nav.filter(([id])=>['live','people','students'].includes(id))
   const submit = async (action:string,payload:Record<string,unknown>)=>{setBusy(true);try{await post(action,payload);tell(t('تم تحديث البيانات','Changes saved'));return true}catch(e){tell((e as Error).message,true);return false}finally{setBusy(false)}}
   const form = async (e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault();if(!edit)return
@@ -37,7 +40,7 @@ export function Admin({liveRecords=false}:{liveRecords?:boolean}) {
   return <div className="page-stack">
     <section className="panel section-panel"><div className="section-title"><div><h1>{t('لوحة الإدارة','Administration')}</h1><p>{t('إدارة الحلقات والحسابات وسجلات المنصة','Manage circles, accounts and school records')}</p></div><span className="stat-icon tint-green"><ShieldCheck size={21}/></span></div></section>
     <div className="admin-grid">
-      <nav className="panel admin-nav" aria-label={t('أقسام الإدارة','Administration sections')}>{nav.map(([id,Icon,label])=><button className={id===tab?'selected':''} key={id} onClick={()=>{setTab(id);setQuery('')}}><Icon size={17}/>{label}</button>)}</nav>
+      <nav className="panel admin-nav" aria-label={t('أقسام الإدارة','Administration sections')}>{nav.map(([id,Icon,label])=><button type="button" className={id===tab?'selected':''} aria-current={id===tab?'page':undefined} key={id} onClick={()=>openTab(id)}><Icon size={17}/>{label}</button>)}</nav>
       <section className="panel section-panel admin-main">
         <div className="section-title"><h2>{pageTitle}</h2>{tab==='students'||tab==='circles'||tab==='store'||tab==='announcements'||tab==='people'?<button className="btn btn-primary compact" onClick={()=>setEdit({kind:tab==='students'?'student':tab==='circles'?'circle':tab==='store'?'prize':tab==='people'?'invite':'announcement'})}><Plus size={16}/>{({students:t('إضافة طالب','Add student'),circles:t('إضافة حلقة','Add circle'),store:t('إضافة جائزة','Add reward'),people:t('إضافة حساب','Add account'),announcements:t('إعلان جديد','New announcement')}as Record<string,string>)[tab]}</button>:null}</div>
         {(['people','students','circles','store','audit'] as string[]).includes(tab)&&<input aria-label={t('بحث','Search')} placeholder={t('بحث…','Search…')} value={query} onChange={e=>setQuery(e.target.value)}/>}
@@ -64,6 +67,11 @@ export function Admin({liveRecords=false}:{liveRecords?:boolean}) {
         {tab==='audit'&&<>{data.audit.filter(a=>visible(a.actor+' '+a.action)).map((a,i)=><div className="entity-row" key={i}><div><strong>{a.action}</strong><p>{a.actor} · {new Date(a.time).toLocaleString(en?'en-GB':'ar-SA',{timeZone:'Asia/Riyadh'})}</p></div>{a.before!==undefined&&<span dir="ltr">{a.before} → {a.after}</span>}</div>)}{!data.audit.length&&<Empty title={t('لا توجد عمليات مسجلة','No audit entries')}/>}</>}
       </section>
     </div>
+    <nav className="mobile-nav admin-mobile-nav" aria-label={t('قائمة الإدارة السفلية','Administration bottom navigation')}>
+      {primary.map(([id,Icon,label])=><button type="button" key={id} aria-label={label} aria-current={tab===id?'page':undefined} className={tab===id?'active':''} onClick={()=>openTab(id)}><Icon size={21}/><span>{id==='live'?t('المتابعة','Live'):id==='people'?t('الحسابات','Accounts'):t('الطلاب','Students')}</span></button>)}
+      <button type="button" aria-expanded={menu} aria-current={primary.some(([id])=>id===tab)?undefined:'page'} className={primary.some(([id])=>id===tab)?'':'active'} onClick={()=>setMenu(true)}><Ellipsis size={21}/><span>{t('المزيد','More')}</span></button>
+    </nav>
+    {menu&&<Modal title={t('أقسام الإدارة','Administration sections')} close={()=>setMenu(false)}><nav className="modal-body admin-more-menu">{nav.filter(([id])=>!primary.some(([primaryId])=>id===primaryId)).map(([id,Icon,label])=><button type="button" key={id} className={tab===id?'selected':''} aria-current={tab===id?'page':undefined} onClick={()=>openTab(id)}><Icon size={19}/>{label}</button>)}</nav></Modal>}
     {edit&&<Modal title={({student:t('بيانات الطالب','Student details'),circle:t('بيانات الحلقة','Circle details'),prize:t('بيانات الجائزة','Reward details'),announcement:t('إعلان جديد','New announcement'),invite:t('إضافة حساب','Add account')})[edit.kind]} close={()=>{if(!busy)setEdit(undefined)}}>
       <form onSubmit={form}><div className="modal-body">
         {edit.kind==='student'&&<><label>{t('اسم الطالب','Student name')}<input name="name" required defaultValue={edit.item?.name}/></label><label>{t('الاسم بالإنجليزية','Name in English')}<input name="latin" defaultValue={edit.item?.latin}/></label><label>{t('الجوال','Mobile')}<input name="phone" type="tel" dir="ltr" defaultValue={edit.item?.phone} placeholder="+9665XXXXXXXX"/></label><label>{t('الحلقة','Circle')}<select name="circleId" required defaultValue={edit.item?.circleId}><option value="">{t('اختر حلقة','Select circle')}</option>{data.circles.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label className="check-line"><input type="checkbox" name="active" defaultChecked={edit.item?.active??true}/>{t('طالب نشط','Active student')}</label></>}

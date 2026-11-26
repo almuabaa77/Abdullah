@@ -449,6 +449,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
       }
       const state = JSON.parse(current.data) as State
       let user = state.users.find(x => x.id === identity.id) ?? null
+      if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
         if (events) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})

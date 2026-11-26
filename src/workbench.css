@@ -334,3 +334,86 @@ body {background:var(--bg)}
 @media(prefers-reduced-motion:reduce) {
   .modal,.screen {animation:none}
 }
+
+.app-shell {--header-size:calc(69px + env(safe-area-inset-top));--bottom-nav-size:0px}
+.app-shell .topbar {position:sticky;top:0;height:var(--header-size);z-index:25;box-shadow:0 4px 16px #1a4a3510}
+.admin-shell .admin-nav {position:sticky;top:calc(var(--header-size) + 12px);max-height:calc(100dvh - var(--header-size) - 26px);overflow:auto;padding:9px}
+.admin-shell .admin-nav button,.admin-more-menu button {min-height:43px;padding:8px 10px}
+.admin-more-menu button {display:flex;align-items:center;gap:10px;text-align:start;border:1px solid var(--border);border-radius:10px;color:#24543e}
+.admin-more-menu button.selected,.admin-more-menu button:hover {background:#e8f4ec}
+.workbench-hero {padding-block:14px}
+.workbench-hero-actions {display:grid;gap:6px;justify-items:stretch;min-width:0}
+.workbench-hero-actions .circle-picker {background:#f4f9f6;max-width:170px}
+.workbench-hero-actions select {max-width:100%}
+.workbench-chat .workbench-panel-head {background:#fff}
+.workbench-compose {background:#fff}
+.workbench-feed {background:#f1f7f3}
+.workbench-action {border-color:#d4e7da}
+.chat-shell .app-body {height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+.chat-shell .topbar {flex:none}
+.chat-main {flex:1;min-height:0;width:100%;display:flex;flex-direction:column;margin:0;padding:0 0 var(--bottom-nav-size)}
+.chat-main .update-banner,.chat-main .offline-banner {margin:5px 9px;flex:none}
+.chat-screen,.messenger {flex:1;min-height:0;min-width:0}
+.chat-screen {display:flex;animation:none}
+.messenger {display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);background:#fff}
+.messenger-directory,.messenger-thread {display:flex;flex-direction:column;min-height:0;min-width:0}
+.messenger-directory {border-inline-end:1px solid var(--border);padding:15px 12px;gap:10px}
+.messenger-directory header,.messenger-thread-head {display:flex;align-items:center;justify-content:space-between;gap:9px}
+.messenger-directory header p,.messenger-thread-head p {font-size:.77rem}
+.messenger-directory .search,.messenger-message-search {flex:none}
+.messenger-threads {overflow:auto;overscroll-behavior:contain;min-height:0;flex:1}
+.messenger-threads .thread-button {min-height:61px;padding:8px}
+.messenger-unread {padding:2px 8px;border-radius:99px;background:#145d45;color:white;font-size:.75rem}
+.messenger-thread {position:relative;background:#edf5ef}
+.messenger-thread>.empty {margin:auto}
+.messenger-thread-head {background:#fff;border-bottom:1px solid var(--border);padding:9px 13px;min-height:57px;position:relative;z-index:2}
+.messenger-thread-head>div {min-width:0;flex:1}
+.messenger-thread-head h2 {overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.messenger-back {display:none}
+[dir=rtl] .messenger-back svg {transform:scaleX(-1)}
+.messenger-menu summary {list-style:none;font-size:1.6rem;cursor:pointer}
+.messenger-menu>div {position:absolute;inset-inline-end:10px;top:calc(100% - 2px);background:white;box-shadow:0 11px 34px #0b41252c;border:1px solid var(--border);border-radius:10px;padding:5px;min-width:155px}
+.messenger-menu button {display:flex;align-items:center;gap:7px;width:100%;text-align:start;padding:8px;border-radius:7px;font-size:.86rem}
+.messenger-menu button:hover {background:var(--role-tint)}
+.messenger-message-search {margin:7px 12px;background:#fff}
+.messenger-messages {display:flex;flex-direction:column;gap:10px;min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;padding:clamp(10px,2vw,23px)}
+.messenger-messages>.empty {margin:auto}
+.messenger-messages .message {max-width:min(88%,620px);padding:8px 11px;border-radius:14px;white-space:pre-wrap}
+.messenger-messages .outgoing {background:#dff2e5;border-color:#cce7d3}
+.message footer {display:flex;align-items:center;justify-content:flex-end;gap:7px;font-size:.72rem;color:#4f6f5e;margin-top:3px}
+.message footer .text-button {min-height:26px}
+.messenger-composer {background:#fff;border-top:1px solid var(--border);padding:8px 12px;flex:none}
+.messenger-composer textarea {min-height:43px;max-height:110px;resize:vertical;flex:1;margin:0;font-size:16px}
+.messenger-reply {display:flex;align-items:center;gap:8px;background:#eef6ef;border-radius:8px;padding:4px 8px;margin-bottom:5px;font-size:.8rem}
+.messenger-reply span {flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+@media(max-width:850px) {
+  .app-shell {--header-size:calc(62px + env(safe-area-inset-top));--bottom-nav-size:calc(64px + env(safe-area-inset-bottom))}
+  .app-shell .topbar {height:var(--header-size)}
+  .topbar-title,.topbar-title .brand>div {min-width:0}
+  .topbar-title .brand strong {overflow:hidden;text-overflow:ellipsis}
+  .topbar-actions {flex:none}
+  .app-shell .mobile-nav {height:var(--bottom-nav-size);background:var(--app-chrome)}
+  .app-shell .mobile-nav button {height:51px;line-height:1.15;gap:3px}
+  .app-shell .mobile-nav button svg {flex:none;width:19px;height:19px}
+  .admin-shell .admin-grid {grid-template-columns:minmax(0,1fr)}
+  .admin-shell .admin-nav {display:none}
+  .admin-shell .main-content {padding-bottom:calc(var(--bottom-nav-size) + 12px)}
+  .messenger {display:flex}
+  .messenger-directory,.messenger-thread {flex:1}
+  .messenger-directory {border-inline-end:0}
+  .messenger[data-thread="closed"] .messenger-thread,.messenger[data-thread="open"] .messenger-directory {display:none}
+  .messenger-thread-head {padding:6px 8px}
+  .messenger-thread-head>.stat-icon {display:none}
+  .messenger-back {display:inline-flex}
+  .messenger-composer {padding-left:max(8px,env(safe-area-inset-left));padding-right:max(8px,env(safe-area-inset-right))}
+  .workbench-hero-actions .circle-picker {max-width:130px}
+}
+@media(max-width:400px) {
+  .admin-shell .topbar {gap:6px;padding-inline:10px}
+  .admin-shell .topbar-title .brand {gap:6px}
+  .admin-shell .topbar-title img {width:34px;height:34px;border-radius:9px}
+  .admin-shell .topbar-title strong {font-size:.84rem}
+}
+@media(max-height:500px) and (orientation:landscape) {
+  .chat-shell .app-body {min-height:245px}
+}

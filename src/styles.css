@@ -332,24 +332,16 @@ body:has(.modal-backdrop){overflow:hidden}
 .certificate>svg{color:#b98735}
 .certificate strong{font-size:1.5rem;color:var(--green)}
 
-.chat-page{display:grid;grid-template-columns:minmax(210px,1fr) minmax(0,2.4fr);min-height:min(650px,calc(100dvh - 105px))}
-.chat-directory{border-inline-end:1px solid var(--border);padding:12px;min-width:0}
 .thread-button{display:flex;width:100%;align-items:center;gap:7px;text-align:start;padding:8px 6px;border-radius:9px}
 .thread-button:hover,.thread-button.selected{background:#edf6ed}
 .thread-button>span:nth-child(2){min-width:0;flex:1}
 .thread-button strong,.thread-button small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .thread-button strong{font-size:.87rem}
 .thread-button small{color:var(--muted)}
-.chat-content{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px}
-.chat-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
-.chat-head p{font-size:.83rem}
-.chat-search{flex:none}
-.message-list{flex:1;background:#f7faf6;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:220px;max-height:48dvh;overflow:auto}
 .message{align-self:flex-start;border:1px solid var(--border);border-radius:10px;padding:7px 9px;max-width:86%;overflow-wrap:anywhere;background:white}
 .message.outgoing{align-self:flex-end;background:#e9f4e9;border-color:#d9e9d7}
 .message>strong{font-size:.8rem;color:#22654e}
 .message p{color:#2b493b}
-.message>div{display:flex;align-items:center;gap:8px;color:var(--muted)}
 .message blockquote{margin:4px 0;padding:4px 6px;background:#ffffffb0;border-inline-start:2px solid #6aa988;font-size:.78rem;color:var(--muted);max-height:54px;overflow:hidden}
 
 .more-list{display:grid;gap:7px}
@@ -425,8 +417,6 @@ body:has(.modal-backdrop){overflow:hidden}
   .summary-panel{padding:10px}
   .summary-panel:last-child:nth-child(3){grid-column:1/-1}
   .records-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .chat-page{grid-template-columns:1fr}
-  .chat-directory{border-inline-end:0;border-bottom:1px solid var(--border)}
   .assistant-header,.assistant-composer,.assistant-feed{padding:10px}
   .assistant-feed{min-height:210px}
   .shortcut{font-size:.74rem}

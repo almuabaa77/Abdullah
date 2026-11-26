@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpen, CalendarDays, CircleCheck, Clock3, FileText, ListChecks, MessageSquare, Plus, RotateCcw, Send, Sparkles, Star, UserCheck, Users } from 'lucide-react'
-import { assignmentFor, isRecitationDue, recitationStatus, segmentLabel, type Daily, type Student } from './domain'
+import { assignmentFor, circleMeets, isRecitationDue, recitationStatus, segmentLabel, type Daily, type Student } from './domain'
 import { Avatar, dateLabel, nameFor, statusText, useWorkspace } from './ui'
 import { parseCommand, type Intent } from './assistant-command'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
@@ -12,13 +12,16 @@ export function Assistant() {
   const [text,setText] = useState('')
   const [exchanges,setExchanges] = useState<Exchange[]>([])
   const [view,setView] = useState<'assistant'|'students'>('assistant')
+  const [circleId,setCircleId] = useState('')
   const conversation = useRef<HTMLDivElement>(null)
   const counter = useRef(0)
-  const students = data.students.filter(s=>s.active)
+  const students = data.students.filter(s=>s.active&&(!circleId||s.circleId===circleId))
+  const meetingCircles = new Set(data.circles.filter(circle=>circleMeets(data.date,circle)).map(circle=>circle.id))
+  const todayStudents = students.filter(student=>meetingCircles.has(student.circleId))
   const today = new Map(data.daily.filter(d=>d.date===data.date).map(d=>[d.studentId,d]))
-  const completed = students.filter(s=>recitationStatus(today.get(s.id))==='complete').length
-  const remaining = students.filter(s=>isRecitationDue(today.get(s.id)))
-  const progress = students.length ? Math.round(completed/students.length*100) : 0
+  const completed = todayStudents.filter(s=>recitationStatus(today.get(s.id))==='complete').length
+  const remaining = todayStudents.filter(s=>isRecitationDue(today.get(s.id)))
+  const progress = todayStudents.length ? Math.round(completed/todayStudents.length*100) : 0
   const shortcuts = [
     ['recite',BookOpen,t('إضافة تسميع','Record recitation'),t('من جدولة الطالب لليوم','From the student’s daily assignment'),'green'],
     ['review',RotateCcw,t('تسجيل مراجعة','Log revision'),t('ابدأ من مرحلة المراجعة','Start at the revision step'),'gold'],
@@ -35,7 +38,7 @@ export function Assistant() {
   useEffect(()=>{
     const feed=conversation.current
     if(exchanges.length&&feed&&view==='assistant') feed.scrollTop=feed.scrollHeight
-  },[exchanges.length,view])
+  },[exchanges,view])
 
   function submit(command:string) {
     const query=command.trim()
@@ -58,7 +61,10 @@ export function Assistant() {
       <div className="workbench-hero-copy"><span className="workbench-date"><CalendarDays size={15}/>{dateLabel(data.date,en,true)}</span>
       <h1>{t('المساعد الذكي','Smart assistant')}</h1>
       <p>{t('سجّل التسميع وتابع طلاب الحلقة من مكان واحد.','Record recitations and follow your circle in one place.')}</p></div>
-      <button className="btn btn-gold" onClick={()=>open()}><Plus size={18}/>{t('تسميع جديد','New recitation')}</button>
+      <div className="workbench-hero-actions">
+        {data.circles.length>1&&<label className="circle-picker"><select aria-label={t('حلقة المساعد','Assistant circle')} value={circleId} onChange={event=>setCircleId(event.target.value)}><option value="">{t('كل الحلقات','All circles')}</option>{data.circles.map(circle=><option key={circle.id} value={circle.id}>{circle.name}</option>)}</select></label>}
+        <button className="btn btn-gold" disabled={!todayStudents.length} onClick={()=>append(t('تسميع جديد','New recitation'),{intent:'recite'})}><Plus size={18}/>{t('تسميع جديد','New recitation')}</button>
+      </div>
     </header>
     <nav className="workbench-mobile-tab" aria-label={t('أقسام المساعد','Assistant views')}>
       <button className={view==='assistant'?'selected':''} aria-pressed={view==='assistant'} onClick={()=>setView('assistant')}><MessageSquare size={17}/>{t('المساعد','Assistant')}</button>
@@ -89,10 +95,11 @@ export function Assistant() {
                   {!!segments?.length&&<p><strong>{t('المقاطع','Segments')}</strong> · {segmentLabel(segments,en)}</p>}
                   {exchange.preset?.attendance&&<p>{statusText(exchange.preset.attendance,t)}</p>}
                   {exchange.preset?.bonus!==undefined&&<p>{t('تعديل النقاط','Points adjustment')} · {exchange.preset.bonus}</p>}
-                  <button className="btn btn-primary compact" onClick={()=>openEntry(student,exchange.intent!,exchange.preset)}>{exchange.intent==='report'?t('فتح التقرير','Open report'):t('مراجعة العملية','Review entry')}</button>
+                  <button className="btn btn-primary compact" disabled={exchange.intent!=='report'&&!meetingCircles.has(student.circleId)} onClick={()=>openEntry(student,exchange.intent!,exchange.preset)}>{exchange.intent==='report'?t('فتح التقرير','Open report'):t('مراجعة العملية','Review entry')}</button>
+                  {exchange.intent!=='report'&&!meetingCircles.has(student.circleId)&&<small className="muted">{t('الحلقة لا تنعقد اليوم','This circle does not meet today')}</small>}
                 </div>:<>
                   <strong>{exchange.intent==='remaining'?t(`${remaining.length} طلاب بانتظار إتمام التسميع`,`${remaining.length} students to recite`):t('اختر الطالب','Select a student')}</strong>
-                  {last?.id===exchange.id&&<StudentPicker compact students={exchange.intent==='remaining'?remaining:students} defaultFilter={exchange.intent==='recite'||exchange.intent==='remaining'?'due':'all'} select={s=>select(exchange.id,s)}/>}
+                  {last?.id===exchange.id&&<StudentPicker key={exchange.id+circleId} compact students={exchange.intent==='remaining'?remaining:exchange.intent==='report'?students:todayStudents} defaultFilter={exchange.intent==='recite'||exchange.intent==='remaining'?'due':'all'} select={s=>select(exchange.id,s)}/>}
                 </>}
               </div></div>
             </article>
@@ -106,12 +113,12 @@ export function Assistant() {
       <aside className="workbench-side">
         <section className="panel workbench-progress">
           <div className="section-title"><div><h2>{t('تسميع اليوم','Today’s recitations')}</h2><p>{t('الحفظ الجديد في الحلقة','Memorization in your circle')}</p></div><span className="stat-icon tint-green"><ListChecks size={20}/></span></div>
-          <div className="workbench-progress-value"><strong>{progress}%</strong><span>{t(`${completed} من ${students.length} أتمّوا التسميع`,`${completed} of ${students.length} recited`)}</span></div>
+          <div className="workbench-progress-value"><strong>{progress}%</strong><span>{t(`${completed} من ${todayStudents.length} أتمّوا التسميع`,`${completed} of ${todayStudents.length} recited`)}</span></div>
           <div className="bar-track" role="progressbar" aria-valuenow={progress} aria-label={t('نسبة التسميع','Recitation progress')}><i style={{width:progress+'%'}}/></div>
           <div className="workbench-totals"><div><CircleCheck size={16}/><strong>{completed}</strong><span>{t('أتمّوا التسميع','Recited')}</span></div><button type="button" onClick={()=>append(t('عرض الطلاب المتبقين','Show remaining students'),{intent:'remaining'})}><Clock3 size={16}/><strong>{remaining.length}</strong><span>{t('بانتظار التسميع','To recite')}</span></button></div>
         </section>
         <section className="panel workbench-roster"><div className="section-title"><div><h2>{t('طلاب الحلقة','Circle students')}</h2><p>{t('اختر طالبًا لتسجيل تسميعه','Select a student to record recitation')}</p></div><span className="stat-icon tint-gold"><Users size={19}/></span></div>
-          <StudentPicker compact students={students} select={s=>open(s)}/>
+          <StudentPicker key={circleId} compact students={todayStudents} select={s=>open(s)}/>
         </section>
       </aside>
     </div>
