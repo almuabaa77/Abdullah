@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpen, CalendarDays, CircleCheck, Clock3, FileText, ListChecks, MessageSquare, Plus, RotateCcw, Send, Sparkles, Star, UserCheck, Users } from 'lucide-react'
-import { isRecitationDue, recitationStatus, segmentLabel, type Daily, type Student } from './domain'
+import { assignmentFor, isRecitationDue, recitationStatus, segmentLabel, type Daily, type Student } from './domain'
 import { Avatar, dateLabel, nameFor, statusText, useWorkspace } from './ui'
 import { parseCommand, type Intent } from './assistant-command'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
@@ -20,7 +20,7 @@ export function Assistant() {
   const remaining = students.filter(s=>isRecitationDue(today.get(s.id)))
   const progress = students.length ? Math.round(completed/students.length*100) : 0
   const shortcuts = [
-    ['recite',BookOpen,t('إضافة تسميع','Record recitation'),t('الحفظ الجديد والمراجعة','Memorization and revision'),'green'],
+    ['recite',BookOpen,t('إضافة تسميع','Record recitation'),t('من جدولة الطالب لليوم','From the student’s daily assignment'),'green'],
     ['review',RotateCcw,t('تسجيل مراجعة','Log revision'),t('ابدأ من مرحلة المراجعة','Start at the revision step'),'gold'],
     ['schedule',CalendarDays,t('جدولة الطالب','Plan an assignment'),t('الحفظ والمراجعة القادمة','Upcoming work'),'blue'],
     ['attendance',UserCheck,t('تسجيل الحضور','Mark attendance'),t('الحضور والغياب والاستئذان','Attendance, absence and leave'),'green'],
@@ -77,15 +77,15 @@ export function Assistant() {
           </div>}
           {exchanges.map(exchange=>{
             const student=exchange.student
-            const previous=student&&data.daily.filter(d=>d.studentId===student.id&&d.date<data.date&&(d.nextMemorization.length||d.nextReview.length)).sort((a,b)=>b.date.localeCompare(a.date))[0]
-            const assignment=previous&&(exchange.intent==='review'?previous.nextReview:previous.nextMemorization)
+            const assignment=student&&assignmentFor(data.daily,student.id,data.date)
             const segments=exchange.preset?.memorization||exchange.preset?.review||exchange.preset?.nextMemorization||exchange.preset?.nextReview
             return <article key={exchange.id} className="workbench-exchange">
               <p className="workbench-user-message">{exchange.command}</p>
               <div className="workbench-reply"><span className="bot-icon"><Sparkles size={17}/></span><div className="workbench-answer">
                 {exchange.error?<p role="alert">{exchange.error}</p>:!exchange.intent?<p>{t('اذكر العملية واسم الطالب، أو اختر واحدة من العمليات السريعة.','Include an action and a student’s name, or choose a quick action.')}</p>:student?<div className="assistant-review-card">
                   <div className="assistant-review-name"><Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><span>{t('راجع البيانات قبل اعتمادها','Review before confirming')}</span></div><RecitationBadge record={today.get(student.id)}/></div>
-                  {!!assignment?.length&&<p><strong>{t('الجدولة السابقة','Previous assignment')}</strong> · {segmentLabel(assignment,en)}</p>}
+                  {!!assignment?.nextMemorization.length&&exchange.intent!=='review'&&<p><strong>{t('الحفظ المجدول لليوم','Today’s assigned memorization')}</strong> · {segmentLabel(assignment.nextMemorization,en)}</p>}
+                  {!!assignment?.nextReview.length&&<p><strong>{t('المراجعة المجدولة لليوم','Today’s assigned revision')}</strong> · {segmentLabel(assignment.nextReview,en)}</p>}
                   {!!segments?.length&&<p><strong>{t('المقاطع','Segments')}</strong> · {segmentLabel(segments,en)}</p>}
                   {exchange.preset?.attendance&&<p>{statusText(exchange.preset.attendance,t)}</p>}
                   {exchange.preset?.bonus!==undefined&&<p>{t('تعديل النقاط','Points adjustment')} · {exchange.preset.bonus}</p>}

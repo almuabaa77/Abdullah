@@ -1,19 +1,21 @@
 import { useState, type FormEvent } from 'react'
-import { Bell, BookOpen, CalendarDays, ClipboardList, Gift, History, LayoutGrid, Link2, MessageCircle, Plus, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Gift, History, LayoutGrid, Link2, MessageCircle, Plus, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import type { Circle, Prize, Student } from './domain'
 import { DuplicateAccounts } from './duplicate-accounts'
+import { AdminLive } from './admin-live'
 import { normalizeMobile } from './phone-number'
 import { Avatar, Badge, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
 
 type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}
-export function Admin() {
+export function Admin({liveRecords=false}:{liveRecords?:boolean}) {
   const {data,t,en,go,post,tell} = useWorkspace()
-  const [tab,setTab] = useState('overview')
+  const [tab,setTab] = useState('live')
   const [edit,setEdit] = useState<Edit>()
   const [query,setQuery] = useState('')
   const [busy,setBusy] = useState(false)
   if(data.user?.role!=='admin'||data.user.status!=='active') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
   const nav = [
+    ['live',Activity,t('المتابعة المباشرة','Live monitoring')],
     ['overview',LayoutGrid,t('الإحصاءات العامة','Overview')], ['people',Users,t('الحسابات وطلبات التسجيل','Accounts & enrollment')],
     ['duplicates',ShieldAlert,t('الأرقام المكررة','Duplicate numbers')],['students',Users,t('الطلاب','Students')],['circles',BookOpen,t('الحلقات','Circles')],['links',Link2,t('ربط الأبناء','Family links')],
     ['store',Gift,t('المتجر والطلبات','Store & orders')],['announcements',Bell,t('الإعلانات','Announcements')],['settings',Settings,t('النقاط وصلاحيات التواصل','Points & communication')],['audit',History,t('سجل العمليات','Audit log')]
@@ -43,6 +45,7 @@ export function Admin() {
           <div className="summary-grid admin-metrics">{[[t('الحلقات','Circles'),data.circles.length],[t('الطلاب','Students'),data.students.length],[t('الطلبات المعلقة','Pending requests'),data.users.filter(u=>u.status==='pending').length+data.links.filter(l=>l.status==='pending').length],[t('سجلات التسميع','Recitation records'),data.daily.length]].map(([label,count])=><div className="record-tile" key={label}><strong className="big-number">{count}</strong><span>{label}</span></div>)}</div>
           <div className="more-list">{([[ClipboardList,'records',t('الحفظ والمراجعة والحضور والتقارير','Recitation, attendance and reports')],[CalendarDays,'exams',t('إدارة الاختبارات','Manage assessments')],[UserCheck,'leaves',t('إدارة الاستئذانات','Manage leave')],[MessageCircle,'chat',t('الإشراف على المحادثات','Oversee conversations')]] as const).map(([Icon,page,label])=><button className="more-row" key={page} onClick={()=>go(page)}><span className="stat-icon tint-green"><Icon size={17}/></span><strong>{label}</strong></button>)}</div>
         </>}
+        {tab==='live'&&<AdminLive connected={liveRecords}/>}
         {tab==='duplicates'&&<DuplicateAccounts/>}
         {tab==='people'&&(data.users.filter(u=>visible(u.name+' '+(u.phone||'')) || searchedPhone && normalizeMobile(u.phone ?? '')===searchedPhone).map(u=><div className="entity-row" key={u.id}><div><strong>{u.name}</strong><p><RoleName role={u.role}/> {u.phone&&<bdi> · {u.phone}</bdi>}</p></div><div className="chip-row"><Badge status={u.duplicateOf?'disabled':u.status} label={u.duplicateOf?t('بانتظار تأكيد الإنهاء','Awaiting closure confirmation'):accountStatus(u.status)}/>{u.id!==data.user?.id&&!u.duplicateOf&&<button className="btn btn-outline compact" disabled={busy} onClick={()=>void submit('account',{id:u.id,status:u.status==='active'?'disabled':'active'})}>{u.status==='active'?t('إيقاف','Suspend'):t('تفعيل','Activate')}</button>}</div></div>))}
         {tab==='students'&&<>{data.students.filter(s=>visible(s.name+' '+(s.phone||''))).map(s=><div className="entity-row" key={s.id}><div className="name-line"><Avatar student={s}/><div><strong>{nameFor(s,en)}</strong><p>{data.circles.find(c=>c.id===s.circleId)?.name}</p></div></div><div className="chip-row"><Badge status={s.active?'active':'disabled'}/><button className="btn btn-outline compact" onClick={()=>setEdit({kind:'student',item:s})}>{t('تعديل','Edit')}</button></div></div>)}{!data.students.length&&<Empty title={t('لا يوجد طلاب','No students')}/>}</>}

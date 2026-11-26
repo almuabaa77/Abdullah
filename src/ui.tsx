@@ -5,7 +5,7 @@ import { segmentLabel, statusFor, type Daily, type Student, type View } from './
 export type Tr = (ar: string, en: string) => string
 export type Action = (action: string, values?: Record<string, unknown>, op?: string) => Promise<View>
 export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves'
-export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points'
+export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string) => void

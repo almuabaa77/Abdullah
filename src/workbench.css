@@ -169,6 +169,27 @@
   .teacher-roster-tools .search {flex-basis:100%}
   .teacher-metric .stat-icon {width:28px;height:28px}
 }
+.entry-saved-section {display:grid;gap:9px;justify-items:start;border:1px solid #d7e9dc;background:#f4f9f5;padding:15px;border-radius:12px}
+.entry-saved-section strong,.live-status,.live-register-layout h3 {display:flex;align-items:center;gap:8px}
+.live-register {display:grid;gap:16px}
+.live-register-toolbar {display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.live-register-toolbar .search {flex-basis:160px}
+.live-register-toolbar input[type="date"] {background:transparent;border:0;max-width:148px;padding:6px 2px}
+.live-status {border-radius:20px;background:#eef1ec;padding:6px 10px;font-size:.8rem;color:#4c6755}
+.live-status.connected {background:#e3f6eb;color:#126245}
+.live-register-layout {display:grid;grid-template-columns:minmax(0,1.8fr) minmax(215px,1fr);gap:14px;align-items:start}
+.live-register-layout h3 {font-size:1rem;margin-bottom:9px}
+.live-rows,.live-activity {display:grid;gap:8px}
+.live-record,.live-activity li {border:1px solid var(--border);border-radius:12px;padding:12px;min-width:0}
+.live-record header,.live-record footer {display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.live-record header small,.live-activity small {display:block;color:#5b7063;font-size:.78rem}
+.live-record dl {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}
+.live-record dl div {background:#f5f8f5;padding:7px 9px;border-radius:8px;min-width:0}
+.live-record dt,.live-record footer {font-size:.76rem;color:#576c60}
+.live-record dd {margin:0;overflow-wrap:anywhere;font-size:.86rem}
+.live-activity li {border-inline-start:3px solid #72aa94;list-style:none}
+.live-activity .chip-row {margin-top:6px}
+@media(max-width:1050px) {.live-register-layout {grid-template-columns:minmax(0,1fr)}}
 .spinner {animation:spin .85s linear infinite}
 @keyframes spin {to{transform:rotate(360deg)}}
 @media(max-width:1110px) {

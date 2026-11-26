@@ -3,6 +3,7 @@ import { createPool, type Pool, type PoolOptions, type QueryResult, type ResultS
 import { api, ApiError, type Repository } from './api'
 import { serveAsset } from './assets'
 import { mysqlConfig, mysqlFailureIssue } from './hostinger-db'
+import { revisionStream } from './revision-stream'
 
 const env = process.env
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
@@ -61,6 +62,10 @@ async function query<T extends QueryResult>(statement:string,values:(string|numb
     throw unavailable(error)
   }
 }
+const revisions = revisionStream(async () => {
+  const [rows] = await query<(RowDataPacket & {revision:number})[]>('SELECT revision FROM halaqat_workspaces WHERE id=?',['school'])
+  return rows[0]?.revision
+})
 const repository:Repository = {
   async read(id) {
     const [rows] = await query<(RowDataPacket & {revision:number;data:string})[]>('SELECT revision,data FROM halaqat_workspaces WHERE id=?',[id])
@@ -71,6 +76,7 @@ const repository:Repository = {
   },
   async write(id,revision,state) {
     const [result] = await query<ResultSetHeader>('UPDATE halaqat_workspaces SET revision=revision+1,data=? WHERE id=? AND revision=?',[JSON.stringify(state),id,revision])
+    if (result.affectedRows===1 && id==='school') revisions.publish(revision+1)
     return result.affectedRows === 1
   },
 }
@@ -108,6 +114,13 @@ app.get('/api/health',(_req,res)=>{
     phoneAuthConfigured:Boolean(env.FIREBASE_WEB_CONFIG),
   })
 })
+app.get('/api/workspace/events',async (req,res)=>{
+  const response = await api(appRequest(req),repository,env)
+  if (!response.ok) {await forward(res,response);return}
+  if (res.destroyed) return
+  const {revision} = await response.json() as {revision:number}
+  revisions.connect(res,revision)
+})
 app.use('/api',express.text({type:'application/json',limit:80000}),async (req,res)=>{
   if (req.method !== 'GET' && req.method !== 'POST') {
     res.status(405).set('Allow','GET, POST').json({error:'Method not allowed'})
@@ -132,4 +145,7 @@ const server = app.listen(port,'0.0.0.0',()=>{
     console.error(`Hostinger MySQL is not configured (${config.issue})`)
   }
 })
-process.once('SIGTERM',()=>server.close(()=>{void connection?.end()}))
+process.once('SIGTERM',()=>{
+  revisions.stop()
+  server.close(()=>{void connection?.end()})
+})

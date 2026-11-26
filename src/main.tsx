@@ -9,6 +9,7 @@ import { Assistant } from './assistant'
 import { Records } from './records'
 import { ChatPage, Exams, Leaves, More, Store } from './features'
 import { AccountAccess } from './account-access'
+import { watchRecordRevisions } from './live-records'
 import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
@@ -66,6 +67,10 @@ function App() {
   const [registering,setRegistering] = useState(false)
   const [recheck,setRecheck] = useState(0)
   const [unregistered,setUnregistered] = useState(false)
+  const [liveRecords,setLiveRecords] = useState(false)
+  const lastStreamMessage = useRef(0)
+  const lastRevision = useRef(0)
+  const refreshWorkspace = useRef<()=>void>(()=>{})
   const t:Tr = (ar,english)=>en?english:ar
   const go = useCallback((p:Page,replace=false) => {
     const url = p==='admin' ? '/admin' : p==='home' ? '/' : '/#'+p
@@ -120,8 +125,12 @@ function App() {
     if(!authReady)return
     const controller=new AbortController()
     let active = true
+    let pulling = false
+    let queued = false
     setLoading(true);setLoadError('')
     const pull = async (initial = false) => {
+      if(pulling){queued=true;return}
+      pulling=true
       try {
         const result=await request(token,role,undefined,controller.signal)
         if(!active)return
@@ -133,13 +142,18 @@ function App() {
         routedAdmin.current=adminId
       } catch(e){
         if(active&&initial)setLoadError((e as Error).message)
-      } finally{if(active&&initial){setLoadedToken(token);setLoading(false)}}
+      } finally {
+        pulling=false
+        if(active&&initial){setLoadedToken(token);setLoading(false)}
+        if(active&&queued){queued=false;void pull()}
+      }
     }
-    void pull(true)
-    const timer=window.setInterval(()=>{if(navigator.onLine&&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))void pull()},6500)
     const refresh=()=>{if(navigator.onLine)void pull()}
+    refreshWorkspace.current=refresh
+    void pull(true)
+    const timer=window.setInterval(()=>{if(Date.now()-lastStreamMessage.current>14000&&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))refresh()},6500)
     window.addEventListener('online',refresh);window.addEventListener('focus',refresh)
-    return ()=>{active=false;controller.abort();clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh)}
+    return ()=>{active=false;refreshWorkspace.current=()=>{};controller.abort();clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh)}
   },[authReady,token,role,recheck,go])
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(undefined),4700);return()=>clearTimeout(timer)},[toast])
   const post = async (action:string,values:Record<string,unknown>={},op:string=idFor()) => {
@@ -178,6 +192,27 @@ function App() {
   const adminPage = page==='admin'
   const workspaceVisible=show&&!adminPage
   const adminAccess=show&&data.user?.role==='admin'
+  const streamEnabled = Boolean(adminPage&&adminAccess&&token)
+  useEffect(()=>{lastRevision.current=data.revision},[data.revision])
+  useEffect(()=>{
+    if(!streamEnabled)return
+    const controller=new AbortController()
+    let retry:number|undefined
+    const connect = async () => {
+      try {
+        await watchRecordRevisions(token,controller.signal,revision=>{
+          if(revision>lastRevision.current)refreshWorkspace.current()
+        },()=>{lastStreamMessage.current=Date.now();setLiveRecords(true)})
+      } catch { /* Periodic refresh continues while the stream is unavailable. */ }
+      if(controller.signal.aborted)return
+      lastStreamMessage.current=0
+      setLiveRecords(false)
+      refreshWorkspace.current()
+      retry=window.setTimeout(()=>void connect(),4500)
+    }
+    void connect()
+    return ()=>{controller.abort();window.clearTimeout(retry);lastStreamMessage.current=0;setLiveRecords(false)}
+  },[streamEnabled,token])
   useEffect(()=>{
     document.title = adminPage
       ? en?'Administration | Al-Khair Quran Circles':'لوحة الإدارة | حلقات جامع الخير'
@@ -216,7 +251,7 @@ function App() {
   const loadingLabel=t('جارٍ التحميل','Loading')
   const phoneProps={auth,availability:phoneAvailability,retry:()=>retryPhone(n=>n+1)}
   const adminContent = adminAccess
-    ? <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>}><Admin/></Suspense>
+    ? <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>}><Admin liveRecords={liveRecords}/></Suspense>
     : token||data.user
       ? <div className="panel"><Empty title={t('صلاحية الإدارة مطلوبة','Administration access required')} body={t('يمكنك المتابعة باستخدام حساب مدير معتمد.','Use an authorized administration account to continue.')} action={token?<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>:undefined}/></div>
       : <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/></div>}><PhoneSignIn {...phoneProps} administration/></Suspense>
@@ -265,7 +300,7 @@ function App() {
       </div>
       {workspaceVisible&&<nav className="mobile-nav" aria-label={t('القائمة الرئيسية','Main navigation')}>{nav.map(([p,Icon,label])=><button key={p} className={p===page?'active':''} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={21}/><span>{label}</span></button>)}</nav>}
     </div>
-    {wizard&&workspaceVisible&&teacher&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
+    {wizard&&teacher&&(workspaceVisible||adminPage&&adminAccess)&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
     {phone&&!adminPage&&<Suspense fallback={null}><PhoneSignIn {...phoneProps} close={()=>setPhone(false)}/></Suspense>}
     {toast&&<div className={'toast '+(toast.error?'toast-error':'')} role={toast.error?'alert':'status'}>{toast.error?<CircleAlert size={19}/>:<Check size={19}/>}<span>{toast.text}</span><button className="icon-button mini" onClick={()=>setToast(undefined)} aria-label={t('إغلاق','Close')}><X size={16}/></button></div>}
   </Context.Provider>

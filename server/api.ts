@@ -2,6 +2,7 @@ import { groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
 import { balanceFor, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type Daily, type Exam, type Role, type State, type Student, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
+import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
 
 export type Repository = {
   read(id: string): Promise<{ revision: number; data: string } | null>
@@ -63,6 +64,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
+    recordEvents: isAdmin ? state.recordEvents?.slice(0,100) : undefined,
     notices: state.notices.filter(n => (n.users?.includes(user.id) || (!n.users && (n.studentId ? ids.has(n.studentId) : true)))),
     links: state.links.filter(l => isAdmin || l.parentId === user.id).map(l => isAdmin || l.status === 'accepted' ? l : {...l, studentId: ''}),
     prizes: state.prizes.filter(p => isAdmin || p.active), orders: state.orders.filter(o => isAdmin || user.role === 'student' && ids.has(o.studentId)),
@@ -121,22 +123,38 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   const staff = () => { if (!isStaff(u)) deny() }
   const admin = () => { if (u.role !== 'admin') deny() }
   const circleOf = (s: Student) => state.circles.find(c => c.id === s.circleId)
-  const writeRecord = (d: Daily) => {
+  const writeRecord = (d: Daily, student:Student) => {
     const index = state.daily.findIndex(x => x.date === d.date && x.studentId === d.studentId)
-    const before = index < 0 ? 0 : state.daily[index].points
+    const previous = state.daily[index] ?? emptyDaily(d.studentId,d.date,circleOf(student))
+    if (!recordChanges(previous,d).length) return false
     d.points = pointsFor(d, state.rules)
+    const changes = recordChanges(previous,d)
+    const time = new Date().toISOString()
+    d.version = (previous.version ?? 0) + 1
+    d.updatedAt = time
     if (index < 0) state.daily.push(d)
     else state.daily[index] = d
-    if (before !== d.points) state.audit.push({ time: new Date().toISOString(), actor: u.name, action: 'تحديث النقاط', target: d.studentId, before, after: d.points })
+    state.recordEvents = [{id:idFor(),studentId:d.studentId,circleId:student.circleId,date:d.date,actorId:u.id,time,changes},...(state.recordEvents ?? [])].slice(0,160)
+    if (previous.points !== d.points) state.audit.push({ time, actor: u.name, action: 'تحديث النقاط', target: d.studentId, before:previous.points, after:d.points })
+    return true
   }
   switch (action) {
     case 'daily': {
       staff()
-      const s = student(), circle = circleOf(s), date = validDate(p.date)
-      if (!circleMeets(date, circle)) throw new ApiError('لا تنعقد الحلقة في هذا التاريخ')
-      if (date > dateKey()) throw new ApiError('يمكن تسجيل التسميع حتى تاريخ اليوم')
+      const s = u.role==='admin' ? visible.find(item=>item.id===p.studentId) : student()
+      if (!s) return deny('الطالب خارج نطاق صلاحيتك')
+      const circle = circleOf(s), date = validDate(p.date)
       const old = state.daily.find(x => x.date === date && x.studentId === s.id)
-      const d = { ...emptyDaily(s.id, date, circle), ...old }
+      const entry = p.entry===undefined ? 'record' : choice(p.entry,['record','edit'] as const)
+      const editingHistory = u.role==='admin' && entry==='edit' && Boolean(old)
+      if (!s.active && !editingHistory) return deny('سجل الطالب مؤرشف')
+      if (!circleMeets(date,circle) && !editingHistory) throw new ApiError('لا تنعقد الحلقة في هذا التاريخ')
+      if (date > dateKey()) throw new ApiError('يمكن تسجيل التسميع حتى تاريخ اليوم')
+      const previous = old ?? emptyDaily(s.id,date,circle)
+      const d = { ...previous }
+      if (entry==='edit' && typeof p.baseVersion!=='number' || p.baseVersion!==undefined && p.baseVersion!==(previous.version ?? 0)) {
+        throw new ApiError('حُدّث سجل الطالب في جلسة أخرى. أعد فتح أحدث نسخة قبل الحفظ.',409)
+      }
       if (p.memorization !== undefined) d.memorization = validateSegments(p.memorization)
       if (p.review !== undefined) d.review = validateSegments(p.review)
       if (p.nextMemorization !== undefined) d.nextMemorization = validateSegments(p.nextMemorization)
@@ -145,14 +163,20 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (p.reviewStatus) d.reviewStatus = choice(p.reviewStatus,['none','partial','complete'] as const)
       if (!d.memorization.length) d.memorizationStatus = 'none'
       if (!d.review.length) d.reviewStatus = 'none'
+      const changedMemorization = memorizationChanged(previous,d)
+      const changedReview = reviewChanged(previous,d)
+      if (entry==='record' && (previous.memorization.length && changedMemorization || previous.review.length && changedReview)) {
+        throw new ApiError('سبق تسجيل هذا الجزء للطالب اليوم. افتح تعديل السجل لتصحيح البيانات.',409)
+      }
       if (p.nextDate) d.nextDate = validDate(p.nextDate)
-      if ((d.nextMemorization.length || d.nextReview.length) && (d.nextDate <= date || !circleMeets(d.nextDate, circle))) throw new ApiError('اختر موعدًا قادمًا يصادف يوم انعقاد الحلقة')
+      const scheduleChanged = recordChanges(previous,d).some(change=>change==='nextMemorization'||change==='nextReview')
+      if (scheduleChanged && (d.nextMemorization.length || d.nextReview.length) && (d.nextDate <= date || !circleMeets(d.nextDate, circle))) throw new ApiError('اختر موعدًا قادمًا يصادف يوم انعقاد الحلقة')
       if (p.note !== undefined) d.note = clean(p.note, 400)
       if (p.bonus !== undefined) d.bonus = integer(p.bonus, -100, 100)
       if (p.attendance !== undefined) d.attendance = choice(p.attendance, ['present','absent','excused','leave','pending'] as const)
-      else if (p.memorization !== undefined && d.memorization.length || p.review !== undefined && d.review.length) d.attendance = 'present'
+      else if ((entry==='record'||!old) && (changedMemorization && d.memorization.length || changedReview && d.review.length)) d.attendance = 'present'
       if (d.attendance === 'pending' && state.closed.includes(s.circleId + '/' + date)) d.attendance = 'absent'
-      writeRecord(d)
+      if (!writeRecord(d,s)) return false
       notify(state, 'daily', `تحديث سجل ${s.name}`, `${date} · ${d.points} نقاط`, { studentId: s.id })
       return
     }
@@ -168,7 +192,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       for (const s of visible.filter(s => s.active && s.circleId === circle.id)) {
         const d = state.daily.find(d => d.date === date && d.studentId === s.id) ?? emptyDaily(s.id,date,circle)
         if (d.attendance !== 'pending') continue
-        writeRecord({ ...d, attendance: 'absent' })
+        writeRecord({ ...d, attendance: 'absent' },s)
         notify(state, 'attendance', `غياب ${s.name}`, date, {studentId:s.id})
       }
       state.closed.push(key)
@@ -195,7 +219,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (l.status === 'accepted') {
         const s = visible.find(x => x.id === l.studentId)!
         const d = state.daily.find(x => x.date === l.date && x.studentId === l.studentId) ?? emptyDaily(l.studentId, l.date, circleOf(s))
-        if (d.attendance === 'pending' || d.attendance === 'absent') writeRecord({ ...d, attendance: 'leave' })
+        if (d.attendance === 'pending' || d.attendance === 'absent') writeRecord({ ...d, attendance: 'leave' },s)
       }
       notify(state,'leave','تمت مراجعة طلب الاستئذان', l.date, {studentId:l.studentId})
       break
@@ -400,13 +424,15 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
 export async function api(request: Request, repo: Repository, env: Env = {}) {
   try {
     const url = new URL(request.url)
+    const events = url.pathname === '/api/workspace/events'
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && request.method !== 'GET') throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
-    if (url.pathname !== '/api/workspace') return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
+    if (events && !get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
     if (!get && request.headers.get('sec-fetch-site') === 'cross-site') deny()
     const raw = get ? '' : await request.text()
@@ -423,8 +449,10 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
       }
       const state = JSON.parse(current.data) as State
       let user = state.users.find(x => x.id === identity.id) ?? null
-      const restricted = (accountAccess: NonNullable<View['accountAccess']>) =>
-        Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
+      const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
+        if (events) return deny()
+        return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
+      }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
       if (fingerprint && state.closedAccounts?.includes(fingerprint)) {
         if (get || action==='duplicate-close') return restricted('closed')
@@ -490,8 +518,12 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
         return restricted('duplicate')
       }
       const operationKey=identity.id+':'+op
+      if (events) {
+        if (user?.role!=='admin'||user.status!=='active') return deny()
+        return Response.json({revision:current.revision},{headers})
+      }
       if (get || state.operations.includes(operationKey)) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
-      apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)
+      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
       state.operations.push(operationKey)
       if (!(await repo.write(identity.workspace,current.revision,state))) continue
       user = state.users.find(x => x.id === identity.id) ?? null

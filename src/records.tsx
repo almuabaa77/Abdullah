@@ -21,8 +21,13 @@ export function Records() {
   const staff = data.user?.role==='teacher'||data.user?.role==='admin'
   const selectedCircle = data.circles.find(c=>c.id===circle) || (data.circles.length===1?data.circles[0]:undefined)
   const closed = data.closed.includes(selectedCircle?.id+'/'+date)
-  const columns = [t('الطالب','Student'),t('التاريخ','Date'),t('الحفظ الجديد','Memorization'),t('المراجعة','Revision'),t('الجدولة القادمة','Next assignment'),t('الحضور','Attendance'),t('النقاط','Points'),t('الإنجاز','Completion')]
-  const rowValues = rows.map(({s,d,date})=>[nameFor(s,en),date,segmentLabel(d?.memorization||[],en),segmentLabel(d?.review||[],en),segmentLabel([...(d?.nextMemorization||[]),...(d?.nextReview||[])],en),statusText(d?.attendance||'pending',t),d?.points||0,statusText(statusFor(d),t)])
+  const columns = [t('الطالب','Student'),t('التاريخ','Date'),t('الحفظ الجديد','Memorization'),t('المراجعة','Revision'),t('الحفظ المجدول','Assigned memorization'),t('المراجعة المجدولة','Assigned revision'),t('موعد الجدولة','Assignment date'),t('الحضور','Attendance'),t('النقاط','Points'),t('الإنجاز','Completion')]
+  const rowValues = rows.map(({s,d,date})=>[
+    nameFor(s,en),date,segmentLabel(d?.memorization??[],en),segmentLabel(d?.review??[],en),
+    segmentLabel(d?.nextMemorization??[],en),segmentLabel(d?.nextReview??[],en),
+    d&&(d.nextMemorization.length||d.nextReview.length)?d.nextDate:'',statusText(d?.attendance||'pending',t),d?.points??0,statusText(statusFor(d),t),
+  ])
+  const edit = (s:Student,d:Daily|undefined,date:string) => open(s,d?'edit':'recite',{date})
   const closeDay = async () => {
     if(!selectedCircle||!window.confirm(t('سيُسجّل الغياب للطلاب الذين لم يُسجّل حضورهم. هل تريد إغلاق اليوم؟','Unmarked students will be marked absent. Close the day?')))return
     setClosing(true)
@@ -44,8 +49,8 @@ export function Records() {
       {staff&&selectedCircle&&period==='day'&&circleMeets(date,selectedCircle)&&<button className="btn btn-outline compact" disabled={closing||closed} onClick={closeDay}><CalendarDays size={16}/>{closed?t('السجل مغلق','Register closed'):t('إغلاق سجل اليوم','Close today’s register')}</button>}
     </div>
     {!rows.length?<Empty title={t('لا توجد سجلات','No records found')}/>:layout==='table'?<div className="table-wrap"><table className="report-table"><thead><tr>{columns.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(({s,d,date},i)=><tr key={s.id+date}>
-      <th>{staff?<button className="text-button" onClick={()=>open(s,'recite',{date})}>{nameFor(s,en)}</button>:nameFor(s,en)}</th>
-      <td>{dateLabel(date,en)}</td><td>{rowValues[i][2]||'—'}</td><td>{rowValues[i][3]||'—'}</td><td>{rowValues[i][4]||'—'}</td><td><Badge status={d?.attendance||'pending'}/></td><td>{d?.points||0}</td><td><Badge status={statusFor(d)}/></td>
-    </tr>)}</tbody></table></div>:<div className="summary-grid">{rows.map(({s,d,date},i)=><article className="record-tile" key={s.id+date}><strong>{nameFor(s,en)}</strong><span>{dateLabel(date,en)}</span><Badge status={statusFor(d)}/><dl>{rowValues[i].slice(2,7).map((v,j)=><div key={j}><dt>{columns[j+2]}</dt><dd>{v||'—'}</dd></div>)}</dl>{staff&&<button className="text-button" onClick={()=>open(s,'recite',{date})}><FileText size={15}/>{t('تعديل السجل','Edit record')}</button>}</article>)}</div>}
+      <th>{staff&&(s.active||d)?<button className="text-button" onClick={()=>edit(s,d,date)}>{nameFor(s,en)}</button>:nameFor(s,en)}</th>
+      <td>{dateLabel(date,en)}</td>{rowValues[i].slice(2,7).map((value,index)=><td key={index}>{value||'—'}</td>)}<td><Badge status={d?.attendance||'pending'}/></td><td>{d?.points??0}</td><td><Badge status={statusFor(d)}/></td>
+    </tr>)}</tbody></table></div>:<div className="summary-grid">{rows.map(({s,d,date},i)=><article className="record-tile" key={s.id+date}><strong>{nameFor(s,en)}</strong><span>{dateLabel(date,en)}</span><Badge status={statusFor(d)}/><dl>{rowValues[i].slice(2,9).map((v,j)=><div key={j}><dt>{columns[j+2]}</dt><dd>{v||'—'}</dd></div>)}</dl>{staff&&(s.active||d)&&<button className="text-button" onClick={()=>edit(s,d,date)}><FileText size={15}/>{d?t('تعديل السجل','Edit record'):t('إضافة سجل','Add record')}</button>}</article>)}</div>}
   </section>
 }

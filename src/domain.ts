@@ -10,7 +10,10 @@ export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
   memorizationStatus: Result; reviewStatus: Result; nextMemorization: Segment[]; nextReview: Segment[]
   nextDate: string; attendance: Attendance; points: number; bonus: number; note: string
+  version?: number; updatedAt?: string
 }
+export type RecordSection = 'memorization' | 'review' | 'nextMemorization' | 'nextReview' | 'attendance' | 'points' | 'note'
+export type RecordEvent = { id: string; studentId: string; circleId: string; date: string; actorId: string; time: string; changes: RecordSection[] }
 export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; readBy: string[] }
 export type Leave = { id: string; studentId: string; date: string; reason: string; status: 'pending' | 'accepted' | 'declined' }
 export type Link = { id: string; parentId: string; studentId: string; status: 'pending' | 'accepted' | 'declined' }
@@ -24,7 +27,7 @@ export type State = {
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]
   rules: { memorization: number; review: number; attendance: number; chat: boolean }; chats: Chat[]; audit: Audit[]
-  operations: string[]; closedAccounts?: string[]
+  operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]
 }
 export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
@@ -93,6 +96,15 @@ export function suggestNext(segments: Segment[]) {
 export function emptyDaily(studentId: string, date: string, circle?: Circle): Daily {
   return { studentId, date, memorization: [], review: [], nextMemorization: [], nextReview: [],
     memorizationStatus: 'none', reviewStatus: 'none', nextDate: nextCircleDate(date, circle), attendance: 'pending', points: 0, bonus: 0, note: '' }
+}
+export function assignmentFor(records: Daily[], studentId: string, date: string) {
+  return records.reduce<Daily|undefined>((latest,record) => {
+    if (record.studentId!==studentId || record.date>=date || record.nextDate!==date || !(record.nextMemorization.length || record.nextReview.length)) return latest
+    return !latest || record.date>latest.date ? record : latest
+  },undefined)
+}
+export function sameSegments(a: Segment[], b: Segment[]) {
+  return a.length===b.length && a.every((segment,index)=>segment.surah===b[index].surah && segment.from===b[index].from && segment.to===b[index].to)
 }
 export const pointsFor = (record: Daily, rules: State['rules']) => (record.memorizationStatus === 'complete' ? rules.memorization : 0) + (record.reviewStatus === 'complete' ? rules.review : 0) + (record.attendance === 'present' ? rules.attendance : 0) + record.bonus
 export const balanceFor = (student: Student, state: Pick<State, 'daily' | 'orders'>) => student.startingPoints + state.daily.filter(x => x.studentId === student.id).reduce((sum, x) => sum + x.points, 0) - state.orders.filter(x => x.studentId === student.id && x.status !== 'cancelled').reduce((sum, x) => sum + x.price, 0)
