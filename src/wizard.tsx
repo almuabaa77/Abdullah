@@ -42,7 +42,7 @@ function Segments({ value, change, label }: {value:Segment[];change:(next:Segmen
 
 const stages = [[BookOpen,'الحفظ الجديد','Memorization'],[ListChecks,'المراجعة','Revision'],[CalendarDays,'الجدولة القادمة','Assignment'],[CircleCheck,'النقاط والاعتماد','Points & submit']] as const
 const attendance = ['present','pending','absent','leave','excused'] as const
-export function EntryWizard({ student, mode, preset, close }: {student?:Student; mode:WizardMode; preset?:Partial<Daily>; close:()=>void}) {
+export function EntryWizard({ student, mode, preset, circleId, close }: {student?:Student; mode:WizardMode; preset?:Partial<Daily>; circleId?:string; close:()=>void}) {
   const {data,t,en,post,tell} = useWorkspace()
   const [selected,setStudent] = useState(student)
   const initialStep = mode==='review'?1:0
@@ -62,7 +62,7 @@ export function EntryWizard({ student, mode, preset, close }: {student?:Student;
   const exit = () => {if(!busy&&(!dirty||window.confirm(t('مغادرة التسجيل قبل حفظ التغييرات؟','Leave this entry without saving changes?'))))close()}
   if (!selected || !draft) return <Modal title={title} close={exit} appearance="entry-dialog entry-picker-dialog">
     <div className="modal-body"><div className="entry-picker-title"><span className="stat-icon tint-green"><BookOpen size={21}/></span><div><h3>{t('اختر الطالب','Select a student')}</h3><p>{dateLabel(date,en,true)}</p></div></div>
-    <StudentPicker date={date} defaultFilter={mode==='recite'?'due':'all'} select={select}/></div>
+    <StudentPicker date={date} students={circleId?data.students.filter(item=>item.circleId===circleId):undefined} defaultFilter={mode==='recite'?'due':'all'} select={select}/></div>
   </Modal>
   const update = (part:Partial<Daily>) => {setDraft({...draft,...part});setError('');setDirty(true);setOp(idFor())}
   const existing = data.daily.find(d=>d.studentId===selected.id&&d.date===date)

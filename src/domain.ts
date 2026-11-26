@@ -3,7 +3,7 @@ export type Attendance = 'present' | 'absent' | 'leave' | 'excused' | 'pending'
 export type Result = 'complete' | 'partial' | 'none'
 export type DateKey = string
 export type Segment = { surah: number; from: number; to: number }
-export type User = { id: string; name: string; phone?: string; role: Role; status: 'active' | 'pending' | 'disabled'; studentId?: string }
+export type User = { id: string; name: string; phone?: string; role: Role; status: 'active' | 'pending' | 'disabled'; studentId?: string; duplicateOf?: string }
 export type Circle = { id: string; name: string; teacherId: string; days: number[]; holidays: string[] }
 export type Student = { id: string; name: string; latin?: string; circleId: string; phone?: string; color: number; startingPoints: number; active: boolean }
 export type Daily = {
@@ -24,9 +24,9 @@ export type State = {
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]
   rules: { memorization: number; review: number; attendance: number; chat: boolean }; chats: Chat[]; audit: Audit[]
-  operations: string[]
+  operations: string[]; closedAccounts?: string[]
 }
-export type View = Omit<State, 'operations' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean }
+export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 const names = 'الفاتحة البقرة آل_عمران النساء المائدة الأنعام الأعراف الأنفال التوبة يونس هود يوسف الرعد إبراهيم الحجر النحل الإسراء الكهف مريم طه الأنبياء الحج المؤمنون النور الفرقان الشعراء النمل القصص العنكبوت الروم لقمان السجدة الأحزاب سبأ فاطر يس الصافات ص الزمر غافر فصلت الشورى الزخرف الدخان الجاثية الأحقاف محمد الفتح الحجرات ق الذاريات الطور النجم القمر الرحمن الواقعة الحديد المجادلة الحشر الممتحنة الصف الجمعة المنافقون التغابن الطلاق التحريم الملك القلم الحاقة المعارج نوح الجن المزمل المدثر القيامة الإنسان المرسلات النبأ النازعات عبس التكوير الانفطار المطففين الانشقاق البروج الطارق الأعلى الغاشية الفجر البلد الشمس الليل الضحى الشرح التين العلق القدر البينة الزلزلة العاديات القارعة التكاثر العصر الهمزة الفيل قريش الماعون الكوثر الكافرون النصر المسد الإخلاص الفلق الناس'.split(' ')
 const roman = 'Al-Fatihah Al-Baqarah Ali_Imran An-Nisa Al-Maidah Al-Anam Al-Araf Al-Anfal At-Tawbah Yunus Hud Yusuf Ar-Rad Ibrahim Al-Hijr An-Nahl Al-Isra Al-Kahf Maryam Ta-Ha Al-Anbiya Al-Hajj Al-Muminun An-Nur Al-Furqan Ash-Shuara An-Naml Al-Qasas Al-Ankabut Ar-Rum Luqman As-Sajdah Al-Ahzab Saba Fatir Ya-Sin As-Saffat Sad Az-Zumar Ghafir Fussilat Ash-Shura Az-Zukhruf Ad-Dukhan Al-Jathiyah Al-Ahqaf Muhammad Al-Fath Al-Hujurat Qaf Adh-Dhariyat At-Tur An-Najm Al-Qamar Ar-Rahman Al-Waqiah Al-Hadid Al-Mujadilah Al-Hashr Al-Mumtahanah As-Saff Al-Jumuah Al-Munafiqun At-Taghabun At-Talaq At-Tahrim Al-Mulk Al-Qalam Al-Haqqah Al-Maarij Nuh Al-Jinn Al-Muzzammil Al-Muddaththir Al-Qiyamah Al-Insan Al-Mursalat An-Naba An-Naziat Abasa At-Takwir Al-Infitar Al-Mutaffifin Al-Inshiqaq Al-Buruj At-Tariq Al-Ala Al-Ghashiyah Al-Fajr Al-Balad Ash-Shams Al-Layl Ad-Duha Ash-Sharh At-Tin Al-Alaq Al-Qadr Al-Bayyinah Az-Zalzalah Al-Adiyat Al-Qariah At-Takathur Al-Asr Al-Humazah Al-Fil Quraysh Al-Maun Al-Kawthar Al-Kafirun An-Nasr Al-Masad Al-Ikhlas Al-Falaq An-Nas'.split(' ')

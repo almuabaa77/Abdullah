@@ -1,6 +1,7 @@
-import { normalizeMobile } from '../src/phone-number'
+import { groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
 import { balanceFor, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type Daily, type Exam, type Role, type State, type Student, type User, type View } from '../src/domain'
 import { createState } from './seed'
+import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 
 export type Repository = {
   read(id: string): Promise<{ revision: number; data: string } | null>
@@ -15,6 +16,7 @@ export class ApiError extends Error { constructor(message: string, public status
 const deny = (msg = 'ليست لديك صلاحية تنفيذ هذه العملية'): never => { throw new ApiError(msg, 403) }
 const clean = (x: unknown, max = 160) => typeof x === 'string' ? x.trim().slice(0, max) : ''
 const required = (x: unknown, max = 160) => { const v = clean(x, max); if (!v) throw new ApiError('أكمل الحقول المطلوبة'); return v }
+const duplicatePhoneError = () => new ApiError('رقم الجوال مرتبط بحساب قائم. تواصل مع الإدارة للتحقق.',409)
 const integer = (x: unknown, min: number, max: number) => { const value = Number(x); if (!Number.isInteger(value) || value < min || value > max) throw new ApiError('القيمة الرقمية خارج النطاق'); return value }
 const choice = <T extends string>(x: unknown, values: readonly T[]): T => {
   if (typeof x !== 'string' || !values.includes(x as T)) throw new ApiError('خيار غير صالح')
@@ -48,7 +50,7 @@ const scope = (s: State, u: User) => s.students.filter(st => u.role === 'admin'
 const chatVisible = (chat: Chat, user: User, ids: Set<string>, enabled: boolean) => user.role === 'admin' || enabled && (chat.members.includes(user.id) || Boolean(chat.circleId) && chat.students.some(id => ids.has(id)))
 function project(state: State, user: User | null, revision: number, phoneEnabled: boolean): View {
   const empty = createState()
-  const { operations: _discardEmpty, ...emptyView } = empty
+  const { operations: _discardEmpty, closedAccounts: _closedAccounts, ...emptyView } = empty
   if (!user || user.status !== 'active') return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
   const students = scope(state, user)
   const ids = new Set(students.map(s => s.id))
@@ -81,7 +83,9 @@ async function identify(request: Request, env: Env): Promise<Identity | null> {
     if(reply.status===429||reply.status>=500)throw new ApiError('تعذر الوصول إلى خدمة التحقق بالجوال',503)
     const profile = (await reply.json() as { users?: { localId: string; phoneNumber?: string; disabled?: boolean }[] }).users?.[0]
     if (!reply.ok || !profile?.phoneNumber || profile.disabled) throw new ApiError('انتهت جلسة التحقق، سجّل الدخول مجددًا', 401)
-    const { localId: id, phoneNumber: phone } = profile
+    const { localId: id } = profile
+    const phone = normalizeMobile(profile.phoneNumber)
+    if (!phone) throw new ApiError('رقم الجوال الموثق غير صالح',401)
     try {
       const part=token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')
       const claims=JSON.parse(atob(part))
@@ -98,13 +102,15 @@ async function identify(request: Request, env: Env): Promise<Identity | null> {
 const notify = (s: State, kind: string, title: string, body: string, target: { studentId?: string; users?: string[] } = {}) =>
   s.notices.unshift({ ...target, id: idFor(), kind, title, body, time: new Date().toISOString(), readBy: [] })
 
-function apply(state: State, identity: Identity, user: User | null, action: string, p: Payload, op: string) {
+function apply(state: State, identity: Identity, user: User | null, action: string, p: Payload, op: string, configuredAdmin?: string) {
   if (action === 'register') {
-    if (user || !identity.phone) deny()
+    const phone = identity.phone
+    if (user || !phone) return deny()
+    if (groupAccountsByPhone(state.users).has(phone)) throw duplicatePhoneError()
     const name = required(p.name, 90)
     const role = choice(p.role, ['teacher','parent','student'] as const)
-    const target = state.students.find(s => s.phone === identity.phone)
-    state.users.push({ id: identity.id, name, phone: identity.phone, role, status: 'pending', studentId: role === 'student' ? target?.id : undefined })
+    const target = state.students.find(s => normalizeMobile(s.phone ?? '') === phone)
+    state.users.push({ id: identity.id, name, phone, role, status: 'pending', studentId: role === 'student' ? target?.id : undefined })
     return
   }
   if (!user || user.status !== 'active') throw new ApiError('الحساب بانتظار التفعيل', 403)
@@ -197,7 +203,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     case 'link': {
       if (u.role !== 'parent') deny()
       const phone = phoneFor(p.phone)
-      const s = state.students.find(s => s.active && s.phone === phone)
+      const s = state.students.find(s => s.active && normalizeMobile(s.phone ?? '') === phone)
       if (s && !state.links.some(l => l.studentId === s.id && l.parentId === u.id && l.status !== 'declined')) {
         state.links.unshift({ id: op, parentId: u.id, studentId: s.id, status: 'pending' })
         notify(state,'link','طلب ربط طالب', u.name, {users:state.users.filter(x => x.role === 'admin').map(x=>x.id)})
@@ -297,8 +303,8 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       admin()
       const role = choice(p.role,['teacher','student','parent'] as const)
       const phone = phoneFor(p.phone)
-      if(state.users.some(x=>x.phone===phone)) throw new ApiError('رقم الجوال مرتبط بحساب قائم')
-      const target = state.students.find(x=>x.phone===phone && x.active)
+      if(groupAccountsByPhone(state.users).has(phone)) throw duplicatePhoneError()
+      const target = state.students.find(x=>x.active && normalizeMobile(x.phone ?? '')===phone)
       if(role==='student'&&!target)throw new ApiError('أضف الطالب ورقم جواله إلى الحلقة أولًا')
       state.users.push({id:'invite:'+op,role,phone,name:required(p.name,90),status:'active',studentId:role==='student'?target?.id:undefined})
       break
@@ -308,18 +314,41 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const target = state.users.find(x => x.id === p.id)
       if (!target || target.id === u.id) deny()
       const status = choice(p.status,['active','disabled','pending'] as const)
+      if (status === 'active' && (target!.duplicateOf || state.users.some(other=>hasSharedPhone(target!,other)&&other.duplicateOf!==target!.id))) throw duplicatePhoneError()
       if (status === 'active' && target!.role === 'student') {
-        const s = state.students.find(x => x.active && x.phone && x.phone === target!.phone)
+        const phone = normalizeMobile(target!.phone ?? '')
+        const s = phone && state.students.find(x => x.active && normalizeMobile(x.phone ?? '') === phone)
         if (!s) throw new ApiError('أضف الطالب ورقم جواله إلى الحلقة قبل اعتماد الحساب')
         target!.studentId = s.id
       }
       target!.status = status
       break
     }
+    case 'duplicate-review': {
+      admin()
+      const target = state.users.find(account=>account.id===p.id)
+      const keep = state.users.find(account=>account.id===p.keepId)
+      if (!target || target.id===u.id || target.id===configuredAdmin) throw new ApiError('اختر حسابًا مكررًا غير حساب المدير الحالي أو المدير الأول',403)
+      if (p.confirmed!==true || !keep || keep.duplicateOf || !hasSharedPhone(target,keep) || state.users.some(account=>account.duplicateOf===target.id)) {
+        throw new ApiError('تحقق من الحساب الذي سيبقى ومن تطابق الرقم ثم أعد المحاولة',409)
+      }
+      if (state.circles.some(circle=>circle.teacherId===target.id)) throw new ApiError('أعد إسناد حلقات هذا المحفّظ قبل إنهاء حسابه',409)
+      if (target.id.startsWith('invite:')) removeDuplicateAccount(state,target.id)
+      else target.duplicateOf = keep.id
+      state.audit.push({ time:new Date().toISOString(),actor:u.name,action:target.id.startsWith('invite:')?'حذف دعوة مكررة':'اعتماد إنهاء حساب مكرر',target:target.id })
+      return
+    }
+    case 'duplicate-cancel': {
+      admin()
+      const target = state.users.find(account=>account.id===p.id)
+      if (!target?.duplicateOf) throw new ApiError('لا يوجد طلب إنهاء لهذا الحساب',409)
+      delete target.duplicateOf
+      break
+    }
     case 'circle': {
       admin()
       const teacherId = required(p.teacherId)
-      if (!state.users.some(x => x.id === teacherId && x.status === 'active' && isStaff(x))) throw new ApiError('اختر محفظًا مفعّلًا')
+      if (!state.users.some(x => x.id === teacherId && x.status === 'active' && !x.duplicateOf && isStaff(x))) throw new ApiError('اختر محفظًا مفعّلًا')
       const days = Array.isArray(p.days) ? [...new Set(p.days.map(x => integer(x,0,6)))] : []
       if (!days.length) throw new ApiError('اختر أيام انعقاد الحلقة')
       const circle = { id:clean(p.id) || op, name:required(p.name),teacherId,days,holidays:Array.isArray(p.holidays) ? [...new Set(p.holidays.map(validDate))] : [] }
@@ -337,7 +366,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const id = clean(p.id) || op
       const old = state.students.find(x => x.id === id)
       const phone = clean(p.phone) ? phoneFor(p.phone) : undefined
-      if (phone && state.students.some(x => x.phone === phone && x.id !== id)) throw new ApiError('رقم الجوال مسجل لطالب آخر')
+      if (phone && state.students.some(x => x.id !== id && normalizeMobile(x.phone ?? '') === phone)) throw new ApiError('رقم الجوال مسجل لطالب آخر')
       const next: Student = { id, name:required(p.name,90), latin:clean(p.latin,90) || undefined, phone,circleId,
         color:old?.color ?? state.students.length % 5, startingPoints:old?.startingPoints ?? 0,active:p.active !== false }
       if (old) Object.assign(old,next); else state.students.push(next)
@@ -394,6 +423,55 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
       }
       const state = JSON.parse(current.data) as State
       let user = state.users.find(x => x.id === identity.id) ?? null
+      const restricted = (accountAccess: NonNullable<View['accountAccess']>) =>
+        Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
+      const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
+      if (fingerprint && state.closedAccounts?.includes(fingerprint)) {
+        if (get || action==='duplicate-close') return restricted('closed')
+        deny('أُغلق حسابك بسبب تكرار رقم الجوال')
+      }
+      const phoneAccounts = identity.phone ? groupAccountsByPhone(state.users).get(identity.phone) ?? [] : []
+      if (user && identity.phone && normalizeMobile(user.phone ?? '')!==identity.phone) {
+        if (phoneAccounts.length) {
+          if (!get) throw duplicatePhoneError()
+          return restricted('duplicate')
+        }
+        const userId = user.id
+        user.phone = identity.phone
+        delete user.duplicateOf
+        for (const account of state.users) if (account.duplicateOf===userId) delete account.duplicateOf
+        await repo.write(identity.workspace,current.revision,state)
+        continue
+      }
+      if (user?.duplicateOf) {
+        if (get) return restricted(retainedAccount(state,user) ? 'closure-pending' : 'duplicate')
+        if (action!=='duplicate-close') deny('الحساب المكرر بانتظار تأكيد الإنهاء')
+        if (payload.confirmed!==true || !fingerprint || user.id===env.BOOTSTRAP_UID || !retainedAccount(state,user)) {
+          throw new ApiError('تعذر تأكيد الإنهاء. تواصل مع الإدارة لمراجعة الحساب المكرر.',409)
+        }
+        removeDuplicateAccount(state,user.id)
+        state.closedAccounts = [...(state.closedAccounts ?? []),fingerprint]
+        state.audit.push({time:new Date().toISOString(),actor:'النظام',action:'حذف الحساب المكرر بعد التأكيد'})
+        if (await repo.write(identity.workspace,current.revision,state)) return restricted('closed')
+        continue
+      }
+      if (!user && phoneAccounts.length) {
+        const candidates = phoneAccounts.filter(account=>!account.duplicateOf)
+        const invited = candidates.length===1 && candidates[0].id.startsWith('invite:') ? candidates[0] : undefined
+        if (invited) {
+          const oldId = invited.id
+          invited.id = identity.id
+          invited.phone = identity.phone
+          if (identity.bootstrap && invited.status==='active') invited.role = identity.bootstrap.role
+          for (const account of state.users) if (account.duplicateOf===oldId) account.duplicateOf = identity.id
+          for (const circle of state.circles) if (circle.teacherId===oldId) circle.teacherId = identity.id
+          for (const chat of state.chats) chat.members = chat.members.map(id=>id===oldId ? identity.id : id)
+          await repo.write(identity.workspace,current.revision,state)
+          continue
+        }
+        if (!get) throw duplicatePhoneError()
+        return restricted('duplicate')
+      }
       if (identity.bootstrap && (!user || (identity.phone && user.status === 'pending'))) {
         if (user) {
           user.role = identity.bootstrap.role
@@ -407,20 +485,13 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
         await repo.write(identity.workspace,current.revision,state)
         continue
       }
-      if (!user && identity.phone) {
-        const invited = state.users.find(x=>x.id.startsWith('invite:') && x.phone===identity.phone)
-        if(invited) {
-          const oldId=invited.id
-          invited.id=identity.id
-          for(const circle of state.circles) if(circle.teacherId===oldId) circle.teacherId=identity.id
-          for(const chat of state.chats) chat.members=chat.members.map(id=>id===oldId?identity.id:id)
-          if(!(await repo.write(identity.workspace,current.revision,state)))continue
-          continue
-        }
+      if (user && user.role!=='admin' && state.users.some(account=>hasSharedPhone(user!,account) && account.duplicateOf!==user!.id)) {
+        if (!get) throw duplicatePhoneError()
+        return restricted('duplicate')
       }
       const operationKey=identity.id+':'+op
       if (get || state.operations.includes(operationKey)) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
-      apply(state,identity,user,action,payload,op)
+      apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)
       state.operations.push(operationKey)
       if (!(await repo.write(identity.workspace,current.revision,state))) continue
       user = state.users.find(x => x.id === identity.id) ?? null

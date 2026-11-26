@@ -136,6 +136,39 @@
 .code-field {font-family:DM,Arial,sans-serif;font-size:1.42rem;letter-spacing:.46em;text-align:center}
 .recaptcha-host:empty {display:none}
 .signup-verified {justify-self:start;color:#145f40;background:#e7f5e8;border-radius:24px;padding:3px 8px;display:flex;align-items:center;gap:5px;font-size:.84rem;font-weight:600}
+.account-access h1 {font-size:clamp(1.2rem,3vw,1.55rem)}
+.account-access p {overflow-wrap:anywhere;line-height:1.75}
+.account-access .btn {white-space:normal}
+.duplicate-group {border:1px solid var(--border);border-radius:12px;padding:10px 14px}
+.duplicate-group h3 {display:flex;align-items:center;gap:9px;color:#76511d;margin-bottom:6px}
+.duplicate-group .entity-row {flex-wrap:wrap}
+.teacher-overview {display:grid;gap:16px;padding:clamp(14px,2.4vw,27px);border-top:3px solid var(--green)}
+.teacher-heading,.teacher-actions,.teacher-date {display:flex;align-items:center;gap:10px}
+.teacher-heading {justify-content:space-between;flex-wrap:wrap}
+.teacher-heading h1 {font-size:clamp(1.4rem,3vw,2.1rem);line-height:1.35;margin:3px 0}
+.teacher-date {font-size:.82rem;color:var(--green)}
+.teacher-actions {flex-wrap:wrap}
+.teacher-metrics {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.teacher-metric {display:flex;align-items:center;gap:9px;padding:11px;text-align:start;min-width:0}
+.teacher-metric[aria-pressed="true"] {border-color:#65a58b;background:#f2f9f4;box-shadow:inset 0 0 0 1px #65a58b}
+.teacher-metric strong,.teacher-metric small,.teacher-progress span {display:block}
+.teacher-metric strong {font-size:1.35rem;line-height:1.25;color:#17382c}
+.teacher-metric small,.teacher-progress span:not(.count-pill) {font-size:.82rem;color:#53695d}
+.teacher-metric .stat-icon {width:35px;height:35px}
+.teacher-progress {display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;padding:11px 15px}
+.teacher-progress progress {flex:1;min-width:50px;accent-color:var(--green)}
+.teacher-dashboard .roster {scroll-margin-block-start:12px}
+@media(max-width:700px) {
+  .teacher-metrics {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .teacher-actions .btn {flex:1;min-width:max-content}
+  .teacher-progress {gap:6px 10px}
+  .teacher-progress>div {min-width:100%}
+}
+@media(max-width:360px) {
+  .teacher-roster-tools {flex-wrap:wrap}
+  .teacher-roster-tools .search {flex-basis:100%}
+  .teacher-metric .stat-icon {width:28px;height:28px}
+}
 .spinner {animation:spin .85s linear infinite}
 @keyframes spin {to{transform:rotate(360deg)}}
 @media(max-width:1110px) {

@@ -8,6 +8,7 @@ import { EntryWizard } from './wizard'
 import { Assistant } from './assistant'
 import { Records } from './records'
 import { ChatPage, Exams, Leaves, More, Store } from './features'
+import { AccountAccess } from './account-access'
 import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
@@ -57,7 +58,7 @@ function App() {
   const [openPanel,setOpenPanel] = useState<'notices'|'profile'|''>('')
   const [phone,setPhone] = useState(false)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
-  const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>}>()
+  const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>;circleId?:string}>()
   const [online,setOnline] = useState(navigator.onLine)
   const seenNotices = useRef<{user:string;ids:Set<string>}>(undefined)
   const routedAdmin = useRef<string>(undefined)
@@ -125,7 +126,7 @@ function App() {
         const result=await request(token,role,undefined,controller.signal)
         if(!active)return
         setData(previous=>initial||previous.user?.id!==result.user?.id||previous.revision<=result.revision?result:previous)
-        setUnregistered(Boolean(token&&!result.user))
+        setUnregistered(Boolean(token&&!result.user&&!result.accountAccess))
         setLoadError('')
         const adminId = token&&result.user?.role==='admin'&&result.user.status==='active' ? result.user.id : undefined
         if(adminId&&adminId!==routedAdmin.current&&currentPage()!=='admin')go('admin',true)
@@ -151,10 +152,10 @@ function App() {
       result=await request(token,role,body)
     }
     setData(previous=>previous.user?.id!==result.user?.id||previous.revision<=result.revision?result:previous)
-    setUnregistered(Boolean(token&&!result.user))
+    setUnregistered(Boolean(token&&!result.user&&!result.accountAccess))
     return result
   }
-  const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>) => setWizard({student,mode,preset})
+  const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>,circleId?:string) => setWizard({student,mode,preset,circleId})
   const teacher = data.user?.role==='teacher'||data.user?.role==='admin'
   const student=data.user?.role==='student'
   const notices=data.notices.filter(n=>!n.readBy.includes(data.user?.id||''))
@@ -198,7 +199,19 @@ function App() {
   const label=[...nav,...extras].find(([p])=>p===page)?.[2]||t('الرئيسية','Home')
   const userName=data.sample&&en?({admin:'Abdulrahman Al-Sarhan',teacher:'Abdulrahman Al-Sarhan',student:'Abdullah Al-Shehri',parent:'Student guardian'} as Record<string,string>)[role]:data.user?.name
   const workspace = {data,en,t,post,go,tell,open}
-  const exit = async () => {if(auth){const {endPhone}=await import('./phone');await endPhone(auth);setData(emptyData);setToken('');setUnregistered(false);routedAdmin.current=undefined;go(adminPage?'admin':'home')}}
+  const signOut = useCallback(async (next:Page) => {
+    if(!auth)return
+    const {endPhone}=await import('./phone')
+    await endPhone(auth)
+    setData(emptyData);setToken('');setUnregistered(false);setWizard(undefined)
+    routedAdmin.current=undefined
+    go(next)
+  },[auth,go])
+  const exit = () => signOut(adminPage?'admin':'home')
+  useEffect(()=>{
+    if(data.accountAccess!=='closed'||!token||!auth)return
+    void signOut('home').then(()=>tell(en?'Your platform account has been deleted.':'حُذف حسابك من المنصة وأُغلقت الجلسة.')).catch(error=>tell(error.message,true))
+  },[data.accountAccess,token,auth,en,signOut,tell])
   const openPhone = () => { if(adminPage)go('home'); setPhone(true) }
   const loadingLabel=t('جارٍ التحميل','Loading')
   const phoneProps={auth,availability:phoneAvailability,retry:()=>retryPhone(n=>n+1)}
@@ -246,7 +259,7 @@ function App() {
         </header>
         <main className={'main-content'+(assistantOpen?' assistant-content':'')} id="main">
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
-          {loadingView?<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<section className="panel section-panel intro-card"><Brand/><h1>{t('مرحبًا بك في حلقات الخير','Welcome to Al-Khair Quran Circles')}</h1><p>{t('سجّل الدخول لمتابعة الحفظ والمراجعة والحضور.','Sign in to follow recitation, revision and attendance.')}</p><button className="btn btn-primary" onClick={()=>setPhone(true)}><LogIn size={18}/>{t('الدخول برقم الجوال','Sign in with mobile')}</button><a className="text-button" href="/admin" onClick={e=>{if(!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go('admin')}}}>{t('دخول الإدارة','Administration sign-in')}</a></section>:
+          {loadingView?<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<section className="panel section-panel intro-card"><Brand/><h1>{t('مرحبًا بك في حلقات الخير','Welcome to Al-Khair Quran Circles')}</h1><p>{t('سجّل الدخول لمتابعة الحفظ والمراجعة والحضور.','Sign in to follow recitation, revision and attendance.')}</p><button className="btn btn-primary" onClick={()=>setPhone(true)}><LogIn size={18}/>{t('الدخول برقم الجوال','Sign in with mobile')}</button><a className="text-button" href="/admin" onClick={e=>{if(!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go('admin')}}}>{t('دخول الإدارة','Administration sign-in')}</a></section>:
           <div className={'screen'+(assistantOpen?' assistant-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>

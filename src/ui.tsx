@@ -8,7 +8,7 @@ export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' 
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
-  open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>) => void
+  open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string) => void
 }
 export const Context = createContext<Workspace | null>(null)
 export function useWorkspace() { const c = useContext(Context); if (!c) throw new Error('Workspace unavailable'); return c }

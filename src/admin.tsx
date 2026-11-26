@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { Bell, BookOpen, CalendarDays, ClipboardList, Gift, History, LayoutGrid, Link2, MessageCircle, Plus, Settings, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { Bell, BookOpen, CalendarDays, ClipboardList, Gift, History, LayoutGrid, Link2, MessageCircle, Plus, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import type { Circle, Prize, Student } from './domain'
+import { DuplicateAccounts } from './duplicate-accounts'
+import { normalizeMobile } from './phone-number'
 import { Avatar, Badge, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
 
 type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}
@@ -13,7 +15,7 @@ export function Admin() {
   if(data.user?.role!=='admin'||data.user.status!=='active') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
   const nav = [
     ['overview',LayoutGrid,t('الإحصاءات العامة','Overview')], ['people',Users,t('الحسابات وطلبات التسجيل','Accounts & enrollment')],
-    ['students',Users,t('الطلاب','Students')],['circles',BookOpen,t('الحلقات','Circles')],['links',Link2,t('ربط الأبناء','Family links')],
+    ['duplicates',ShieldAlert,t('الأرقام المكررة','Duplicate numbers')],['students',Users,t('الطلاب','Students')],['circles',BookOpen,t('الحلقات','Circles')],['links',Link2,t('ربط الأبناء','Family links')],
     ['store',Gift,t('المتجر والطلبات','Store & orders')],['announcements',Bell,t('الإعلانات','Announcements')],['settings',Settings,t('النقاط وصلاحيات التواصل','Points & communication')],['audit',History,t('سجل العمليات','Audit log')]
   ] as const
   const submit = async (action:string,payload:Record<string,unknown>)=>{setBusy(true);try{await post(action,payload);tell(t('تم تحديث البيانات','Changes saved'));return true}catch(e){tell((e as Error).message,true);return false}finally{setBusy(false)}}
@@ -27,6 +29,7 @@ export function Admin() {
     if(await submit(edit.kind,values))setEdit(undefined)
   }
   const visible = (value:string) => value.toLowerCase().includes(query.trim().toLowerCase())
+  const searchedPhone = normalizeMobile(query)
   const pageTitle = nav.find(([id])=>id===tab)?.[2]
   const accountStatus = (status:string) => status==='pending'?t('بانتظار الاعتماد','Pending approval'):undefined
   return <div className="page-stack">
@@ -40,7 +43,8 @@ export function Admin() {
           <div className="summary-grid admin-metrics">{[[t('الحلقات','Circles'),data.circles.length],[t('الطلاب','Students'),data.students.length],[t('الطلبات المعلقة','Pending requests'),data.users.filter(u=>u.status==='pending').length+data.links.filter(l=>l.status==='pending').length],[t('سجلات التسميع','Recitation records'),data.daily.length]].map(([label,count])=><div className="record-tile" key={label}><strong className="big-number">{count}</strong><span>{label}</span></div>)}</div>
           <div className="more-list">{([[ClipboardList,'records',t('الحفظ والمراجعة والحضور والتقارير','Recitation, attendance and reports')],[CalendarDays,'exams',t('إدارة الاختبارات','Manage assessments')],[UserCheck,'leaves',t('إدارة الاستئذانات','Manage leave')],[MessageCircle,'chat',t('الإشراف على المحادثات','Oversee conversations')]] as const).map(([Icon,page,label])=><button className="more-row" key={page} onClick={()=>go(page)}><span className="stat-icon tint-green"><Icon size={17}/></span><strong>{label}</strong></button>)}</div>
         </>}
-        {tab==='people'&&(data.users.filter(u=>visible(u.name+' '+(u.phone||''))).map(u=><div className="entity-row" key={u.id}><div><strong>{u.name}</strong><p><RoleName role={u.role}/> {u.phone&&<bdi> · {u.phone}</bdi>}</p></div><div className="chip-row"><Badge status={u.status} label={accountStatus(u.status)}/>{u.id!==data.user?.id&&<button className="btn btn-outline compact" disabled={busy} onClick={()=>void submit('account',{id:u.id,status:u.status==='active'?'disabled':'active'})}>{u.status==='active'?t('إيقاف','Suspend'):t('تفعيل','Activate')}</button>}</div></div>))}
+        {tab==='duplicates'&&<DuplicateAccounts/>}
+        {tab==='people'&&(data.users.filter(u=>visible(u.name+' '+(u.phone||'')) || searchedPhone && normalizeMobile(u.phone ?? '')===searchedPhone).map(u=><div className="entity-row" key={u.id}><div><strong>{u.name}</strong><p><RoleName role={u.role}/> {u.phone&&<bdi> · {u.phone}</bdi>}</p></div><div className="chip-row"><Badge status={u.duplicateOf?'disabled':u.status} label={u.duplicateOf?t('بانتظار تأكيد الإنهاء','Awaiting closure confirmation'):accountStatus(u.status)}/>{u.id!==data.user?.id&&!u.duplicateOf&&<button className="btn btn-outline compact" disabled={busy} onClick={()=>void submit('account',{id:u.id,status:u.status==='active'?'disabled':'active'})}>{u.status==='active'?t('إيقاف','Suspend'):t('تفعيل','Activate')}</button>}</div></div>))}
         {tab==='students'&&<>{data.students.filter(s=>visible(s.name+' '+(s.phone||''))).map(s=><div className="entity-row" key={s.id}><div className="name-line"><Avatar student={s}/><div><strong>{nameFor(s,en)}</strong><p>{data.circles.find(c=>c.id===s.circleId)?.name}</p></div></div><div className="chip-row"><Badge status={s.active?'active':'disabled'}/><button className="btn btn-outline compact" onClick={()=>setEdit({kind:'student',item:s})}>{t('تعديل','Edit')}</button></div></div>)}{!data.students.length&&<Empty title={t('لا يوجد طلاب','No students')}/>}</>}
         {tab==='circles'&&<>{data.circles.filter(c=>visible(c.name)).map(c=><div className="entity-row" key={c.id}><div><strong>{c.name}</strong><p>{data.users.find(u=>u.id===c.teacherId)?.name} · {data.students.filter(s=>s.circleId===c.id).length} {t('طالب','students')}</p></div><button className="btn btn-outline compact" onClick={()=>setEdit({kind:'circle',item:c})}>{t('تعديل','Edit')}</button></div>)}{!data.circles.length&&<Empty title={t('لا توجد حلقات','No circles')}/>}</>}
         {tab==='links'&&<>{data.links.map(l=><div className="entity-row" key={l.id}><div><strong>{data.users.find(x=>x.id===l.parentId)?.name}</strong><p>{data.students.find(x=>x.id===l.studentId)?.name}</p></div><div className="chip-row"><Badge status={l.status} label={l.status==='pending'?t('قيد المراجعة','Under review'):undefined}/>{l.status==='pending'&&<><button className="btn btn-subtle compact" disabled={busy} onClick={()=>void submit('link-review',{id:l.id,status:'accepted'})}>{t('اعتماد','Approve')}</button><button className="btn btn-outline compact" disabled={busy} onClick={()=>void submit('link-review',{id:l.id,status:'declined'})}>{t('رفض','Decline')}</button></>}</div></div>)}{!data.links.length&&<Empty title={t('لا توجد طلبات ربط','No family link requests')}/>}</>}
