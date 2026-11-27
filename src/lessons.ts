@@ -31,6 +31,10 @@ export type LessonView = Omit<Lesson,'seats'|'invitees'|'delivered'> & {
   inviteCount:number
 }
 export type LessonCredentials = {appId:string; channel:string; uid:number; token:string; audio:boolean; video:boolean}
+export type LessonRtcStatus = {
+  appId:string; certificate:boolean; customerId:boolean; customerSecret:boolean; coHostConfirmed:boolean
+  rest:'pending'|'accepted'|'rejected'|'unavailable'
+}
 export type LessonHealth = {rtcConfigured:boolean; lastRun?:string; lastError?:string; pendingRestrictions?:number; scheduleConflicts?:number}
 export const lessonCapacity=24
 export const lessonAgendaGraceMs=120_000

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowDownToLine, CalendarDays, ChevronLeft, ChevronRight, Clock3, Headphones, Mic, Plus, Radio, Search, Users, Video, VideoOff } from 'lucide-react'
 import { dateKey, dayOffset, hasCompletedRecitation, segmentLabel } from './domain'
 import { CallAvatar, CallRole, LessonBack, LessonCall, LessonDeviceOptions, useCallClock, type SaveLesson } from './lesson-call'
+import { LessonAgoraStatus } from './lesson-agora-status'
 import type { CallDevices } from './lesson-rtc'
+import { CallPermissionStatus, callDeviceError, useCallDevicePermissions } from './lesson-permissions'
 import { lessonClosed, lessonInAgenda, type LessonKind, type LessonView } from './lessons'
 import { Badge, Empty, Modal, dateLabel, normal, useWorkspace } from './ui'
 import './lesson-center.css'
@@ -119,6 +121,7 @@ function Prejoin({lesson,devices,setDevices,save,busy,now}:{lesson:LessonView;de
   const [audioLevel,setAudioLevel]=useState(0)
   const canCamera=lesson.media==='video'
   const seat=lesson.self?.status
+  const {permissions,report}=useCallDevicePermissions(canCamera,seat!=='waiting'&&seat!=='admitted')
   const canRequest=now>=Date.parse(lesson.startsAt)-lesson.roomMinutes*60_000
   const host=lesson.people.find(person=>person.id===lesson.teacherId)?.name
   const group=data.circles.find(circle=>circle.id===lesson.circleId)?.name
@@ -141,11 +144,12 @@ function Prejoin({lesson,devices,setDevices,save,busy,now}:{lesson:LessonView;de
     const id=++request.current
     cleanDevices();setChecking(true);setPreview(false);setIssue('');setAudioLevel(0)
     try {
-      if(!navigator.mediaDevices)throw new Error('Unsupported')
+      if(!navigator.mediaDevices?.getUserMedia)throw new DOMException('Unsupported','NotSupportedError')
       const stream=await navigator.mediaDevices.getUserMedia(kind==='audio'?{audio:devices.micId?{deviceId:{exact:devices.micId}}:true}:
         {video:devices.cameraId?{deviceId:{exact:devices.cameraId}}:true})
       if(id!==request.current){stream.getTracks().forEach(track=>track.stop());return}
       running.current=stream
+      report(kind,true)
       if(kind==='video'&&video.current){video.current.srcObject=stream;setPreview(true)}
       if(kind==='audio'&&window.AudioContext){
         const audio=analyser.current=new AudioContext()
@@ -169,9 +173,8 @@ function Prejoin({lesson,devices,setDevices,save,busy,now}:{lesson:LessonView;de
     }catch(error){
       if(id!==request.current)return
       cleanDevices();setChecking(false)
-      setIssue(error instanceof DOMException&&error.name==='NotAllowedError'
-        ?t('إذن الجهاز مرفوض. اسمح باستخدامه من إعدادات المتصفح ثم جرّب مجددًا.','Device access was denied. Allow it in your browser settings and try again.')
-        :t('تعذر العثور على الجهاز أو تشغيله. افحص توصيله ثم أعد المحاولة.','Could not use the device. Check that it is connected and try again.'))
+      report(kind,false,error)
+      setIssue(callDeviceError(error,kind,t))
     }
   }
   async function testSpeaker(){
@@ -212,6 +215,7 @@ function Prejoin({lesson,devices,setDevices,save,busy,now}:{lesson:LessonView;de
         <video className={preview?'':'off'} muted autoPlay playsInline ref={video} aria-label={t('معاينة الكاميرا','Camera preview')}/>
         {!preview&&<><VideoOff size={25}/><span>{canCamera?t('الكاميرا مغلقة','Camera off'):t('هذه الجلسة صوتية','This session is audio only')}</span></>}
       </div>
+      <CallPermissionStatus permissions={permissions} videoAllowed={canCamera}/>
       <div className="chip-row">
         <button type="button" className="btn btn-outline compact" disabled={checking||busy} onClick={()=>void testDevice('audio')}><Mic size={16}/>{t('اختبار الميكروفون','Test microphone')}</button>
         <button type="button" className="btn btn-outline compact" disabled={busy} onClick={()=>void testSpeaker()}><Headphones size={16}/>{t('اختبار السماعة','Test speaker')}</button>
@@ -340,6 +344,7 @@ export function LessonCenter({management=false}:{management?:boolean}={}) {
       </div>
       {!data.lessonHealth?.rtcConfigured&&<p className="hint-line">{t('الجدولة وغرفة الانتظار متاحتان. تفعيل الصوت والفيديو ينتظر إعدادات Agora.','Scheduling and the waiting room are available. Media requires Agora configuration.')}</p>}
       {management&&<div className="lesson-ops">
+        <LessonAgoraStatus/>
         <label className="check-line"><input type="checkbox" checked={Boolean(data.lessonTeacherScheduling)} disabled={busy} onChange={event=>void save('lesson-settings',{enabled:event.target.checked})}/>{t('السماح للمحفّظ بجدولة حلقته','Allow teachers to schedule their circles')}</label>
         {data.lessonHealth?.lastRun&&<small>{t('آخر فحص للمهام','Last schedule check')} · {formatted(data.lessonHealth.lastRun,'Asia/Riyadh',en)}</small>}
         {data.lessonHealth?.lastError&&<p className="error-text">{data.lessonHealth.lastError}</p>}

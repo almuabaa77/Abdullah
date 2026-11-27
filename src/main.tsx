@@ -1,6 +1,6 @@
 import { activeNotices, NotificationList, useNoticeTime } from './notifications'
 import { LessonCenter } from './lesson-center'
-import type { LessonCredentials } from './lessons'
+import type { LessonCredentials, LessonRtcStatus } from './lessons'
 import { AnnouncementFeed } from './announcements'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -369,7 +369,13 @@ function App() {
     if(!result.ok)throw new Error(value.error||t('تعذر الوصول إلى غرفة الوسائط','Could not access the media room'))
     return value
   }
-  const workspace = {data,en,t,post,go,tell,open,lessonRtc,refresh:()=>refreshWorkspace.current()}
+  async function lessonRtcStatus():Promise<LessonRtcStatus> {
+    const response=await fetch('/api/lesson-rtc/status',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:'{}'})
+    const value=await response.json()
+    if(!response.ok)throw new Error(value.error||t('تعذر فحص Agora','Could not check Agora'))
+    return value
+  }
+  const workspace = {data,en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,refresh:()=>refreshWorkspace.current()}
   const signOut = useCallback(async (next:Page) => {
     if(!auth)return
     const {endPhone}=await import('./phone')

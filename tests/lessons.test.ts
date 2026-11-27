@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import AgoraToken from 'agora-token/src/AccessToken2.js'
-import { agoraConfig, issueAgora } from '../server/agora'
+import { agoraConfig, createAgoraStatusCheck, issueAgora } from '../server/agora'
 import { applyLessonAction, applyPresence, lessonNoticeAllowed, lessonRtcGrant, projectLessons, runLessonSchedule } from '../server/lesson-workspace'
 import { createState } from '../server/seed'
 import type { User } from '../src/domain'
@@ -26,6 +26,23 @@ function fixture(count=2) {
 test('rejects a Google API key and requires provider-enforced permissions before enabling RTC',()=>{
   assert.equal(agoraConfig({AGORA_APP_ID:'AIza-example'}),undefined)
   assert.equal(agoraConfig({AGORA_APP_ID:'a'.repeat(32),AGORA_APP_CERTIFICATE:'b'.repeat(32)}),undefined)
+})
+test('Agora diagnostics probe REST once without disclosing authentication values',async t=>{
+  const env={AGORA_APP_ID:'a'.repeat(32),AGORA_APP_CERTIFICATE:'b'.repeat(32),AGORA_CUSTOMER_ID:'example-client',AGORA_CUSTOMER_SECRET:'example-secret'}
+  let hits=0
+  t.mock.method(globalThis,'fetch',async (url:string,init:RequestInit)=>{
+    hits++
+    assert.match(url,/^https:\/\/api\.agora\.io\/dev\/v1\/channel\/user\/[a-f0-9]+\/halaqat-/)
+    assert.equal(new Headers(init.headers).get('Authorization'),'Basic '+Buffer.from('example-client:example-secret').toString('base64'))
+    return Response.json({success:true,data:{channel_exist:false}})
+  })
+  assert.equal((await createAgoraStatusCheck({})()).rest,'pending')
+  assert.equal(hits,0)
+  const check=createAgoraStatusCheck(env)
+  const results=await Promise.all([check(),check()])
+  assert.equal(hits,1)
+  for(const result of results)assert.deepEqual(result,{appId:env.AGORA_APP_ID,certificate:true,customerId:true,customerSecret:true,coHostConfirmed:false,rest:'accepted'})
+  assert.equal(agoraConfig(env),undefined)
 })
 test('date isolation, conflicts, scoped calendars and durable schedule reminders',()=>{
   const {state,admin,teacher,outsider,learners,draft,action,create}=fixture()

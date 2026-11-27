@@ -1,5 +1,5 @@
 import type { AgoraEnvironment } from './agora'
-import type { LessonCredentials } from '../src/lessons'
+import type { LessonCredentials, LessonRtcStatus } from '../src/lessons'
 import { ApiError } from './errors'
 import { applyLessonAction, lessonActions, lessonRtcGrant, lessonNoticeAllowed, projectLessons } from './lesson-workspace'
 import { activeAccount, chatAccess, chatCanSend, directContext, groupEligible, groupMessages } from './chat-access'
@@ -824,28 +824,30 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   state.audit.push({ time:new Date().toISOString(),actor:u.name,action,target:clean(p.studentId || p.id || p.circleId) || undefined })
 }
 
-export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials) {
+export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials, rtcStatus?:()=>Promise<LessonRtcStatus>) {
   try {
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
     const pushRoute = url.pathname === '/api/push'
     const rtcRoute = url.pathname === '/api/lesson-rtc'
+    const rtcStatusRoute = url.pathname === '/api/lesson-rtc/status'
+    const mediaRoute = rtcRoute||rtcStatusRoute
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && (request.method !== 'GET' || events || pushRoute || rtcRoute)) throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events || pushRoute || mediaRoute)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
-    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !rtcRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !mediaRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
-    if (events && !get || rtcRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
+    if (events && !get || mediaRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
     if (!get && request.headers.get('sec-fetch-site') === 'cross-site') deny()
     const raw = get ? '' : await request.text()
     if (raw.length > 75000) throw new ApiError('حجم الطلب غير مدعوم',413)
     const payload = get ? {} : JSON.parse(raw) as Payload
-    const action = get||pushRoute||rtcRoute ? '' : required(payload.action,40)
-    const op = get||pushRoute||rtcRoute ? '' : required(payload.op,70)
-    if (!get && !pushRoute && !rtcRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
+    const action = get||pushRoute||mediaRoute ? '' : required(payload.action,40)
+    const op = get||pushRoute||mediaRoute ? '' : required(payload.op,70)
+    if (!get && !pushRoute && !mediaRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
     for (let attempt = 0; attempt < 6; attempt++) {
       const current = await repo.read(identity.workspace)
       if (!current) {
@@ -856,7 +858,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       let user = state.users.find(x => x.id === identity.id) ?? null
       if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
-        if (events || pushRoute || rtcRoute) return deny()
+        if (events || pushRoute || mediaRoute) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
       }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
@@ -936,6 +938,11 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return restricted('duplicate')
       }
       const operationKey=identity.id+':'+op
+      if(rtcStatusRoute) {
+        if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()
+        if(!rtcStatus)throw new ApiError('فحص Agora متاح على خادم الاستضافة',503)
+        return Response.json(await rtcStatus(),{headers})
+      }
       if(rtcRoute) {
         if(!user||user.status!=='active'||identity.workspace!=='school')return deny()
         if(!rtc)throw new ApiError('إعدادات Agora غير مكتملة',503)

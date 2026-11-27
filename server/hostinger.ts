@@ -1,4 +1,4 @@
-import { agoraConfig, agoraPresence, issueAgora, revokeAgora } from './agora'
+import { agoraConfig, agoraPresence, createAgoraStatusCheck, issueAgora, revokeAgora } from './agora'
 import { applyPresence, runLessonSchedule } from './lesson-workspace'
 import express, { type ErrorRequestHandler, type Request as HttpRequest, type Response as HttpResponse } from 'express'
 import { createPool, type Pool, type PoolOptions, type QueryResult, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise'
@@ -113,6 +113,7 @@ const repository:Repository = {
 }
 
 const agora=agoraConfig(env)
+const agoraStatus=createAgoraStatusCheck(env)
 let publishing=false
 const scheduleTimer=setInterval(async()=>{
   if(publishing||databaseStatus!=='ready')return
@@ -206,6 +207,7 @@ const app = express()
 app.disable('x-powered-by')
 app.use((_req,res,next)=>{
   res.setHeader('X-Halaqat-App','hostinger')
+  res.setHeader('Permissions-Policy','camera=(self), microphone=(self)')
   next()
 })
 app.get('/api/health',(_req,res)=>{
@@ -233,7 +235,7 @@ app.use('/api',express.text({type:'application/json',limit:80000}),async (req,re
     res.status(405).set('Allow','GET, POST').json({error:'Method not allowed'})
     return
   }
-  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined))
+  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined,agoraStatus))
 })
 app.use(async (req,res)=>{ await forward(res,serveAsset(appRequest(req))) })
 
