@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { CheckCircle2, CircleAlert, RadioTower } from 'lucide-react'
 import type { LessonRtcStatus } from './lessons'
 import { useWorkspace } from './ui'
+
+const AgoraAppIdTest=lazy(()=>import('./lesson-agora-test').then(module=>({default:module.AgoraAppIdTest})))
 
 export function LessonAgoraStatus() {
   const {t,lessonRtcStatus}=useWorkspace()
   const [status,setStatus]=useState<LessonRtcStatus>()
   const [loading,setLoading]=useState(false)
   const [failure,setFailure]=useState('')
+  const [testing,setTesting]=useState(()=>new URLSearchParams(location.search).has('agoraTest'))
   async function run(){
     setLoading(true);setFailure('')
     try{setStatus(await lessonRtcStatus())}
@@ -23,9 +26,12 @@ export function LessonAgoraStatus() {
   ]
   return <section className="lesson-agora" aria-label={t('فحص Agora','Agora diagnostics')}>
     <div className="lesson-agora-top"><div><RadioTower size={18}/><strong>{t('اتصال Agora','Agora connection')}</strong></div>
-      <button className="btn btn-outline compact" type="button" disabled={loading} onClick={()=>void run()}>
-        {loading?t('جارٍ الفحص…','Checking…'):t('فحص اتصال Agora','Check Agora connection')}
-      </button>
+      <div className="chip-row">
+        <button className="btn btn-primary compact" type="button" onClick={()=>setTesting(true)}>{t('تجربة Agora بمعرّف التطبيق','Test Agora with App ID')}</button>
+        <button className="btn btn-outline compact" type="button" disabled={loading} onClick={()=>void run()}>
+          {loading?t('جارٍ الفحص…','Checking…'):t('فحص اتصال Agora','Check Agora connection')}
+        </button>
+      </div>
     </div>
     {failure&&<p className="error-text" role="alert">{failure}</p>}
     {status&&<div className="lesson-agora-results" role="status">
@@ -37,5 +43,8 @@ export function LessonAgoraStatus() {
         :status.rest==='unavailable'?t('تعذر الاتصال بخدمة Agora الآن. أعد الفحص بعد قليل.','The Agora service could not be reached. Try again shortly.')
         :t('يبدأ فحص الخادم بعد إضافة معرّف المشروع ومفاتيح REST.','The server checks the connection after you add the project ID and REST keys.')}</p>
     </div>}
+    {testing&&<Suspense fallback={<p className="hint-line" role="status">{t('جارٍ فتح غرفة الاختبار…','Opening the test room…')}</p>}>
+      <AgoraAppIdTest close={()=>setTesting(false)}/>
+    </Suspense>}
   </section>
 }

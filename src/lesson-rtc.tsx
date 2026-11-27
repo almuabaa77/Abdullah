@@ -1,17 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 import type { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, ILocalVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng'
-import type { LessonCredentials, LessonView } from './lessons'
+import type { LessonCredentials, LessonMedia, LessonView } from './lessons'
 import { callDeviceError, useCallDevicePermissions } from './lesson-permissions'
-import { useWorkspace } from './ui'
+import { useWorkspace, type Tr } from './ui'
 
-type Connection = {client:IAgoraRTCClient; credentials:LessonCredentials; scope:string; resumeAudio:()=>void}
+type SessionCredentials = Omit<LessonCredentials,'token'> & {token:string|null}
+type Connection = {client:IAgoraRTCClient; credentials:SessionCredentials; scope:string; resumeAudio:()=>void}
 export type CallDevices = {micId:string;cameraId:string;speakerId:string}
 type Remote = {uid:number|string; track:IRemoteVideoTrack}
+type RtcOptions = {
+  scope:string; enabled:boolean; changing?:boolean; speak:boolean; media:LessonMedia
+  test?:boolean; getCredentials:()=>Promise<SessionCredentials>
+}
 
 export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
-  const {data,lessonRtc,t}=useWorkspace()
+  const {data,lessonRtc}=useWorkspace()
+  const speak=Boolean(lesson.manager||data.user?.role==='teacher'&&['meeting','urgent'].includes(lesson.kind)||lesson.currentStudent===data.user?.id)
+  return useAgoraRtc({
+    scope:[lesson.id,lesson.self?.generation,speak,lesson.media].join(':'),
+    enabled:Boolean(data.lessonHealth?.rtcConfigured&&lesson.status==='live'&&lesson.self?.status==='admitted'),
+    changing:lesson.mediaChanging,speak,media:lesson.media,getCredentials:()=>lessonRtc(lesson.id),
+  },devices)
+}
+
+export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCredentials}:RtcOptions,devices:CallDevices) {
+  const {t}=useWorkspace()
   const [requested,setRequested]=useState(true)
-  const {permissions,report}=useCallDevicePermissions(lesson.media==='video')
+  const {permissions,report}=useCallDevicePermissions(media==='video')
   const [connection,setConnection]=useState<Connection>()
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
@@ -31,13 +46,9 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
   const mic=useRef<IMicrophoneAudioTrack|undefined>(undefined),camera=useRef<ICameraVideoTrack|undefined>(undefined)
   const generation=useRef(0)
   const localAction=useRef(false)
-  const credentials=useRef(lessonRtc)
-  credentials.current=lessonRtc
-  const publishing=lesson.manager||data.user?.role==='teacher'&&['meeting','urgent'].includes(lesson.kind)||lesson.currentStudent===data.user?.id
-  const speak=Boolean(publishing)
-  const scope=[lesson.id,lesson.self?.generation,speak,lesson.media].join(':')
-  const allowed=Boolean(data.lessonHealth?.rtcConfigured&&lesson.status==='live'&&lesson.self?.status==='admitted'
-    &&(!lesson.mediaChanging||connection?.scope===scope)&&isSecureContext&&navigator.mediaDevices)
+  const credentials=useRef(getCredentials)
+  credentials.current=getCredentials
+  const allowed=Boolean(enabled&&(!changing||connection?.scope===scope)&&isSecureContext&&navigator.mediaDevices)
   useEffect(()=>{
     if(!requested||!allowed)return
     const attempt=++generation.current
@@ -49,8 +60,9 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
     const start=async()=>{
       setLoading(true);setError('')
       try{
-        const parameters=await credentials.current(lesson.id)
+        const parameters=await credentials.current()
         if(!active())return
+        if(!test&&!parameters.token)throw new Error(t('تعذر التحقق من إذن دخول الجلسة.','Could not verify the session grant.'))
         const {default:sdk}=await import('agora-rtc-sdk-ng')
         if(!active())return
         sdk.setLogLevel(4)
@@ -58,7 +70,7 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
         const codecs=await sdk.getSupportedCodec().catch(()=>undefined)
         if(!active())return
         const codec=codecs?.video.includes('H264')&&!codecs.video.includes('VP8')?'h264':'vp8'
-        client=sdk.createClient({mode:'live',codec})
+        client=sdk.createClient({mode:test?'rtc':'live',codec})
         const target=client
         target.on('connection-state-change',(next,previous)=>{
           if(!active())return
@@ -115,27 +127,33 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
           setRemote(items=>items.filter(item=>item.uid!==peer.uid))
           setAudioPeers(items=>items.filter(id=>id!==peer.uid))
         })
-        const renew=async()=>{
-          if(renewing||!active())return
-          renewing=true
-          try{
-            const token=await credentials.current(lesson.id)
-            if(active())await target.renewToken(token.token)
-          }catch{
-            if(active()){setRequested(false);setError(t('انتهت صلاحية الاتصال. أعد محاولة الاتصال.','The connection grant expired. Connect again.'))}
-          }finally{renewing=false}
+        if(!test){
+          const renew=async()=>{
+            if(renewing||!active())return
+            renewing=true
+            try{
+              const next=await credentials.current()
+              if(!next.token)throw new Error()
+              if(active())await target.renewToken(next.token)
+            }catch{
+              if(active()){setRequested(false);setError(t('انتهت صلاحية الاتصال. أعد محاولة الاتصال.','The connection grant expired. Connect again.'))}
+            }finally{renewing=false}
+          }
+          target.on('token-privilege-will-expire',()=>void renew())
+          target.on('token-privilege-did-expire',()=>{if(active()){setRequested(false);setError(t('انتهت صلاحية الاتصال. أعد محاولة الاتصال.','The connection grant expired. Connect again.'))}})
+          await target.setClientRole(parameters.audio?'host':'audience')
         }
-        target.on('token-privilege-will-expire',()=>void renew())
-        target.on('token-privilege-did-expire',()=>{if(active()){setRequested(false);setError(t('انتهت صلاحية الاتصال. أعد محاولة الاتصال.','The connection grant expired. Connect again.'))}})
-        await target.setClientRole(parameters.audio?'host':'audience')
         if(!active())return
-        await target.join(parameters.appId,parameters.channel,parameters.token,parameters.uid)
-        if(!active()){void target.leave();return}
+        const uid=await target.join(parameters.appId,parameters.channel,parameters.token,test?null:parameters.uid)
+        if(!active()){void target.leave().catch(()=>{});return}
         target.enableAudioVolumeIndicator()
         refreshPeers()
-        setConnection({client:target,credentials:parameters,scope,resumeAudio:()=>sdk.resumeAudioContext()})
+        setConnection({client:target,credentials:{...parameters,uid:typeof uid==='number'?uid:parameters.uid},scope,resumeAudio:()=>sdk.resumeAudioContext()})
       }catch(error){
-        if(active()){setRequested(false);setError((error as Error).message||t('تعذر الاتصال بالوسائط.','Could not connect to media.'))}
+        if(active()){
+          setRequested(false)
+          setError(test?testConnectionError(error,t):(error as Error).message||t('تعذر الاتصال بالوسائط.','Could not connect to media.'))
+        }
       }finally{if(active())setLoading(false)}
     }
     void start()
@@ -147,7 +165,7 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
       setLocalVideo(undefined);setMicOn(false);setCameraOn(false);setLoading(false);setQuality(0);setNetwork('');setPlaybackBlocked(false)
       if(client)void client.leave().catch(()=>{})
     }
-  },[scope,requested,allowed])
+  },[scope,requested,allowed,test])
 
   useEffect(()=>{
     if(!connection)return
@@ -211,7 +229,7 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
     }finally{localAction.current=false}
   }
   const canPublish=Boolean(connection&&network==='CONNECTED'&&connection.scope===scope&&speak&&connection.credentials.audio)
-  const canVideo=Boolean(canPublish&&connection?.credentials.video&&lesson.media==='video'&&!audioOnly)
+  const canVideo=Boolean(canPublish&&connection?.credentials.video&&media==='video'&&!audioOnly)
   async function switchAudioOnly() {
     if(!audioOnly&&camera.current&&!(await toggle('video')))return
     setAudioOnly(value=>!value)
@@ -223,6 +241,15 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
   }
   return {connection,loading,error,quality,network,remote,levels,audioPeers,peerIds,micOn,cameraOn,localVideo,permissions,
     canPublish,canVideo,allowed,audioOnly,playbackBlocked,resumeAudio,switchAudioOnly,toggle,retry:()=>{setError('');setRequested(true)}}
+}
+
+function testConnectionError(error:unknown,t:Tr) {
+  const failure=error as {code?:string;message?:string}
+  const detail=(failure.code??'')+' '+(failure.message??'')
+  if(/invalid vendor key|invalid app\s*id|cannot find appid|can not find appid/i.test(detail))return t('لم يتعرّف Agora على معرّف المشروع. راجع App ID وحالة المشروع في Agora Console.','Agora did not recognize this App ID. Check the ID and project status in Agora Console.')
+  if(/invalid.?token|token.*(?:required|missing|empty)|dynamic.use.static.key|no.token/i.test(detail))return t('رفض Agora الانضمام بالمعرّف فقط. اختر مشروع اختبار يسمح بـ App ID Only في Agora Console.','Agora rejected App ID-only joining. Use a test project that allows App ID Only in Agora Console.')
+  return failure.code?t('تعذر اتصال اختبار Agora','Could not connect to Agora')+' ('+failure.code+')':
+    failure.message||t('تعذر اتصال اختبار Agora. أعد المحاولة.','Could not connect to Agora. Try again.')
 }
 
 async function routeAudio(track:IRemoteAudioTrack,device:string) {
