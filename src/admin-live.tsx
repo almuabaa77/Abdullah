@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Activity, Bell, ClipboardList, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
-import { circleMeets, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
+import { circleMeets, recordedAssignment, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
 import { Avatar, Badge, dateLabel, Empty, matches, Modal, nameFor, useWorkspace } from './ui'
 import type { RecordStreamStatus } from './live-records'
 
@@ -198,7 +198,8 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
             const attendance=record?.attendance ?? 'pending'
             const progress=statusFor(record)
             const attendanceTarget=availableReminder(student,record,'attendance')
-            const scheduled=record&&(record.nextMemorization.length||record.nextReview.length)?record.nextDate:''
+            const plan=recordedAssignment(data.daily,student.id,date,record)
+            const scheduled=plan.nextDate
             const circle=circles.get(student.circleId)
             return <tr key={student.id}>
               <th scope="row">
@@ -208,9 +209,10 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
               </th>
               <td><time dateTime={date}>{dateLabel(date,en)}</time></td>
               {passages.map(kind=>{
-                const detail=segmentLabel(record?.[kind] ?? [],en)
+                const planned=kind==='nextMemorization'||kind==='nextReview'
+                const detail=segmentLabel(planned?plan[kind].segments:record?.[kind]??[],en)
                 const target=kind==='memorization'||kind==='review'?availableReminder(student,record,kind):undefined
-                return <td key={kind} className={!detail?'live-value-empty':undefined}>{target?reminderControl(target,student,'—',true):detail||'—'}</td>
+                return <td key={kind} className={!detail?'live-value-empty':undefined}>{target?reminderControl(target,student,'—',true):detail?<>{detail}{planned&&plan[kind].incoming&&<small className="assignment-due">{t('مطلوب اليوم','Due today')}</small>}</>:'—'}</td>
               })}
               <td className={!scheduled?'live-value-empty':undefined}>{scheduled?<time dateTime={scheduled}>{dateLabel(scheduled,en)}</time>:'—'}</td>
               <td className="live-attendance" data-attendance={attendance}>

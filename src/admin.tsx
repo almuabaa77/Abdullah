@@ -7,6 +7,7 @@ import type { Circle, Prize, Student, User } from './domain'
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
+import { ChatPage } from './chat'
 import { AdminChats } from './admin-chats'
 import { Exams, Leaves } from './features'
 import { Records } from './records'
@@ -68,6 +69,7 @@ function AdminList<T>({items,render,empty,filtered=false}:{items:T[];render:(ite
 export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;online:boolean}) {
   const {data,t,en,post,tell} = useWorkspace()
   const [tab,setTab] = useState(readTab)
+  const [inbox,setInbox] = useState(()=>new URLSearchParams(location.search).get('inbox')==='1')
   const [edit,setEdit] = useState<Edit>()
   const [scheduled,setScheduled] = useState(false)
   const [query,setQuery] = useState('')
@@ -76,7 +78,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const [menu,setMenu] = useState(false)
   const writing = useRef(false)
   useEffect(()=>{
-    const restore=()=>{setTab(readTab());setQuery('');setAccountFilter('');setMenu(false);setEdit(undefined)}
+    const restore=()=>{setTab(readTab());setInbox(new URLSearchParams(location.search).get('inbox')==='1');setQuery('');setAccountFilter('');setMenu(false);setEdit(undefined)}
     window.addEventListener('popstate',restore)
     return ()=>window.removeEventListener('popstate',restore)
   },[])
@@ -89,6 +91,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
       else url.searchParams.set('section',id)
       history.pushState(null,'',url)
       setTab(id)
+      setInbox(false)
       setQuery('')
       setAccountFilter('')
       window.scrollTo({top:0,behavior:'instant'})
@@ -207,7 +210,13 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         {tab==='records'&&<Records embedded/>}
         {tab==='exams'&&<Exams embedded/>}
         {tab==='leaves'&&<Leaves embedded/>}
-        {tab==='chats'&&<AdminChats/>}
+        {tab==='chats'&&<>
+          <div className="seg-toggle admin-chat-switch">
+            <button type="button" className={inbox?'selected':''} aria-pressed={inbox} onClick={()=>setInbox(true)}>{t('رسائل الإدارة','Administration inbox')}</button>
+            <button type="button" className={!inbox?'selected':''} aria-pressed={!inbox} onClick={()=>setInbox(false)}>{t('الإشراف على المحادثات','Moderation')}</button>
+          </div>
+          {inbox?<ChatPage management/>:<AdminChats/>}
+        </>}
         {tab==='people'&&<AdminList key={query+':'+accountFilter} empty={t('لا توجد حسابات','No accounts')} filtered={Boolean(search||accountFilter)}
           items={data.users.filter(user=>(!accountFilter||user.status===accountFilter)
             &&(includes(user.name,user.phone)||!!phone&&normalizeMobile(user.phone??'')===phone))}

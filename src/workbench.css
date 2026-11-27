@@ -598,3 +598,14 @@ body {background:var(--bg)}
 @media(prefers-reduced-motion:reduce) {.notice-timer svg {animation:none}}
 .notifications .notice-more {display:flex;width:100%;margin-block:6px}
 .notice-copy {overflow-wrap:anywhere}
+
+.messenger-tabs {grid-template-columns:repeat(5,minmax(0,1fr))}
+.messenger-tabs > button {position:relative}
+.messenger-tabs .messenger-unread {position:absolute;inset-block-start:2px;inset-inline-end:2px;font-size:.64rem}
+.chat-role-icon {display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:#edf3ef;color:#31674f;flex:none}
+.message-sender {display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.chat-role {padding:1px 5px;border-radius:5px;background:#edf3ef;color:#31674f;font-size:.69rem}
+.chat-role[data-role=student],.chat-role-icon[data-role=student] {background:#fff2d7;color:#795024}
+.chat-role[data-role=parent],.chat-role-icon[data-role=parent] {background:#e9f0fb;color:#355377}
+.chat-role[data-role=admin],.chat-role-icon[data-role=admin] {background:#ede8f8;color:#604d7e}
+.chat-invitation {display:grid;gap:7px;padding:12px;margin-bottom:7px}

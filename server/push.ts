@@ -15,6 +15,7 @@ const alertDescriptions:Record<string,[string,string]>={
   daily:['هناك تحديث في سجل الحلقة.','There is an update to a circle record.'],
   attendance:['هناك تحديث في الحضور.','There is an attendance update.'],
   'record-reminder':['لديك تنبيه من الإدارة لمراجعة سجل طالب.','Administration requested that you review a student record.'],
+  'group-invitation':['لديك دعوة للانضمام إلى مجموعة الحلقة.','You have an invitation to join a circle group.'],
   message:['لديك رسالة جديدة.','You have a new message.'],
   call:['لديك مكالمة واردة.','You have an incoming call.'],
   'chat-report':['هناك بلاغ محادثة بانتظار المراجعة.','A conversation report is awaiting review.'],
@@ -52,12 +53,13 @@ function target(user:User,notice?:Notice) {
   const kind=notice?.kind
   if(user.role==='teacher'&&notice?.recordReminder)return '/?reminder='+encodeURIComponent(notice.id)+'#records'
   if(user.role==='admin') {
-    if(kind==='message'||kind==='chat-report')return '/admin?section=chats'
+    if(kind==='message')return '/admin?section=chats&inbox=1'
+    if(kind==='chat-report')return '/admin?section=chats'
     if(kind==='exam')return '/admin?section=exams'
     if(kind==='link')return '/admin?section=links'
     return '/admin'
   }
-  if(kind==='message'||kind==='call')return '/#chat'
+  if(kind==='message'||kind==='call'||kind==='group-invitation')return '/#chat'
   if(kind==='exam')return '/#exams'
   if(kind==='link'&&user.role==='parent')return '/#more'
   if(kind==='leave')return '/#leaves'

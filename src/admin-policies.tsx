@@ -13,6 +13,7 @@ export function PolicySettings({save,busy}:{save:(action:string,values:Record<st
     t('محادثة ولي الأمر مع محفّظ الابن المرتبط','Guardian and linked child’s teacher'),
     t('المحادثات الجماعية للحلقات','Circle group conversations'),
     t('المكالمات الصوتية','Voice calls'),t('المكالمات المرئية','Video calls'),
+    t('المحادثات بين المحفّظين','Teacher-to-teacher messages'),t('مراسلة الإدارة للطالب وولي الأمر','Student and guardian messages with administration'),
   ]
   function submit(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -26,7 +27,7 @@ export function PolicySettings({save,busy}:{save:(action:string,values:Record<st
     </section>
     <section className="policy-panel record-tile"><h3><MessageCircle size={19}/>{t('قنوات التواصل','Communication channels')}</h3>
       <label className="check-line"><input name="chat" type="checkbox" checked={chat} onChange={event=>setChat(event.target.checked)}/>{t('السماح بالتواصل','Enable communication')}</label>
-      <div className="policy-options">{communicationKeys.map((key,index)=><label className="check-line" key={key}><input type="checkbox" name={key} defaultChecked={(data.rules.communication??defaultCommunication)[key]}/>{permissions[index]}</label>)}</div>
+      <div className="policy-options">{communicationKeys.map((key,index)=><label className="check-line" key={key}><input type="checkbox" name={key} defaultChecked={({...defaultCommunication,...data.rules.communication})[key]}/>{permissions[index]}</label>)}</div>
     </section>
     <div><button className="btn btn-primary" disabled={busy}>{t('حفظ الإعدادات','Save settings')}</button></div>
   </form>

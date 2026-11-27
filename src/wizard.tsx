@@ -91,7 +91,11 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
   const validateSchedule = () => {
     const nextMemorization=validateSegments(draft.nextMemorization),nextReview=validateSegments(draft.nextReview)
     if ((nextMemorization.length||nextReview.length)&&(!draft.nextDate||draft.nextDate<=date||!circleMeets(draft.nextDate,circle))) throw new Error(t('اختر تاريخًا قادمًا يوافق أحد أيام الحلقة.','Choose a future date on a circle day.'))
-    return {nextMemorization,nextReview,nextDate:draft.nextDate}
+    return {
+      nextDate:draft.nextDate,
+      ...(!sameSegments(base.nextMemorization,nextMemorization)?{nextMemorization}:{}),
+      ...(!sameSegments(base.nextReview,nextReview)?{nextReview}:{}),
+    }
   }
   const save = async (continueNext=false) => {
     setBusy(true);setError('')

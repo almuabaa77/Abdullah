@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CalendarDays, Download, FileText, LayoutList, Printer, Table2 } from 'lucide-react'
-import { circleMeets, dayOffset, segmentLabel, statusFor, type Student, type Daily } from './domain'
+import { circleMeets, recordedAssignment, dayOffset, segmentLabel, statusFor, type Student, type Daily } from './domain'
 import { Badge, Brand, dateLabel, Empty, matches, nameFor, statusText, useWorkspace } from './ui'
 
 export function Records({embedded=false}:{embedded?:boolean}={}) {
@@ -22,11 +22,16 @@ export function Records({embedded=false}:{embedded?:boolean}={}) {
   const selectedCircle = data.circles.find(c=>c.id===circle) || (data.circles.length===1?data.circles[0]:undefined)
   const closed = data.closed.includes(selectedCircle?.id+'/'+date)
   const columns = [t('الطالب','Student'),t('التاريخ','Date'),t('الحفظ الجديد','Memorization'),t('المراجعة','Revision'),t('الحفظ المجدول','Assigned memorization'),t('المراجعة المجدولة','Assigned revision'),t('موعد الجدولة','Assignment date'),t('الحضور','Attendance'),t('النقاط','Points'),t('الإنجاز','Completion')]
-  const rowValues = rows.map(({s,d,date})=>[
-    nameFor(s,en),date,segmentLabel(d?.memorization??[],en),segmentLabel(d?.review??[],en),
-    segmentLabel(d?.nextMemorization??[],en),segmentLabel(d?.nextReview??[],en),
-    d&&(d.nextMemorization.length||d.nextReview.length)?d.nextDate:'',statusText(d?.attendance||'pending',t),d?.points??0,statusText(statusFor(d),t),
-  ])
+  const rowValues = rows.map(({s,d,date})=>{
+    const plan=recordedAssignment(data.daily,s.id,date,d)
+    const passage=(kind:'nextMemorization'|'nextReview')=>{
+      const text=segmentLabel(plan[kind].segments,en)
+      return text&&plan[kind].incoming?text+' · '+t('مطلوب اليوم','Due today'):text
+    }
+    return [nameFor(s,en),date,segmentLabel(d?.memorization??[],en),segmentLabel(d?.review??[],en),
+      passage('nextMemorization'),passage('nextReview'),plan.nextDate,
+      statusText(d?.attendance||'pending',t),d?.points??0,statusText(statusFor(d),t)]
+  })
   const edit = (s:Student,d:Daily|undefined,date:string) => open(s,d?'edit':'recite',{date})
   const closeDay = async () => {
     if(!selectedCircle||!window.confirm(t('سيُسجّل الغياب للطلاب الذين لم يُسجّل حضورهم. هل تريد إغلاق اليوم؟','Unmarked students will be marked absent. Close the day?')))return

@@ -276,6 +276,18 @@ function App() {
       go('records')
       open(target,mode,{date},circleId,field)
     }
+    if(notice.kind==='group-invitation'&&workspaceVisible){
+      sessionStorage.setItem('halaqat-group-invitations','1')
+      window.dispatchEvent(new Event('halaqat-group-invitations'))
+      go('chat')
+    }
+    if(notice.kind==='message'){
+      if(workspaceVisible)go('chat')
+      else if(adminAccess){
+        history.pushState(null,'','/admin?section=chats&inbox=1')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      }
+    }
     if(notice.kind==='exam'&&workspaceVisible)go('exams')
     if(notice.kind==='link'&&data.user?.role==='parent')go('more')
     if(!notice.readBy.includes(data.user?.id||''))void post('notice-read',{id:notice.id}).catch(e=>tell(e.message,true))

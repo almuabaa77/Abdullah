@@ -8,8 +8,11 @@ export function recordChanges(previous: Daily, next: Daily) {
   const moved = previous.nextDate!==next.nextDate
   if (memorizationChanged(previous,next)) changes.push('memorization')
   if (reviewChanged(previous,next)) changes.push('review')
-  if (!sameSegments(previous.nextMemorization,next.nextMemorization) || moved && next.nextMemorization.length) changes.push('nextMemorization')
-  if (!sameSegments(previous.nextReview,next.nextReview) || moved && next.nextReview.length) changes.push('nextReview')
+  for(const field of ['nextMemorization','nextReview'] as const) {
+    const cleared=Boolean(next.clearedAssignment?.includes(field))
+    const wasCleared=Boolean(previous.clearedAssignment?.includes(field))
+    if(cleared!==wasCleared||!sameSegments(previous[field],next[field])||moved&&next[field].length)changes.push(field)
+  }
   if (previous.attendance!==next.attendance || previous.attendanceSource!==next.attendanceSource) changes.push('attendance')
   if (previous.points!==next.points || previous.bonus!==next.bonus) changes.push('points')
   if (previous.note!==next.note) changes.push('note')

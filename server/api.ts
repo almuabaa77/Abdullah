@@ -1,3 +1,4 @@
+import { activeAccount, chatAccess, chatCanSend, directContext, groupEligible, groupMessages } from './chat-access'
 import { announcementVisible } from './announcements'
 import { scheduleAssessment } from './assessment'
 import { asciiDigits, groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
@@ -106,29 +107,12 @@ const scope = (s: State, u: User) => s.students.filter(st => u.role === 'admin'
   || (st.active && (u.role === 'teacher' && s.circles.some(c => c.id === st.circleId && c.teacherId === u.id)
   || u.role === 'student' && u.studentId === st.id
   || u.role === 'parent' && s.links.some(l => l.parentId === u.id && l.studentId === st.id && l.status === 'accepted'))))
-function chatAllowed(state:State,chat:Pick<Chat,'circleId'|'students'|'members'>,user:User) {
-  if(!state.rules.chat)return false
-  const access=state.rules.communication??defaultCommunication
-  if(chat.circleId){
-    const circle=state.circles.find(item=>item.id===chat.circleId)
-    return access.circleChat&&Boolean(circle&&(circle.teacherId===user.id||scope(state,user).some(student=>student.circleId===circle.id)))
-  }
-  const student=state.students.find(item=>item.active&&chat.students.includes(item.id))
-  if(!student||!chat.members.includes(user.id))return false
-  const teacherId=state.circles.find(circle=>circle.id===student.circleId)?.teacherId
-  if(!teacherId||!chat.members.includes(teacherId))return false
-  const other=state.users.find(account=>account.id!==teacherId&&chat.members.includes(account.id))
-  if(!other||other.status!=='active'||other.duplicateOf)return false
-  if(other.role==='parent')return access.guardianDirect&&state.links.some(link=>link.parentId===other.id&&link.studentId===student.id&&link.status==='accepted')
-  return access.studentDirect&&other.role==='student'&&other.studentId===student.id
-}
-const chatVisible = (chat: Chat, user: User, ids: Set<string>, enabled: boolean) => user.role === 'admin' || enabled && (chat.members.includes(user.id) || Boolean(chat.circleId) && chat.students.some(id => ids.has(id)))
 function currentCall(state:State,call:ChatCall):ChatCall {
   const status=callState(call)
   const chat=state.chats.find(item=>item.id===call.chatId)
   if(status==='ringing'||status==='accepted') {
     const caller=state.users.find(user=>user.id===call.from)
-    const peer=chat&&caller&&chatAllowed(state,chat,caller)&&(state.rules.communication??defaultCommunication)[call.mode]&&callPeer(chat,call.from)===call.to
+    const peer=chat&&caller&&chatCanSend(state,chat,caller)&&({...defaultCommunication,...state.rules.communication})[call.mode]&&callPeer(chat,call.from)===call.to
     const participants=state.users.filter(user=>[call.from,call.to].includes(user.id)&&user.status==='active'&&!user.duplicateOf)
     if(peer&&participants.length===2)return call
     return {...call,status:'ended',offer:undefined,answer:undefined}
@@ -152,9 +136,13 @@ export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:st
   if(notice.announcement&&user.role==='admin'||noticeExpiresAt(notice)<=Date.now())return false
   const students=notice.announcement||notice.recordReminder||notice.studentId&&!notice.users?scope(state,user):[]
   const ids=new Set(students.map(student=>student.id))
+  if(notice.chatInvitationId) {
+    const chat=state.chats.find(item=>item.id===notice.chatInvitationId)
+    if(!chat||chat.group?.invites[user.id]?.status!=='pending'||!groupEligible(state,chat,user)||!state.rules.chat||state.rules.communication?.circleChat===false)return false
+  }
   return announcementVisible(notice,state,user,students)&&!notice.announcement?.withdrawn&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
 }
-function project(state: State, user: User | null, revision: number, phoneEnabled: boolean): View {
+function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string): View {
   if (!user || user.status !== 'active') {
     const { operations: _discardEmpty, closedAccounts: _closedAccounts, ...emptyView } = createState()
     return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
@@ -167,11 +155,21 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     return roster
   }
   const assignedCircles=new Set(state.circles.filter(circle=>circle.teacherId===user.id).map(circle=>circle.id))
-  const chats = state.chats.filter(c => chatVisible(c, user, ids, state.rules.chat))
-  const participants = new Set(chats.flatMap(c => [ ...c.members, ...c.messages.map(m => m.from) ]))
+  const chats = state.chats.filter(chat=>user.role==='admin'||chatAccess(state,chat,user))
+  const contacts=state.users.flatMap(other=>{
+    if(other.role==='admin'&&adminUid&&other.id!==adminUid)return []
+    const context=directContext(state,user,other)
+    const name=other.role==='student'?state.students.find(student=>student.id===other.studentId)?.name??other.name:other.name
+    return context?[{id:other.id,name,role:other.role,circleNames:context.circles.map(circle=>circle.name)}]:[]
+  })
+  const invitations=state.rules.chat&&(state.rules.communication?.circleChat??true)?state.chats.flatMap(chat=>{
+    if(chat.group?.invites[user.id]?.status!=='pending'||!groupEligible(state,chat,user))return []
+    return [{id:chat.id,title:chat.title,circleName:state.circles.find(circle=>circle.id===chat.circleId)?.name??'',audience:chat.group.audience,posting:chat.group.posting}]
+  }):[]
+  const participants = new Set(chats.flatMap(chat=>[...(chat.group?state.users.filter(account=>chatAccess(state,chat,account)).map(account=>account.id):chat.members),...groupMessages(chat,user).map(message=>message.from)]))
   const isAdmin = user.role === 'admin'
   return {
-    user, revision, phoneEnabled, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
+    user, revision, phoneEnabled, chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
@@ -182,7 +180,8 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     recordReminders:isAdmin?state.notices.filter(notice=>notice.recordReminder&&notice.users?.[0]).slice(0,300)
       .map(notice=>({...notice.recordReminder!,teacherId:notice.users![0],time:notice.time})):undefined,
     calls:state.calls?.filter(call=>call.from===user.id||call.to===user.id).slice(0,50).map(call=>currentCall(state,call)),
-    notices: state.notices.filter(notice => (notice.kind==='announcement'||noticeExpiresAt(notice)>Date.now()) && announcementVisible(notice,state,user,students)&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state))
+    notices: state.notices.filter(notice => (notice.kind==='announcement'||noticeExpiresAt(notice)>Date.now()) && announcementVisible(notice,state,user,students)&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
+      &&(!notice.chatInvitationId||invitations.some(invitation=>invitation.id===notice.chatInvitationId)))
       .map(notice=>{
         if(isAdmin||notice.kind!=='announcement')return notice
         const meta=notice.announcement
@@ -197,7 +196,15 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     exams: state.exams.filter(e => e.studentIds.some(id => ids.has(id))).map(e => ({ ...e, studentIds: e.studentIds.filter(id => ids.has(id)), results: Object.fromEntries(Object.entries(e.results).filter(([id]) => ids.has(id))),
       extensions:e.extensions&&Object.fromEntries(Object.entries(e.extensions).filter(([id])=>ids.has(id))) })),
     leaves: state.leaves.filter(l => ids.has(l.studentId)), rules: state.rules, audit: isAdmin ? state.audit.slice(-160).reverse() : [],
-    chats: chats.map(c => isAdmin ? c : ({ ...c, students: c.students.filter(id => ids.has(id)), reports: [], pinnedBy: c.pinnedBy.filter(id => id === user.id), blocked: Boolean(c.blockedBy.length), blockedBy: c.blockedBy.filter(id => id === user.id), locked:c.locked||!chatAllowed(state,c,user),messages:c.messages.filter(message=>!message.hiddenAt) })),
+    chats: chats.map(chat=>{
+      if(isAdmin)return chat
+      const members=chat.group?state.users.filter(account=>chatAccess(state,chat,account)).map(account=>account.id):chat.members
+      return {...chat,members,students:chat.students.filter(id=>ids.has(id)),reports:[],
+        group:chat.group&&{...chat.group,invites:{}},pinnedBy:chat.pinnedBy.filter(id=>id===user.id),
+        blocked:chat.group?chat.blockedBy.includes(user.id):Boolean(chat.blockedBy.length),
+        blockedBy:chat.blockedBy.filter(id=>id===user.id),locked:!chatCanSend(state,chat,user)&&!chat.blockedBy.includes(user.id),
+        messages:groupMessages(chat,user)}
+    }),
   }
 }
 async function identify(request: Request, env: Env): Promise<Identity | null> {
@@ -311,8 +318,15 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
         throw new ApiError('سبق تسجيل هذا الجزء للطالب اليوم. افتح تعديل السجل لتصحيح البيانات.',409)
       }
       if (p.nextDate) d.nextDate = validDate(p.nextDate)
+      const cleared=new Set(d.nextDate===previous.nextDate?previous.clearedAssignment??[]:[])
+      const assigned=state.daily.filter(item=>item.studentId===s.id&&item.date<=date&&item.nextDate===d.nextDate)
+      for(const field of ['nextMemorization','nextReview'] as const)if(p[field]!==undefined) {
+        if(d[field].length)cleared.delete(field)
+        else if(assigned.some(item=>item[field].length))cleared.add(field)
+      }
+      d.clearedAssignment=cleared.size?[...cleared]:undefined
       const scheduleChanged = recordChanges(previous,d).some(change=>change==='nextMemorization'||change==='nextReview')
-      if (scheduleChanged && (d.nextMemorization.length || d.nextReview.length) && (d.nextDate <= date || !circleMeets(d.nextDate, circle))) throw new ApiError('اختر موعدًا قادمًا يصادف يوم انعقاد الحلقة')
+      if (scheduleChanged && (d.nextMemorization.length || d.nextReview.length || d.clearedAssignment?.length) && (d.nextDate <= date || !circleMeets(d.nextDate, circle))) throw new ApiError('اختر موعدًا قادمًا يصادف يوم انعقاد الحلقة')
       if (p.note !== undefined) d.note = clean(p.note, 400)
       if (p.bonus !== undefined) d.bonus = integer(p.bonus, -100, 100)
       const explicit=p.attendance===undefined?undefined:choice(p.attendance,['present','absent','excused','leave','pending'] as const)
@@ -452,21 +466,64 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       break
     }
     case 'chat-open': {
-      if (!state.rules.chat) deny()
-      const s = student(), teacher = circleOf(s)?.teacherId
-      if (!teacher) throw new ApiError('لا يوجد محفظ معين للحلقة')
-      const learner=state.users.find(x=>x.studentId===s.id&&x.role==='student'&&x.status==='active'&&!x.duplicateOf)
-      const members=[...new Set([u.id,teacher,...(isStaff(u)&&learner?[learner.id]:[])])].sort()
-      if(!chatAllowed(state,{students:[s.id],members},u))return deny('المحادثة غير متاحة وفق صلاحيات التواصل')
-      if (!state.chats.some(c => c.students.length === 1 && c.students[0] === s.id && c.members.slice().sort().join() === members.join()))
-        state.chats.unshift({id:op,students:[s.id], members, title:s.name, reports:[],pinnedBy:[],blockedBy:[],messages:[]})
+      const learner=p.targetId?undefined:student()
+      const peerId=p.targetId??(u.role==='teacher'?state.users.find(account=>account.role==='student'&&account.studentId===learner?.id&&activeAccount(account))?.id:circleOf(learner!)?.teacherId)
+      const peer=state.users.find(account=>account.id===peerId)
+      if(!peer||peer.role==='admin'&&configuredAdmin&&peer.id!==configuredAdmin)return deny('جهة الاتصال غير متاحة')
+      const context=directContext(state,u,peer)
+      if(!context)return deny('المحادثة غير متاحة وفق صلاحيات التواصل')
+      const members=[u.id,peer.id].sort()
+      if(state.chats.some(chat=>!chat.circleId&&chat.members.length===2&&members.every(id=>chat.members.includes(id))))return false
+      state.chats.unshift({id:op,students:context.students,members,title:peer.name,reports:[],pinnedBy:[],blockedBy:[],messages:[]})
+      return
+    }
+    case 'group-create':
+    case 'group-settings':
+    case 'group-invite': {
+      if(u.role!=='teacher'||!state.rules.chat||state.rules.communication?.circleChat===false)return deny()
+      const creating=action==='group-create'
+      const existing=creating?undefined:state.chats.find(chat=>chat.id===p.id&&chat.group)
+      const circle=state.circles.find(item=>item.id===(creating?p.circleId:existing?.circleId)&&item.teacherId===u.id)
+      if(!circle)return deny('الحلقة خارج نطاق صلاحيتك')
+      const chat:Chat=existing??{id:op,circleId:circle.id,students:[],members:[u.id],title:'',reports:[],pinnedBy:[],blockedBy:[],messages:[],
+        group:{audience:choice(p.audience,['students','circle'] as const),posting:'everyone',invites:{}}}
+      if(action!=='group-invite'){
+        chat.title=required(p.title,80)
+        chat.group!.posting=choice(p.posting,['everyone','staff'] as const)
+      }
+      if(creating)state.chats.unshift(chat)
+      if(action!=='group-settings'){
+        const time=new Date().toISOString()
+        for(const account of state.users.filter(account=>account.id!==u.id&&groupEligible(state,chat,account)&&!chat.group!.invites[account.id])) {
+          chat.group!.invites[account.id]={status:'pending',at:time}
+          state.notices.unshift({id:idFor(),kind:'group-invitation',title:'دعوة للانضمام إلى مجموعة الحلقة',en:'Invitation to join a circle group',
+            body:chat.title,time,users:[account.id],readBy:[],chatInvitationId:chat.id})
+        }
+      }
+      return
+    }
+    case 'group-respond':
+    case 'group-leave': {
+      const chat=state.chats.find(item=>item.id===p.id&&item.group)
+      const invitation=chat?.group?.invites[u.id]
+      if(!chat||!invitation||!groupEligible(state,chat,u))return deny()
+      if(action==='group-leave'){
+        if(invitation.status!=='accepted')return deny()
+        invitation.status='left'
+        chat.members=chat.members.filter(id=>id!==u.id)
+      } else {
+        if(!state.rules.chat||state.rules.communication?.circleChat===false||invitation.status!=='pending')return deny()
+        invitation.status=choice(p.status,['accepted','declined'] as const)
+        if(invitation.status==='accepted'&&!chat.members.includes(u.id))chat.members.push(u.id)
+      }
+      invitation.at=new Date().toISOString()
       return
     }
     case 'call-start': {
       const chat=state.chats.find(item=>item.id===p.id)
       const to=chat&&callPeer(chat,u.id)
       const mode=choice(p.mode,['audio','video'] as const)
-      if(!(state.rules.communication??defaultCommunication)[mode]||u.role==='admin'||!chat||!chatAllowed(state,chat,u)||!to||!state.users.some(user=>user.id===to&&user.role!=='admin'&&user.status==='active'&&!user.duplicateOf))return deny('الاتصال غير متاح لهذه المحادثة')
+      if(!(state.rules.communication??defaultCommunication)[mode]||u.role==='admin'||!chat||!chatCanSend(state,chat,u)||!to||!state.users.some(user=>user.id===to&&user.role!=='admin'&&user.status==='active'&&!user.duplicateOf))return deny('الاتصال غير متاح لهذه المحادثة')
       const calls=(state.calls??[]).map(call=>currentCall(state,call))
       if(calls.some(call=>[call.from,call.to].some(id=>id===u.id||id===to)&&(call.status==='ringing'||call.status==='accepted'))){
         throw new ApiError('أحد المشاركين لديه مكالمة سارية',409)
@@ -525,18 +582,18 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     case 'chat-pin':
     case 'chat-report':
     case 'chat-block': {
-      const chat = state.chats.find(c => c.id === p.id && chatVisible(c,u,ids,state.rules.chat))
+      const chat = state.chats.find(c => c.id === p.id && chatAccess(state,c,u))
       if (!chat) throw new ApiError('المحادثة غير متاحة')
       if (action === 'message') {
-        if (!chatAllowed(state,chat,u) || chat.locked || chat.blockedBy.length) deny('إرسال الرسائل غير متاح لهذه المحادثة')
+        if (!chatCanSend(state,chat,u)) deny('إرسال الرسائل غير متاح لهذه المحادثة')
         const reply = clean(p.reply,50)
-        if (reply && !chat.messages.some(m => m.id === reply && !m.hiddenAt)) throw new ApiError('الرسالة غير متاحة')
+        if (reply && !groupMessages(chat,u).some(m => m.id === reply)) throw new ApiError('الرسالة غير متاحة')
         const message = required(p.text, 3000)
         chat.messages.push({ id:op,from:u.id,text:message,time:new Date().toISOString(),reply:reply || undefined, readBy:[u.id] })
-        const users = state.users.filter(x => x.id !== u.id && x.status === 'active' && chatVisible(chat,x,new Set(scope(state,x).map(s=>s.id)),state.rules.chat) && chatAllowed(state,chat,x)).map(x=>x.id)
+        const users = state.users.filter(x => x.id !== u.id && chatAccess(state,chat,x)&&!chat.blockedBy.includes(x.id)).map(x=>x.id)
         notify(state,'message','رسالة جديدة',chat.title,{users})
       }
-      if (action === 'chat-read') for (const msg of chat.messages) if (!msg.readBy.includes(u.id)) msg.readBy.push(u.id)
+      if (action === 'chat-read') for (const msg of groupMessages(chat,u)) if (!msg.readBy.includes(u.id)) msg.readBy.push(u.id)
       if (action === 'chat-pin') chat.pinnedBy = chat.pinnedBy.includes(u.id) ? chat.pinnedBy.filter(x => x !== u.id) : [...chat.pinnedBy,u.id]
       if (action === 'chat-block') chat.blockedBy = chat.blockedBy.includes(u.id) ? chat.blockedBy.filter(x => x !== u.id) : [...chat.blockedBy,u.id]
       if (action === 'chat-report' && !chat.reports.includes(u.id)) {
@@ -670,9 +727,8 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const idx=state.circles.findIndex(x=>x.id===id)
       const circle = { id, name:required(p.name),teacherId,days,holidays:Array.isArray(p.holidays) ? [...new Set(p.holidays.map(validDate))] : [],autoExam:state.circles[idx]?.autoExam }
       if (idx < 0) state.circles.push(circle); else state.circles[idx] = circle
-      const group = state.chats.find(c => c.circleId === circle.id)
+      const group = state.chats.find(c => c.circleId === circle.id&&!c.group)
       if (group) {group.title=circle.name;group.members=[teacherId]}
-      else state.chats.push({id:idFor(),circleId:circle.id,title:circle.name,students:[],members:[teacherId],reports:[],pinnedBy:[],blockedBy:[],messages:[]})
       break
     }
     case 'circle-assessment': {
@@ -884,7 +940,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return new Response(null,{status:204,headers})
       }
       if (get || state.operations.includes(operationKey)) {
-        const view=project(state,user,current.revision,phoneEnabled)
+        const view=project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID)
         if(!user&&identity.phone) {
           view.verifiedPhone=identity.phone
           view.enrollmentCircles=state.circles.map(({id,name})=>({id,name}))
@@ -892,11 +948,11 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return Response.json(view,{headers})
       }
       const previousNotices=state.notices.length
-      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
+      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID),{headers})
       state.operations.push(operationKey)
       if (!(await repo.write(identity.workspace,current.revision,state,state.notices.slice(0,state.notices.length-previousNotices).filter(notice=>!notice.announcement||notice.announcement.publishedAt)))) continue
       user = state.users.find(x => x.id === identity.id) ?? null
-      return Response.json(project(state,user,current.revision + 1,phoneEnabled),{headers})
+      return Response.json(project(state,user,current.revision + 1,phoneEnabled,env.BOOTSTRAP_UID),{headers})
     }
     throw new ApiError('حدث تحديث متزامن، أعد المحاولة',409)
   } catch (error) {

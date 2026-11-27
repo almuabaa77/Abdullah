@@ -280,3 +280,8 @@ body:has(.live-register-expanded) {overflow:hidden}
 .announcement-admin-row,.family-review-row {display:grid;gap:7px}
 .announcement-admin-row .btn,.family-review-row .btn {justify-self:start}
 .announcement-admin-row small {display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
+
+.assignment-due {display:block;margin-top:2px;color:var(--green);font-size:.7rem}
+.admin-chat-switch {margin-bottom:10px;display:inline-flex}
+.admin-inbox {display:flex;flex-direction:column;min-height:350px;height:min(70dvh,680px);border:1px solid var(--border);border-radius:12px;min-width:0}
+.admin-inbox .messenger-tabs {grid-template-columns:repeat(2,minmax(0,1fr))}

@@ -12,7 +12,7 @@ export type Student = StudentDetails & { id: string; name: string; latin?: strin
 export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
   memorizationStatus: Result; reviewStatus: Result; nextMemorization: Segment[]; nextReview: Segment[]
-  nextDate: string; attendance: Attendance; attendanceSource?:'automatic'|'manual'; points: number; bonus: number; note: string
+  nextDate: string; clearedAssignment?:('nextMemorization'|'nextReview')[]; attendance: Attendance; attendanceSource?:'automatic'|'manual'; points: number; bonus: number; note: string
   version?: number; updatedAt?: string
 }
 export type RecordSection = 'memorization' | 'review' | 'nextMemorization' | 'nextReview' | 'attendance' | 'points' | 'note'
@@ -24,7 +24,7 @@ export type SentReminder = RecordReminder & { teacherId:string; time:string }
 export const announcementAudiences = ['all','circle','student','parent'] as const
 export const announcementSources = ['administration','circles','student-affairs'] as const
 export type Announcement = { audience:typeof announcementAudiences[number]; source:typeof announcementSources[number]; targetId?:string; publishAt:string; publishedAt?:string; withdrawn?:boolean; dismissedBy?:string[] }
-export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; announcement?:Announcement; readBy: string[] }
+export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; chatInvitationId?:string; announcement?:Announcement; readBy: string[] }
 export const noticeLifetime=24*60*60_000
 export const noticeExpiresAt=(notice:Notice)=>Date.parse(notice.announcement?.publishedAt??notice.time)+noticeLifetime
 
@@ -35,7 +35,10 @@ export type Order = { id: string; studentId: string; prizeId: string; name: stri
 export type ExamExtension = { date:string; reason:string; status:'pending'|'accepted'|'declined' }
 export type Exam = { id: string; name: string; date: string; place: string; scope: string; studentIds: string[]; results: Record<string, { score: number; feedback: string }>; time?:string; autoThreshold?:number; circleId?:string; extensions?:Record<string,ExamExtension> }
 export type Audit = { time: string; actor: string; action: string; target?: string; before?: number; after?: number }
-export type Chat = { id: string; circleId?: string; students: string[]; members: string[]; title: string; reports: string[]; pinnedBy: string[]; blockedBy: string[]; messages: Message[]; locked?: boolean; blocked?: boolean }
+export type ChatGroup = { audience:'students'|'circle'; posting:'everyone'|'staff'; invites:Record<string,{status:'pending'|'accepted'|'declined'|'left'; at:string}> }
+export type ChatContact = {id:string;name:string;role:Role;circleNames:string[]}
+export type ChatInvitation = {id:string;title:string;circleName:string;audience:ChatGroup['audience'];posting:ChatGroup['posting']}
+export type Chat = { group?:ChatGroup; id: string; circleId?: string; students: string[]; members: string[]; title: string; reports: string[]; pinnedBy: string[]; blockedBy: string[]; messages: Message[]; locked?: boolean; blocked?: boolean }
 export type Message = { id: string; from: string; text: string; time: string; reply?: string; readBy: string[]; hiddenAt?: string }
 export type ChatCall = {
   id:string; chatId:string; from:string; to:string; mode:'audio'|'video'; status:'ringing'|'accepted'|'declined'|'ended'|'missed';
@@ -51,16 +54,16 @@ export function callPeer(chat:Chat,userId:string) {
   if(chat.circleId||chat.locked||chat.blocked||chat.blockedBy.length||chat.members.length!==2||!chat.members.includes(userId))return undefined
   return chat.members.find(id=>id!==userId)
 }
-export const communicationKeys = ['studentDirect','guardianDirect','circleChat','audio','video'] as const
+export const communicationKeys = ['studentDirect','guardianDirect','circleChat','audio','video','staffDirect','adminDirect'] as const
 export type Communication = Record<typeof communicationKeys[number],boolean>
-export const defaultCommunication:Communication = {studentDirect:true,guardianDirect:true,circleChat:true,audio:true,video:true}
+export const defaultCommunication:Communication = {studentDirect:true,guardianDirect:true,circleChat:true,audio:true,video:true,staffDirect:true,adminDirect:true}
 export type State = {
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]
   rules: { memorization: number; review: number; attendance: number; chat: boolean; communication?:Communication }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 export function examDateFor(exam:Exam,studentId:string) {
   const request=exam.extensions?.[studentId]
@@ -160,10 +163,23 @@ export function emptyDaily(studentId: string, date: string, circle?: Circle): Da
     memorizationStatus: 'none', reviewStatus: 'none', nextDate: nextCircleDate(date, circle), attendance: 'pending', points: 0, bonus: 0, note: '' }
 }
 export function assignmentFor(records: Daily[], studentId: string, date: string) {
-  return records.reduce<Daily|undefined>((latest,record) => {
-    if (record.studentId!==studentId || record.date>=date || record.nextDate!==date || !(record.nextMemorization.length || record.nextReview.length)) return latest
-    return !latest || record.date>latest.date ? record : latest
-  },undefined)
+  const sources=records.filter(record=>record.studentId===studentId&&record.date<date&&record.nextDate===date
+    &&(record.nextMemorization.length||record.nextReview.length||record.clearedAssignment?.length))
+    .sort((left,right)=>right.date.localeCompare(left.date))
+  const memorization=sources.find(record=>record.nextMemorization.length||record.clearedAssignment?.includes('nextMemorization'))
+  const review=sources.find(record=>record.nextReview.length||record.clearedAssignment?.includes('nextReview'))
+  if(!sources.length)return undefined
+  return {...sources[0],nextMemorization:memorization?.nextMemorization??[],nextReview:review?.nextReview??[]}
+}
+export function recordedAssignment(records:Daily[],studentId:string,date:string,record?:Daily) {
+  const due=assignmentFor(records,studentId,date)
+  const field=(key:'nextMemorization'|'nextReview')=>{
+    if(record?.[key].length)return {segments:record[key],incoming:false}
+    return {segments:due?.[key]??[],incoming:Boolean(due?.[key].length)}
+  }
+  const nextMemorization=field('nextMemorization'),nextReview=field('nextReview')
+  const hasOutgoing=Boolean(record&&(record.nextMemorization.length||record.nextReview.length))
+  return {nextMemorization,nextReview,nextDate:hasOutgoing?record!.nextDate:nextMemorization.incoming||nextReview.incoming?date:''}
 }
 export function recitationAssignment(records:Daily[],studentId:string,date:string,circle?:Circle) {
   const scheduled=assignmentFor(records,studentId,date)
