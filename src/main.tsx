@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, Menu, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
-import { idFor, type Daily, type Student, type View } from './domain'
+import { callState, idFor, type Daily, type Student, type View } from './domain'
 import { Context, Brand, Empty, Modal, RoleName, type Page, type Tr, type WizardMode } from './ui'
 import { Dashboard, StudentHome } from './dashboard'
 import { EntryWizard } from './wizard'
@@ -285,6 +285,18 @@ function App() {
   ] as const
   const assistantOpen=Boolean(workspaceVisible&&teacher&&page==='assistant')
   const chatOpen=workspaceVisible&&page==='chat'
+  const teacherNavigation=workspaceVisible&&data.user?.role==='teacher'&&!chatOpen
+  const incomingCall=workspaceVisible&&!chatOpen&&data.calls?.some(call=>call.to===data.user?.id&&callState(call)==='ringing')
+  const activeChatCall=chatOpen&&data.calls?.some(call=>{
+    const status=callState(call)
+    return status==='ringing'||status==='accepted'&&Date.now()-Date.parse(call.updatedAt)<30_000
+  })
+  useEffect(()=>{if(chatOpen)refreshWorkspace.current()},[chatOpen])
+  useEffect(()=>{
+    if(!activeChatCall)return
+    const timer=window.setInterval(()=>refreshWorkspace.current(),1750)
+    return ()=>window.clearInterval(timer)
+  },[activeChatCall])
   const label=[...nav,...extras].find(([p])=>p===page)?.[2]||t('الرئيسية','Home')
   const userName=data.sample&&en?({admin:'Abdulrahman Al-Sarhan',teacher:'Abdulrahman Al-Sarhan',student:'Abdullah Al-Shehri',parent:'Student guardian'} as Record<string,string>)[role]:data.user?.name
   const workspace = {data,en,t,post,go,tell,open}
@@ -312,7 +324,7 @@ function App() {
       ? <div className="panel"><Empty title={t('صلاحية الإدارة مطلوبة','Administration access required')} body={t('يمكنك المتابعة باستخدام حساب مدير معتمد.','Use an authorized administration account to continue.')} action={token?<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>:undefined}/></div>
       : <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/></div>}><PhoneSignIn {...phoneProps} administration/></Suspense>
   return <Context.Provider value={workspace}>
-    <div data-role={show?data.user?.role:undefined} className={['app-shell',workspaceVisible?'':'intro-shell',assistantOpen?'assistant-shell':'',chatOpen?'chat-shell':'',adminPage&&adminAccess?'admin-shell':''].filter(Boolean).join(' ')}>
+    <div data-role={show?data.user?.role:undefined} className={['app-shell',workspaceVisible?'':'intro-shell',assistantOpen?'assistant-shell':'',chatOpen?'chat-shell':'',teacherNavigation?'teacher-navigation':'',adminPage&&adminAccess?'admin-shell':''].filter(Boolean).join(' ')}>
       {workspaceVisible&&<aside className="sidebar">
         <button className="brand-button" onClick={()=>go('home')} aria-label={t('الصفحة الرئيسية','Home')}><Brand/></button>
         <div className="sidebar-divider"/>
@@ -332,7 +344,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-title">{workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
           <div className="topbar-actions">
-            {workspaceVisible&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
+            {workspaceVisible&&!teacherNavigation&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {(workspaceVisible||adminAccess)&&<>
               {!token&&<button type="button" className="phone-topbar" onClick={openPhone} aria-label={t('الدخول أو التسجيل بالجوال','Sign in or register by phone')}><Smartphone size={17}/><span>{t('الدخول بالجوال','Mobile sign-in')}</span></button>}
@@ -352,11 +364,18 @@ function App() {
         </header>
         <main className={'main-content'+(assistantOpen?' assistant-content':'')+(chatOpen?' chat-main':'')} id="main">
           {availableUpdate&&!phone&&(!adminPage||token)&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
+          {incomingCall&&<div className="update-banner" role="status"><span>{t('لديك مكالمة واردة','You have an incoming call')}</span>
+            <button className="btn btn-outline compact" type="button" onClick={()=>go('chat')}>{t('فتح الدردشة','Open chat')}</button></div>}
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
           {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone}/>:
-          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>
+      {teacherNavigation&&<nav className="teacher-bottom-nav" aria-label={t('قائمة المحفّظ السفلية','Teacher bottom navigation')}>
+        {nav.map(([item,Icon,title])=><button key={item} type="button" aria-current={item===page?'page':undefined} aria-label={title} onClick={()=>go(item)}>
+          <Icon size={21}/><span>{item==='assistant'?t('المساعد','Assistant'):title}</span>
+        </button>)}
+      </nav>}
       {workspaceVisible&&openPanel==='navigation'&&<Modal title={t('القائمة الرئيسية','Main navigation')} close={()=>setOpenPanel('')} appearance="mobile-menu"><nav className="modal-body mobile-menu-links">{[...nav,...extras].map(([p,Icon,title])=><button type="button" key={p} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={19}/>{title}</button>)}</nav></Modal>}
     </div>
     {permissions&&show&&token&&<DevicePermissions token={token} close={()=>setPermissions(false)}/>}

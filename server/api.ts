@@ -1,5 +1,5 @@
 import { groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
-import { balanceFor, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type Daily, type Exam, type Notice, type Role, type State, type Student, type User, type View } from '../src/domain'
+import { balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type ChatCall, type Daily, type Exam, type Notice, type Role, type State, type Student, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
@@ -50,6 +50,21 @@ const scope = (s: State, u: User) => s.students.filter(st => u.role === 'admin'
   || u.role === 'student' && u.studentId === st.id
   || u.role === 'parent' && s.links.some(l => l.parentId === u.id && l.studentId === st.id && l.status === 'accepted'))))
 const chatVisible = (chat: Chat, user: User, ids: Set<string>, enabled: boolean) => user.role === 'admin' || enabled && (chat.members.includes(user.id) || Boolean(chat.circleId) && chat.students.some(id => ids.has(id)))
+function currentCall(state:State,call:ChatCall):ChatCall {
+  const status=callState(call)
+  const chat=state.chats.find(item=>item.id===call.chatId)
+  if(status==='ringing'||status==='accepted') {
+    const peer=state.rules.chat&&chat&&callPeer(chat,call.from)===call.to
+    const participants=state.users.filter(user=>[call.from,call.to].includes(user.id)&&user.status==='active'&&!user.duplicateOf)
+    if(peer&&participants.length===2)return call
+    return {...call,status:'ended',offer:undefined,answer:undefined}
+  }
+  return {...call,status,offer:undefined,answer:undefined}
+}
+function callDescription(value:unknown) {
+  if(typeof value!=='string'||value.length>24_000||!/^v=0\r?\n/.test(value)||!/^m=(audio|video) /m.test(value))throw new ApiError('بيانات اتصال المكالمة غير صالحة')
+  return value
+}
 const noticeVisible = (notice:Notice,user:User,ids:Set<string>) => notice.users?.includes(user.id) || (!notice.users && (!notice.studentId || ids.has(notice.studentId)))
 export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:string) {
   if(user.status!=='active'||user.duplicateOf||user.role==='admin'&&user.id!==adminUid)return false
@@ -73,6 +88,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
     recordEvents: isAdmin ? state.recordEvents?.slice(0,100) : undefined,
+    calls:state.calls?.filter(call=>call.from===user.id||call.to===user.id).slice(0,50).map(call=>currentCall(state,call)),
     notices: state.notices.filter(notice => noticeVisible(notice,user,ids)),
     links: state.links.filter(l => isAdmin || l.parentId === user.id).map(l => isAdmin || l.status === 'accepted' ? l : {...l, studentId: ''}),
     prizes: state.prizes.filter(p => isAdmin || p.active), orders: state.orders.filter(o => isAdmin || user.role === 'student' && ids.has(o.studentId)),
@@ -291,6 +307,40 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const members = [...new Set([u.id, teacher, ...(state.users.find(x => x.studentId === s.id && x.role === 'student' && x.status === 'active') && isStaff(u) ? [state.users.find(x => x.studentId === s.id && x.role === 'student' && x.status === 'active')!.id] : [])])].sort()
       if (!state.chats.some(c => c.students.length === 1 && c.students[0] === s.id && c.members.slice().sort().join() === members.join()))
         state.chats.unshift({id:op,students:[s.id], members, title:s.name, reports:[],pinnedBy:[],blockedBy:[],messages:[]})
+      return
+    }
+    case 'call-start': {
+      const chat=state.chats.find(item=>item.id===p.id)
+      const to=chat&&callPeer(chat,u.id)
+      if(!state.rules.chat||u.role==='admin'||!chat||!to||!state.users.some(user=>user.id===to&&user.role!=='admin'&&user.status==='active'&&!user.duplicateOf))return deny('الاتصال غير متاح لهذه المحادثة')
+      const calls=(state.calls??[]).map(call=>currentCall(state,call))
+      if(calls.some(call=>[call.from,call.to].some(id=>id===u.id||id===to)&&(call.status==='ringing'||call.status==='accepted'))){
+        throw new ApiError('أحد المشاركين لديه مكالمة سارية',409)
+      }
+      const time=new Date().toISOString()
+      const call:ChatCall={id:op,chatId:chat.id,from:u.id,to,mode:choice(p.mode,['audio','video'] as const),status:'ringing',startedAt:time,updatedAt:time,offer:callDescription(p.offer)}
+      const active=calls.filter(item=>item.status==='ringing'||item.status==='accepted')
+      const past=calls.filter(item=>item.status!=='ringing'&&item.status!=='accepted').slice(0,500)
+      state.calls=[call,...[...active,...past].sort((a,b)=>b.startedAt.localeCompare(a.startedAt))]
+      notify(state,'call','مكالمة واردة','افتح قسم المكالمات للرد.',{users:[to]})
+      return
+    }
+    case 'call-answer':
+    case 'call-end': {
+      const stored=state.calls?.find(item=>item.id===p.id&&(item.from===u.id||item.to===u.id))
+      if(!stored)return deny('المكالمة غير متاحة')
+      const call=currentCall(state,stored)
+      if(action==='call-answer') {
+        if(call.to!==u.id||call.status!=='ringing')return deny('انتهت دعوة المكالمة')
+        stored.answer=callDescription(p.answer)
+        stored.status='accepted'
+      } else {
+        if(call.status!=='ringing'&&call.status!=='accepted')return false
+        stored.status=call.to===u.id&&call.status==='ringing'?'declined':'ended'
+        delete stored.offer
+        delete stored.answer
+      }
+      stored.updatedAt=new Date().toISOString()
       return
     }
     case 'chat-moderate': {

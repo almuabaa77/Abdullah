@@ -5,14 +5,18 @@ import { Avatar, dateLabel, nameFor, statusText, useWorkspace } from './ui'
 import { parseCommand, type Intent } from './assistant-command'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
 
-type Exchange = {id:number; command:string; intent?:Intent; student?:Student; preset?:Partial<Daily>; error?:string}
+type Exchange = {id:number; command:string; intent?:Intent; student?:Student; preset?:Partial<Daily>; candidates?:Student[]; error?:string}
 
 export function Assistant() {
   const {t,data,en,open,go} = useWorkspace()
   const [text,setText] = useState('')
   const [exchanges,setExchanges] = useState<Exchange[]>([])
   const [view,setView] = useState<'assistant'|'students'>('assistant')
-  const [circleId,setCircleId] = useState('')
+  const [circleId,setCircleId] = useState(()=>{
+    const selected=sessionStorage.getItem('halaqat-assistant-circle')
+    sessionStorage.removeItem('halaqat-assistant-circle')
+    return selected&&data.circles.some(circle=>circle.id===selected)?selected:''
+  })
   const conversation = useRef<HTMLDivElement>(null)
   const counter = useRef(0)
   const students = data.students.filter(s=>s.active&&(!circleId||s.circleId===circleId))
@@ -44,7 +48,10 @@ export function Assistant() {
     const query=command.trim()
     if(!query)return
     setText('')
-    try{append(query,parseCommand(query,students))}
+    try {
+      const previous=exchanges.findLast(exchange=>exchange.student)?.student
+      append(query,parseCommand(query,students,previous))
+    }
     catch{append(query,{error:t('تحقق من أرقام الآيات وتداخل المقاطع، ثم أعد إرسال الأمر.','Check the verse numbers and overlapping segments, then try again.')})}
   }
 
@@ -54,7 +61,9 @@ export function Assistant() {
     open(student,intent==='remaining'?'recite':intent,preset)
   }
   const last = exchanges.at(-1)
-  const example = t('سجّل تسميع عبدالله سورة النبأ من 37 إلى 40','Record Abdullah Al-Naba from 37 to 40')
+  const exampleStudent=todayStudents[0]
+  const example=exampleStudent?t(`سجّل حفظ ${nameFor(exampleStudent,en)} سورة النبأ من 37 إلى 40 وراجع النازعات من 1 إلى 4`,
+    `Record memorization for ${nameFor(exampleStudent,en)} Al-Naba from 37 to 40 and review Al-Naziat from 1 to 4`):''
   return <div className="recitation-workspace">
     <header className="workbench-hero">
       <div className="workbench-hero-art"/>
@@ -79,12 +88,19 @@ export function Assistant() {
           {!exchanges.length&&<div className="workbench-start">
             <div className="workbench-welcome"><span className="workbench-welcome-icon"><Sparkles size={25}/></span><h2>{t('كيف تريد المتابعة اليوم؟','What would you like to do today?')}</h2><p>{t('ابدأ بإحدى العمليات السريعة أو اكتب طلبك باسم الطالب.','Start with a quick action or write a request with a student’s name.')}</p></div>
             <div className="workbench-actions">{shortcuts.map(([intent,Icon,title,desc,tint])=><button className="workbench-action" key={intent} onClick={()=>append(title,{intent})}><span className={'stat-icon tint-'+tint}><Icon size={21}/></span><span><strong>{title}</strong><small>{desc}</small></span></button>)}</div>
-            <button className="example-command" type="button" onClick={()=>setText(example)}><MessageSquare size={15}/><span>{example}</span></button>
+            {example&&<button className="example-command" type="button" onClick={()=>setText(example)}><MessageSquare size={15}/><span>{example}</span></button>}
           </div>}
           {exchanges.map(exchange=>{
             const student=exchange.student
             const assignment=student&&assignmentFor(data.daily,student.id,data.date)
-            const segments=exchange.preset?.memorization||exchange.preset?.review||exchange.preset?.nextMemorization||exchange.preset?.nextReview
+            const segments=[
+              [t('الحفظ المذكور','Requested memorization'),exchange.preset?.memorization],
+              [t('المراجعة المذكورة','Requested revision'),exchange.preset?.review],
+              [t('الحفظ القادم','Upcoming memorization'),exchange.preset?.nextMemorization],
+              [t('المراجعة القادمة','Upcoming revision'),exchange.preset?.nextReview],
+            ] as const
+            const pool=exchange.intent==='remaining'?remaining:exchange.intent==='report'?students:todayStudents
+            const candidates=exchange.candidates?pool.filter(item=>exchange.candidates!.some(candidate=>candidate.id===item.id)):pool
             return <article key={exchange.id} className="workbench-exchange">
               <p className="workbench-user-message">{exchange.command}</p>
               <div className="workbench-reply"><span className="bot-icon"><Sparkles size={17}/></span><div className="workbench-answer">
@@ -92,14 +108,14 @@ export function Assistant() {
                   <div className="assistant-review-name"><Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><span>{t('راجع البيانات قبل اعتمادها','Review before confirming')}</span></div><RecitationBadge record={today.get(student.id)}/></div>
                   {!!assignment?.nextMemorization.length&&exchange.intent!=='review'&&<p><strong>{t('الحفظ المجدول لليوم','Today’s assigned memorization')}</strong> · {segmentLabel(assignment.nextMemorization,en)}</p>}
                   {!!assignment?.nextReview.length&&<p><strong>{t('المراجعة المجدولة لليوم','Today’s assigned revision')}</strong> · {segmentLabel(assignment.nextReview,en)}</p>}
-                  {!!segments?.length&&<p><strong>{t('المقاطع','Segments')}</strong> · {segmentLabel(segments,en)}</p>}
+                  {segments.map(([label,items])=>items?.length?<p key={label}><strong>{label}</strong> · {segmentLabel(items,en)}</p>:null)}
                   {exchange.preset?.attendance&&<p>{statusText(exchange.preset.attendance,t)}</p>}
                   {exchange.preset?.bonus!==undefined&&<p>{t('تعديل النقاط','Points adjustment')} · {exchange.preset.bonus}</p>}
                   <button className="btn btn-primary compact" disabled={exchange.intent!=='report'&&!meetingCircles.has(student.circleId)} onClick={()=>openEntry(student,exchange.intent!,exchange.preset)}>{exchange.intent==='report'?t('فتح التقرير','Open report'):t('مراجعة العملية','Review entry')}</button>
                   {exchange.intent!=='report'&&!meetingCircles.has(student.circleId)&&<small className="muted">{t('الحلقة لا تنعقد اليوم','This circle does not meet today')}</small>}
                 </div>:<>
-                  <strong>{exchange.intent==='remaining'?t(`${remaining.length} طلاب بانتظار إتمام التسميع`,`${remaining.length} students to recite`):t('اختر الطالب','Select a student')}</strong>
-                  {last?.id===exchange.id&&<StudentPicker key={exchange.id+circleId} compact students={exchange.intent==='remaining'?remaining:exchange.intent==='report'?students:todayStudents} defaultFilter={exchange.intent==='recite'||exchange.intent==='remaining'?'due':'all'} select={s=>select(exchange.id,s)}/>}
+                  <strong>{exchange.intent==='remaining'?t(`${remaining.length} طلاب بانتظار إتمام التسميع`,`${remaining.length} students to recite`):exchange.candidates?t('وجدت أكثر من طالب بهذا الاسم. اختر المقصود.','Several students match that name. Select the intended student.'):t('اختر الطالب','Select a student')}</strong>
+                  {last?.id===exchange.id&&<StudentPicker key={exchange.id+circleId} compact students={candidates} defaultFilter={!exchange.candidates&&(exchange.intent==='recite'||exchange.intent==='remaining')?'due':'all'} select={s=>select(exchange.id,s)}/>}
                 </>}
               </div></div>
             </article>

@@ -15,6 +15,7 @@ const alertDescriptions:Record<string,[string,string]>={
   daily:['هناك تحديث في سجل الحلقة.','There is an update to a circle record.'],
   attendance:['هناك تحديث في الحضور.','There is an attendance update.'],
   message:['لديك رسالة جديدة.','You have a new message.'],
+  call:['لديك مكالمة واردة.','You have an incoming call.'],
   'chat-report':['هناك بلاغ محادثة بانتظار المراجعة.','A conversation report is awaiting review.'],
   leave:['هناك تحديث يتعلق بالاستئذان.','There is a leave request update.'],
   link:['هناك تحديث في طلب ربط حساب.','There is an account link update.'],
@@ -48,7 +49,7 @@ function subscriptionFor(input:unknown):webPush.PushSubscription {
 
 function target(user:User,kind?:string) {
   if(user.role==='admin')return kind==='message'||kind==='chat-report'?'/admin?section=chats':'/admin'
-  if(kind==='message')return '/#chat'
+  if(kind==='message'||kind==='call')return '/#chat'
   if(kind==='exam')return '/#exams'
   if(kind==='leave')return '/#leaves'
   if(kind==='daily'||kind==='attendance')return '/#records'
@@ -165,7 +166,7 @@ export function backgroundPush(database:()=>Promise<Pool>,adminUid?:string) {
             :['وصل تنبيه الاختبار إلى هذا الجهاز.','Background notifications are working on this device.']
           const body=description[en?1:0]
           const payload=JSON.stringify({title:en?'Al-Khair Quran Circles':'حلقات جامع الخير',body,url:target(user,kind),tag:delivery.id.slice(0,20)})
-          await webPush.sendNotification(subscription,payload,{TTL:300,timeout:8000,topic:delivery.id.slice(0,24),vapidDetails:{...credentials,subject}})
+          await webPush.sendNotification(subscription,payload,{TTL:kind==='call'?60:300,timeout:8000,topic:delivery.id.slice(0,24),vapidDetails:{...credentials,subject}})
           await finish()
         } catch(error) {
           const status=(error as {statusCode?:number}).statusCode

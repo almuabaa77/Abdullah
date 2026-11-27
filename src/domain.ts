@@ -23,11 +23,25 @@ export type Exam = { id: string; name: string; date: string; place: string; scop
 export type Audit = { time: string; actor: string; action: string; target?: string; before?: number; after?: number }
 export type Chat = { id: string; circleId?: string; students: string[]; members: string[]; title: string; reports: string[]; pinnedBy: string[]; blockedBy: string[]; messages: Message[]; locked?: boolean; blocked?: boolean }
 export type Message = { id: string; from: string; text: string; time: string; reply?: string; readBy: string[]; hiddenAt?: string }
+export type ChatCall = {
+  id:string; chatId:string; from:string; to:string; mode:'audio'|'video'; status:'ringing'|'accepted'|'declined'|'ended'|'missed';
+  startedAt:string; updatedAt:string; offer?:string; answer?:string
+}
+export function callState(call:ChatCall,now=Date.now()):ChatCall['status'] {
+  const age=now-Date.parse(call.updatedAt)
+  if(call.status==='ringing'&&age>90_000)return 'missed'
+  if(call.status==='accepted'&&age>7_200_000)return 'ended'
+  return call.status
+}
+export function callPeer(chat:Chat,userId:string) {
+  if(chat.circleId||chat.locked||chat.blocked||chat.blockedBy.length||chat.members.length!==2||!chat.members.includes(userId))return undefined
+  return chat.members.find(id=>id!==userId)
+}
 export type State = {
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]
   rules: { memorization: number; review: number; attendance: number; chat: boolean }; chats: Chat[]; audit: Audit[]
-  operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]
+  operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
 export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 

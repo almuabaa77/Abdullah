@@ -13,6 +13,7 @@ export function Dashboard() {
   const [query,setQuery] = useState('')
   const [filter,setFilter] = useState<RosterFilter>('all')
   const [overflow,setOverflow] = useState('')
+  const [limit,setLimit] = useState(24)
   const circle = data.circles.find(c=>c.id===circleId) || data.circles[0]
   const meeting = Boolean(circle && circleMeets(data.date,circle))
   const records = useMemo(()=>new Map(data.daily.filter(record=>record.date===data.date).map(record=>[record.studentId,record])),[data.daily,data.date])
@@ -28,7 +29,7 @@ export function Dashboard() {
     filter==='all' || filter==='present'&&record?.attendance==='present' ||
     filter==='incomplete'&&statusFor(record)!=='complete' || filter==='due'&&meeting&&isRecitationDue(record) || status===filter
   )).sort((a,b)=>recitationOrder[a.status]-recitationOrder[b.status])
-  const changeFilter = (value:RosterFilter) => {setFilter(value);setOverflow('')}
+  const changeFilter = (value:RosterFilter) => {setFilter(value);setOverflow('');setLimit(24)}
   const metrics = [
     ['all',Users,t('طلاب الحلقة','Circle students'),students.length,'green'],
     ['present',UserCheck,t('حاضرون','Present'),present,'blue'],
@@ -38,7 +39,7 @@ export function Dashboard() {
   const name = data.sample && en ? 'Abdulrahman' : data.user?.name
   const canRecord = meeting&&students.length>0
   return <div className="teacher-dashboard page-stack">
-    <section className="panel teacher-overview">
+    <section className="panel teacher-overview teacher-today">
       <div className="teacher-heading">
         <div>
           <p className="teacher-date"><CalendarDays size={15}/>{dateLabel(data.date,en,true)}</p>
@@ -53,7 +54,7 @@ export function Dashboard() {
       <div className="teacher-actions">
         <button className="btn btn-primary" disabled={!canRecord} onClick={()=>open(undefined,'recite',undefined,circle?.id)}><Plus size={17}/>{t('تسجيل تسميع','Record recitation')}</button>
         <button className="btn btn-outline" disabled={!canRecord} onClick={()=>open(undefined,'attendance',undefined,circle?.id)}><UserCheck size={17}/>{t('تسجيل الحضور','Record attendance')}</button>
-        <button className="btn btn-outline" onClick={()=>go('assistant')}><Sparkles size={17}/>{t('المساعد الذكي','Smart assistant')}</button>
+        <button className="btn btn-outline" onClick={()=>{if(circle)sessionStorage.setItem('halaqat-assistant-circle',circle.id);go('assistant')}}><Sparkles size={17}/>{t('المساعد الذكي','Smart assistant')}</button>
       </div>
     </section>
     <div className="teacher-metrics" aria-label={t('تصفية الطلاب بحسب مؤشرات اليوم','Filter students by today’s activity')}>
@@ -74,14 +75,14 @@ export function Dashboard() {
       </div>
       {circle&&!meeting&&<div className="hint-line"><CalendarDays size={15}/>{t('اليوم إجازة للحلقة','The circle is off today')}</div>}
       <div className="toolbar teacher-roster-tools">
-        <label className="search"><Search size={17}/><input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder={t('ابحث باسم الطالب','Search by student name')} aria-label={t('ابحث عن طالب','Search students')}/></label>
+        <label className="search"><Search size={17}/><input type="search" value={query} onChange={event=>{setQuery(event.target.value);setLimit(24)}} placeholder={t('ابحث باسم الطالب','Search by student name')} aria-label={t('ابحث عن طالب','Search students')}/></label>
         <label className="circle-picker filter-picker"><ListFilter size={17}/><select value={filter} onChange={event=>changeFilter(event.target.value as RosterFilter)} aria-label={t('تصفية الطلاب','Filter students')}>
           <option value="all">{t('كل الحالات','All statuses')}</option><option value="present">{t('الحاضرون','Present')}</option><option value="incomplete">{t('غير المكتملين','Incomplete')}</option>
           <option value="due">{t('بانتظار التسميع','To recite')}</option><option value="complete">{t('أتمّوا التسميع','Recited')}</option><option value="partial">{t('تسميع جزئي','Partial')}</option>
           <option value="awaiting">{t('لم يسمّع بعد','Awaiting recitation')}</option><option value="absent">{t('غائب','Absent')}</option><option value="leave">{t('مستأذن','On leave')}</option>
         </select><ChevronDown size={14}/></label>
       </div>
-      <div className="roster-list">{visible.map(({student,record,status})=><article className={'student-row row-'+status} key={student.id}>
+      <div className="roster-list">{visible.slice(0,limit).map(({student,record,status})=><article className={'student-row row-'+status} key={student.id}>
         <div className="student-top">
           <button className="student-name" disabled={!meeting} onClick={()=>open(student)}><Avatar student={student}/><span>{nameFor(student,en)}{status==='complete'&&<CircleCheck size={15} className="complete-mark"/>}</span></button>
           <div className="student-right"><RecitationBadge record={record}/>{meeting&&<div className="relative">
@@ -91,6 +92,9 @@ export function Dashboard() {
         </div>
         <StudentIndicators record={record}/>
       </article>)}
+      {visible.length>limit&&<button type="button" className="btn btn-outline teacher-roster-more" onClick={()=>setLimit(n=>n+24)}>
+        {t('عرض طلاب إضافيين','Show more students')}
+      </button>}
       {!visible.length&&<Empty title={!students.length?t('لا يوجد طلاب في الحلقة','No students in this circle'):t('لا توجد نتائج مطابقة','No matching students')} action={students.length>0&&<button className="btn btn-outline compact" onClick={()=>{setQuery('');changeFilter('all')}}>{t('عرض جميع الطلاب','Show all students')}</button>}/>}
       </div>
     </section>
