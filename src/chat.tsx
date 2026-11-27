@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, CalendarDays, Check, Flag, MailPlus, LockKeyhole, MessageCircle, Phone, Pin, Plus, Reply, Search, Send, Settings, Users, Video, X } from 'lucide-react'
-import { callPeer, defaultCommunication, idFor, type Chat, type ChatContact, type Role } from './domain'
+import { ArrowLeft, BookOpen, CalendarDays, Check, Flag, LoaderCircle, MailPlus, LockKeyhole, MessageCircle, Phone, Pin, Plus, Reply, Search, Send, Settings, Users, Video, X } from 'lucide-react'
+import { callPeer, defaultCommunication, idFor, type Chat, type Role } from './domain'
 import { Empty, Modal, normal, RoleName, useWorkspace } from './ui'
 import { useCallClock } from './lesson-call'
 import { lessonClosed, lessonInAgenda } from './lessons'
@@ -21,6 +21,7 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   const [previews,setPreviews]=useState(()=>localStorage.getItem(previewKey)!=='off')
   const [tab,setTab]=useState<ChatTab>(()=>!management&&(data.chatInvitations?.length||sessionStorage.getItem('halaqat-group-invitations'))?'groups':'messages')
   const [contactQuery,setContactQuery]=useState('')
+  const [contactRole,setContactRole]=useState<Role|''>('')
   const [contactLimit,setContactLimit]=useState(24)
   const calling=useChatCalls()
   const [selected,setSelected] = useState('')
@@ -30,7 +31,7 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   const [searching,setSearching] = useState(false)
   const [sending,setSending] = useState(false)
   const [choose,setChoose] = useState(false)
-  const [opening,setOpening] = useState(false)
+  const [opening,setOpening] = useState('')
   const [target,setTarget] = useState('')
   const [groupEditor,setGroupEditor] = useState<{chat?:Chat}>()
   const groupAction=useRef(false)
@@ -56,7 +57,9 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   const draft = (chat && drafts[chat.id]) || emptyDraft
   const byMessage = new Map(chat?.messages.map(message=>[message.id,message]))
   const allContacts=(data.chatContacts??[]).slice().sort((a,b)=>a.name.localeCompare(b.name,en?'en':'ar'))
-  const contacts=allContacts.filter(account=>normal(account.name+' '+account.circleNames.join(' ')).includes(normal(contactQuery)))
+  const searchContacts=normal(contactQuery)
+  const contacts=allContacts.filter(account=>(!contactRole||account.role===contactRole)
+    &&normal([account.name,t(...contactRoles[account.role]),...account.circleNames].join(' ')).includes(searchContacts))
   const invites=data.chatInvitations??[]
   const groups=chats.filter(item=>Boolean(item.circleId))
   const contact=chat&&accounts.get(callPeer(chat,user)??'')
@@ -120,13 +123,13 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   }
   async function locateContact(targetId:string) {
     if(!targetId||opening||!canUseContacts)return
-    setOpening(true)
+    setOpening(targetId)
     try {
       const result=await post('chat-open',{targetId})
       const match=result.chats.find(item=>!item.circleId&&item.members.length===2&&item.members.includes(user)&&item.members.includes(targetId))
       if(match){openThread(match.id);setTab('messages')}
       setChoose(false)
-    } catch(error) {tell((error as Error).message,true)} finally {setOpening(false)}
+    } catch(error) {tell((error as Error).message,true)} finally {setOpening('')}
   }
   async function manageGroup(action:string,payload:Record<string,unknown>,openId?:string) {
     if(groupAction.current)return
@@ -148,27 +151,42 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
     const values=Object.fromEntries(new FormData(event.currentTarget))
     void manageGroup(groupEditor?.chat?'group-settings':'group-create',{...values,id:groupEditor?.chat?.id})
   }
-  const contactDetails=(peer:ChatContact)=> <>
-    <RoleName role={peer.role}/>{peer.circleNames.length>0&&' · '+peer.circleNames.join('، ')}
-  </>
-
   return <div className={management?"messenger-workspace admin-inbox":"messenger-workspace"}>
     {tab==='calls'&&<>
       <div className="lesson-call-launch"><button className="btn btn-outline compact" type="button" onClick={()=>go('lessons')}><CalendarDays size={18}/>{t('جلسات التسميع والتقويم','Live sessions and calendar')}</button></div>
       <ChatCallList {...calling} openChats={()=>setTab('messages')}/>
     </>}
-    {tab==='contacts'&&<section className="messenger-tab-content">
-      <h2>{t('جهات اتصال الحلقة','Circle contacts')}</h2>
-      <label className="search"><Search size={17}/><input type="search" aria-label={t('البحث في جهات الاتصال','Search contacts')}
-        placeholder={t('ابحث بالاسم أو الحلقة','Search by name or circle')} value={contactQuery} onChange={event=>{setContactQuery(event.target.value);setContactLimit(24)}}/></label>
-      {contacts.slice(0,contactLimit).map(peer=><div className="messenger-contact" key={peer.id}>
-        <span className="chat-role-icon" data-role={peer.role}><Users size={18}/></span><div><strong>{peer.name}</strong><p>{contactDetails(peer)}</p></div>
-        <button className="btn btn-outline compact" type="button" disabled={opening||!canUseContacts} onClick={()=>void locateContact(peer.id)}>
-          <MessageCircle size={16}/>{t('محادثة','Chat')}
+    {tab==='contacts'&&<section className="messenger-tab-content contact-directory">
+      <header className="contact-directory-head"><span className="stat-icon tint-green"><Users size={21}/></span>
+        <div><h2>{t('جهات الاتصال','Contacts')}</h2><small aria-live="polite">{t(`${contacts.length} جهة اتصال`,`${contacts.length} contacts`)}</small></div>
+      </header>
+      <div className="contact-directory-tools">
+        <label className="search"><Search size={17}/><input type="search" aria-label={t('البحث في جهات الاتصال','Search contacts')}
+          placeholder={t('ابحث بالاسم أو الحلقة','Search by name or circle')} value={contactQuery} onChange={event=>{setContactQuery(event.target.value);setContactLimit(24)}}/></label>
+        <select aria-label={t('تصفية جهات الاتصال حسب الدور','Filter contacts by role')} value={contactRole}
+          onChange={event=>{setContactRole(event.target.value as Role|'');setContactLimit(24)}}>
+          <option value="">{t('كل الأدوار','All roles')}</option>
+          {Object.entries(contactRoles).filter(([role])=>allContacts.some(peer=>peer.role===role)).map(([role,[ar,english]])=>
+            <option key={role} value={role}>{t(ar,english)}</option>)}
+        </select>
+      </div>
+      {contacts.length>0&&<div className="contact-directory-grid">{contacts.slice(0,contactLimit).map(peer=><article className="messenger-contact" key={peer.id}>
+        <div className="contact-card-person">
+          <span aria-hidden="true" className="chat-role-icon" data-role={peer.role}>
+            {peer.name.trim().split(/\s+/).slice(0,2).map(word=>Array.from(word)[0]).join('')}
+          </span>
+          <div><h3 dir="auto">{peer.name}</h3><span className="chat-role" data-role={peer.role}><RoleName role={peer.role}/></span></div>
+        </div>
+        {peer.circleNames.length>0&&<p className="contact-card-circles"><BookOpen size={15} aria-hidden="true"/>
+          <span>{peer.circleNames.join(t('، ', ', '))}</span></p>}
+        <button className="btn btn-outline compact" type="button" disabled={Boolean(opening)||!canUseContacts}
+          aria-label={t(`محادثة مع ${peer.name}`,`Chat with ${peer.name}`)} onClick={()=>void locateContact(peer.id)}>
+          {opening===peer.id?<LoaderCircle size={16} className="spinner"/>:<MessageCircle size={16}/>}
+          {opening===peer.id?t('جارٍ الفتح…','Opening…'):t('محادثة','Chat')}
         </button>
-      </div>)}
-      {!contacts.length&&<Empty title={t('لا توجد جهات اتصال مطابقة','No matching contacts')}/>}
-      {contacts.length>contactLimit&&<button className="btn btn-outline compact" type="button" onClick={()=>setContactLimit(contactLimit+24)}>{t('عرض المزيد','Show more')}</button>}
+      </article>)}</div>}
+      {!contacts.length&&<Empty title={contactQuery||contactRole?t('لا توجد جهات اتصال مطابقة','No matching contacts'):t('لا توجد جهات اتصال متاحة','No contacts available')}/>}
+      {contacts.length>contactLimit&&<button className="btn btn-outline compact" type="button" onClick={()=>setContactLimit(n=>n+24)}>{t('عرض المزيد','Show more')}</button>}
     </section>}
     {tab==='groups'&&<section className="messenger-tab-content">
       <header className="section-title"><h2>{t('مجموعات الحلقات','Circle groups')}</h2>{canCreateGroup&&
@@ -257,7 +275,7 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
       </footer>
     </>:<Empty title={t('اختر محادثة','Select a conversation')} body={t('اختر محادثة من القائمة لعرض الرسائل.','Choose a conversation to view its messages.')}/>}</div>
     {choose&&<Modal title={t('محادثة جديدة','New conversation')} close={()=>{if(!opening)setChoose(false)}}><form onSubmit={openConversation}><div className="modal-body"><label>{t('المستلم','Recipient')}<select required value={target} onChange={event=>setTarget(event.target.value)}><option value="">{t('اختر جهة الاتصال','Choose a contact')}</option>
-      {allContacts.map(peer=><option key={peer.id} value={peer.id}>{peer.name} · {t(...contactRoles[peer.role])}</option>)}</select></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={!target||opening}>{t('فتح المحادثة','Open conversation')}</button></div></form></Modal>}
+      {allContacts.map(peer=><option key={peer.id} value={peer.id}>{peer.name} · {t(...contactRoles[peer.role])}</option>)}</select></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={!target||Boolean(opening)}>{t('فتح المحادثة','Open conversation')}</button></div></form></Modal>}
   </section>}
     <nav className="messenger-tabs" aria-label={t('أقسام الدردشة','Messaging sections')}>
       {tabs.filter(([id])=>!management||id==='messages'||id==='contacts').map(([id,Icon,label])=><button key={id} type="button" aria-current={id===tab?'page':undefined} onClick={()=>setTab(id)}>

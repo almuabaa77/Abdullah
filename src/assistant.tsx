@@ -1,23 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpen, CalendarDays, CircleCheck, Clock3, FileText, ListChecks, MessageSquare, Plus, RotateCcw, Send, Sparkles, Star, UserCheck, Users } from 'lucide-react'
 import { hasCompletedRecitation, recitationAssignment, circleMeets, isRecitationDue, segmentLabel, type Daily, type Student } from './domain'
-import { Avatar, dateLabel, nameFor, statusText, useWorkspace } from './ui'
+import { Avatar, dateLabel, nameFor, statusText, StudentIndicators, useWorkspace } from './ui'
 import { parseCommand, type Intent } from './assistant-command'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
 
 type Exchange = {id:number; command:string; intent?:Intent; student?:Student; preset?:Partial<Daily>; candidates?:Student[]; error?:string}
 
-export function Assistant() {
-  const {t,data,en,open,go} = useWorkspace()
+export function Assistant({initialCircle}:{initialCircle?:string}) {
+  const {t,data,en,open} = useWorkspace()
   const [text,setText] = useState('')
   const [exchanges,setExchanges] = useState<Exchange[]>([])
   const [doneTab,setDoneTab] = useState<{id:number;filter:'done'|'due'}>({id:0,filter:'due'})
   const [view,setView] = useState<'assistant'|'students'>('assistant')
-  const [circleId,setCircleId] = useState(()=>{
-    const selected=sessionStorage.getItem('halaqat-assistant-circle')
-    sessionStorage.removeItem('halaqat-assistant-circle')
-    return selected&&data.circles.some(circle=>circle.id===selected)?selected:''
-  })
+  const [circleId,setCircleId] = useState(()=>data.circles.some(circle=>circle.id===initialCircle)?initialCircle??'':'')
   const conversation = useRef<HTMLDivElement>(null)
   const counter = useRef(0)
   const students = data.students.filter(s=>s.active&&(!circleId||s.circleId===circleId))
@@ -33,7 +29,7 @@ export function Assistant() {
     ['schedule',CalendarDays,t('جدولة الطالب','Plan an assignment'),t('الحفظ والمراجعة القادمة','Upcoming work'),'blue'],
     ['attendance',UserCheck,t('تسجيل الحضور','Mark attendance'),t('الحضور والغياب والاستئذان','Attendance, absence and leave'),'green'],
     ['points',Star,t('تعديل النقاط','Adjust points'),t('مكافأة أو خصم','Bonus or deduction'),'gold'],
-    ['report',FileText,t('تقرير طالب','Student report'),t('افتح سجل الطالب','Open a student record'),'blue'],
+    ['report',FileText,t('ملخص طالب','Student summary'),t('راجع حالة الطالب اليوم','See the student’s status today'),'blue'],
   ] as const
   const append = (command:string,details:Omit<Exchange,'id'|'command'>={}) => {
     const id=counter.current++
@@ -58,7 +54,7 @@ export function Assistant() {
 
   const select = (id:number,student:Student) => setExchanges(items=>items.map(item=>item.id===id?{...item,student}:item))
   const openEntry = (student:Student,intent:Intent,preset?:Partial<Daily>) => {
-    if(intent==='report'){sessionStorage.setItem('report-student',student.id);go('records');return}
+    if(intent==='report')return
     open(student,intent==='remaining'?'recite':intent,preset)
   }
   const last = exchanges.at(-1)
@@ -106,13 +102,13 @@ export function Assistant() {
               <p className="workbench-user-message">{exchange.command}</p>
               <div className="workbench-reply"><span className="bot-icon"><Sparkles size={17}/></span><div className="workbench-answer">
                 {exchange.error?<p role="alert">{exchange.error}</p>:!exchange.intent?<p>{t('اذكر العملية واسم الطالب، أو اختر واحدة من العمليات السريعة.','Include an action and a student’s name, or choose a quick action.')}</p>:student?<div className="assistant-review-card">
-                  <div className="assistant-review-name"><Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><span>{t('راجع البيانات قبل اعتمادها','Review before confirming')}</span></div><RecitationBadge record={today.get(student.id)}/></div>
+                  <div className="assistant-review-name"><Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><span>{exchange.intent==='report'?t('حالة الطالب اليوم','Student status today'):t('راجع البيانات قبل اعتمادها','Review before confirming')}</span></div><RecitationBadge record={today.get(student.id)}/></div>
                   {!!assignment?.nextMemorization.length&&exchange.intent!=='review'&&<p><strong>{t('الحفظ المجدول لليوم','Today’s assigned memorization')}</strong> · {segmentLabel(assignment.nextMemorization,en)}</p>}
                   {!!assignment?.nextReview.length&&<p><strong>{t('المراجعة المجدولة لليوم','Today’s assigned revision')}</strong> · {segmentLabel(assignment.nextReview,en)}</p>}
                   {segments.map(([label,items])=>items?.length?<p key={label}><strong>{label}</strong> · {segmentLabel(items,en)}</p>:null)}
                   {exchange.preset?.attendance&&<p>{statusText(exchange.preset.attendance,t)}</p>}
                   {exchange.preset?.bonus!==undefined&&<p>{t('تعديل النقاط','Points adjustment')} · {exchange.preset.bonus}</p>}
-                  <button className="btn btn-primary compact" disabled={exchange.intent!=='report'&&!meetingCircles.has(student.circleId)} onClick={()=>openEntry(student,exchange.intent!,exchange.preset)}>{exchange.intent==='report'?t('فتح التقرير','Open report'):t('مراجعة العملية','Review entry')}</button>
+                  {exchange.intent==='report'?<StudentIndicators record={today.get(student.id)}/>:<button className="btn btn-primary compact" disabled={!meetingCircles.has(student.circleId)} onClick={()=>openEntry(student,exchange.intent!,exchange.preset)}>{t('مراجعة العملية','Review entry')}</button>}
                   {exchange.intent!=='report'&&!meetingCircles.has(student.circleId)&&<small className="muted">{t('الحلقة لا تنعقد اليوم','This circle does not meet today')}</small>}
                 </div>:<>
                   <strong>{exchange.intent==='remaining'?t(`${remaining.length} طلاب بانتظار إتمام التسميع`,`${remaining.length} students to recite`):exchange.candidates?t('وجدت أكثر من طالب بهذا الاسم. اختر المقصود.','Several students match that name. Select the intended student.'):t('اختر الطالب','Select a student')}</strong>

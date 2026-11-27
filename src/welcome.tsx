@@ -1,16 +1,15 @@
 import { brandIconUrl } from './appearance'
-import { LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
+import { LoaderCircle, Smartphone } from 'lucide-react'
 import { useWorkspace } from './ui'
 
 export function Welcome({signIn}:{signIn:()=>void}) {
-  const {t,go} = useWorkspace()
+  const {t} = useWorkspace()
   return <section className="welcome-screen">
     <div className="welcome-content">
       <h1>{t('أهلًا بك في حلقات الخير','Welcome to Al-Khair Circles')}</h1>
       <p>{t('تابع الحفظ والمراجعة والحضور من مكان واحد.','Follow memorization, revision and attendance in one place.')}</p>
       <div className="welcome-actions">
         <button className="btn btn-primary" type="button" onClick={signIn}><Smartphone size={19}/>{t('الدخول برقم الجوال','Sign in with mobile')}</button>
-        <a href="/admin" className="text-button" onClick={event=>{if(!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){event.preventDefault();go('admin')}}}><ShieldCheck size={16}/>{t('دخول الإدارة','Administration sign-in')}</a>
       </div>
     </div>
     <div className="welcome-visual" aria-hidden="true"/>

@@ -65,7 +65,7 @@ export function parseCommand(text:string,students:Student[],previousStudent?:Stu
   const refersBack = words.some(word=>['له','لها','نفسه','نفسها','نفس','him','her','same'].includes(word))
   const student=candidates.length===1?candidates[0]:!candidates.length&&refersBack?active.find(item=>item.id===previousStudent?.id):undefined
   const intent:Intent|undefined = /متبق|تبقي|لم يسمع|غير مكتمل|remaining|incomplete/.test(n)?'remaining'
-    : /تقرير|report/.test(n)?'report'
+    : /تقرير|ملخص|report|summary/.test(n)?'report'
     : /جدول|موعد|schedule|assign/.test(n)?'schedule'
     : /مراجع|راجع|revision|review/.test(n)&&!/تسميع|حفظ|recit|memoriz/.test(n)?'review'
     : /تسميع|حفظ|سمع|recit|memoriz/.test(n)?'recite'

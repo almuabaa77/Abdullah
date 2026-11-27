@@ -345,10 +345,10 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       return
     }
     case 'close': {
-      staff()
+      admin()
       const date = validDate(p.date)
       if (date > dateKey()) throw new ApiError('لا يمكن إغلاق يوم مستقبلي')
-      const circle = state.circles.find(c => c.id === p.circleId && (u.role === 'admin' || c.teacherId === u.id))
+      const circle = state.circles.find(c => c.id === p.circleId)
       if (!circle) throw new ApiError('الحلقة خارج نطاق صلاحيتك', 403)
       if (!circleMeets(date, circle)) throw new ApiError('اليوم إجازة للحلقة')
       const key = circle.id + '/' + date

@@ -105,7 +105,7 @@ function smsError(error:unknown,t:Tr) {
   }
 }
 
-export function PhoneSignIn({auth,availability,retry,close,administration=false}:{auth:PhoneAuth|null;availability:PhoneAvailability;retry:()=>void;close?:()=>void;administration?:boolean}) {
+export function PhoneSignIn({auth,availability,retry,close}:{auth:PhoneAuth|null;availability:PhoneAvailability;retry:()=>void;close:()=>void}) {
   const {t,en} = useWorkspace()
   const [phone,setPhone] = useState(recoverNumber)
   const [code,setCode] = useState('')
@@ -229,15 +229,14 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
     finally{inFlight.current=false;setBusy('')}
   }
 
-  const Heading = administration ? 'h1' : 'h3'
   const form = <form onSubmit={submit}>
       <div className="modal-body">
         <div className="phone-progress" aria-label={t('خطوات التحقق','Verification steps')}>
           <span className={pending?'done':'active'}>{pending?<Check size={15}/>:<Smartphone size={15}/>} {t('رقم الجوال','Mobile number')}</span>
           <i/><span className={pending?'active':''}><KeyRound size={15}/> {t('رمز التحقق','Security code')}</span>
         </div>
-        <div className="phone-intro"><span className="phone-icon">{pending?<KeyRound size={27}/>:administration?<ShieldCheck size={27}/>:<Smartphone size={27}/>}</span><Heading>{pending?t('أدخل رمز التحقق','Enter the security code'):administration?t('دخول الإدارة','Administration sign-in'):t('الدخول أو إنشاء حساب','Sign in or create an account')}</Heading>
-          {pending?<p>{t('طُلب إرسال رمز من 6 أرقام إلى','A 6-digit code was requested for')} <bdi>{pending.destination}</bdi></p>:<p>{administration?t('أدخل رقم جوال حساب الإدارة للتحقق برسالة نصية.','Verify the administration account’s mobile number by SMS.'):t('تحقّق من رقم جوالك لمتابعة الدخول أو طلب حساب جديد.','Verify your number to sign in or request a new account.')}</p>}
+        <div className="phone-intro"><span className="phone-icon">{pending?<KeyRound size={27}/>:<Smartphone size={27}/>}</span><h3>{pending?t('أدخل رمز التحقق','Enter the security code'):t('الدخول أو إنشاء حساب','Sign in or create an account')}</h3>
+          {pending?<p>{t('طُلب إرسال رمز من 6 أرقام إلى','A 6-digit code was requested for')} <bdi>{pending.destination}</bdi></p>:<p>{t('تحقّق من رقم جوالك للانتقال إلى حسابك أو طلب حساب جديد.','Verify your mobile number to access your account or request a new one.')}</p>}
         </div>
         {availability==='loading'?<p className="hint-line"><LoaderCircle className="spinner" size={17}/>{t('جارٍ الاتصال بخدمة التحقق…','Connecting to phone verification…')}</p>:availability==='disabled'?
           <p className="hint-line"><ShieldCheck size={17}/>{t('تفعيل الرسائل النصية بانتظار إعداد مشروع Firebase للمنصة.','SMS verification is awaiting the platform’s Firebase setup.')}</p>:availability==='unavailable'?
@@ -253,14 +252,13 @@ export function PhoneSignIn({auth,availability,retry,close,administration=false}
         {error&&<p id="phone-error" className="error-box" role="alert">{error}</p>}
         {busy==='send'&&stage==='browser'&&slow&&<div className="hint-line sms-progress"><span role="status">{t('فحص المتصفح يستغرق وقتًا أطول.', 'The browser check is taking longer.')}</span><button type="button" className="text-button" onClick={()=>activeCaptcha.current?.verifier.useManualCheck()}>{t('عرض مربع التحقق','Show verification checkbox')}</button></div>}
         {busy==='send'&&stage==='manual'&&<p className="hint-line" role="status">{t('أكمل مربع التحقق هنا وسيُطلب الرمز تلقائيًا.', 'Complete the checkbox here. Your code will be requested automatically.')}</p>}
-        {availability==='ready'&&!pending&&!administration&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('ستبقى جلسة الدخول محفوظة على هذا الجهاز بعد التحقق.','Your sign-in stays on this device after verification.')}</p>}
+        {availability==='ready'&&!pending&&<p className="phone-privacy"><ShieldCheck size={16}/>{t('ستبقى جلسة الدخول محفوظة على هذا الجهاز بعد التحقق.','Your sign-in stays on this device after verification.')}</p>}
       </div>
       {availability==='ready'&&<div className="modal-foot phone-foot"><button type="submit" className="btn btn-primary full" disabled={!!busy||(pending?code.length!==6:!target||seconds>0)}>
         {busy?<LoaderCircle className="spinner" size={18}/>:pending?<Check size={18}/>:<Smartphone size={18}/>}
         {busy==='send'?(stage==='provider'?t('جارٍ طلب إرسال الرمز…','Requesting your code…'):t('جارٍ فحص المتصفح…','Checking your browser…')):busy==='verify'?t('جارٍ التحقق من الرمز…','Verifying the code…'):pending?t('تحقّق ومتابعة','Verify and continue'):seconds?t(`طلب رمز بعد ${seconds} ث`,`Request a code in ${seconds}s`):t('إرسال رمز التحقق','Send verification code')}
       </button></div>}
     </form>
-  return administration ? <section className="panel intro-card phone-dialog">{form}</section>
-    : <Modal title={t('حساب حلقات الخير','Al-Khair account')} close={()=>{if(!busy)close?.()}} appearance="phone-dialog">{form}</Modal>
+  return <Modal title={t('حساب حلقات الخير','Al-Khair account')} close={()=>{if(!busy)close()}} appearance="phone-dialog">{form}</Modal>
 }
 export const endPhone = signOut

@@ -496,17 +496,6 @@ body {background:var(--bg)}
   padding:clamp(12px,3vw,28px);
 }
 .messenger-tab-content > .btn {justify-self:start}
-.messenger-contact {
-  display:flex;
-  align-items:center;
-  gap:9px;
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:9px 11px;
-  min-width:0;
-}
-.messenger-contact>div {flex:1;min-width:0;overflow-wrap:anywhere}
-.messenger-contact p {font-size:.82rem}
 .messenger-call-actions {display:flex;align-items:center;gap:2px}
 .messenger-call-actions button {color:var(--green)}
 .call-dialog {max-width:520px}
@@ -525,7 +514,7 @@ body {background:var(--bg)}
     inset-inline:0;
     bottom:0;
     display:grid;
-    grid-template-columns:repeat(5,minmax(0,1fr));
+    grid-template-columns:repeat(4,minmax(0,1fr));
     height:var(--teacher-nav-space);
     background:var(--paper);
     border-top:1px solid var(--border);
@@ -688,3 +677,53 @@ html[data-custom-appearance] .welcome-screen {border-block-start:3px solid var(-
 .account-more-group .more-row:hover {background:var(--role-tint);border-color:var(--role-edge)}
 .account-more-group .more-row .stat-icon {background:var(--role-tint);color:var(--role-ink)}
 @media(max-width:570px) {.account-more-grid {grid-template-columns:minmax(0,1fr)}}
+
+.teacher-navigation .main-content {padding-block-end:86px}
+.teacher-assistant-fab {
+  position:fixed;z-index:36;inset-inline-end:max(clamp(12px,3vw,28px),env(safe-area-inset-left),env(safe-area-inset-right));
+  inset-block-end:calc(20px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:9px;min-height:52px;
+  padding:5px 12px;padding-inline-start:6px;border:1px solid color-mix(in srgb,var(--gold) 55%,var(--green));
+  border-radius:17px;background:linear-gradient(125deg,var(--green),var(--deep));color:white;font-size:.86rem;font-weight:700;
+  box-shadow:0 8px 24px color-mix(in srgb,var(--deep) 32%,transparent),inset 0 1px #ffffff35;
+  transition:transform 180ms ease,box-shadow 180ms ease;
+}
+.teacher-assistant-fab>span {
+  display:grid;place-items:center;width:39px;height:39px;border-radius:11px;
+  background:#ffffff21;color:var(--gold);box-shadow:inset 0 1px #ffffff38;
+}
+.teacher-assistant-fab:hover {transform:translateY(-3px);box-shadow:0 12px 26px color-mix(in srgb,var(--deep) 40%,transparent)}
+.teacher-assistant-fab:active {transform:translateY(1px)}
+.teacher-navigation ~ .toast {bottom:calc(80px + env(safe-area-inset-bottom))}
+@media(max-width:850px){
+  .teacher-assistant-fab {inset-block-end:calc(var(--teacher-nav-space) + 10px)}
+  .teacher-navigation .main-content {padding-block-end:calc(var(--teacher-nav-space) + 73px)}
+  .teacher-navigation ~ .toast {bottom:calc(140px + env(safe-area-inset-bottom))}
+}
+@media(prefers-reduced-motion:reduce){
+  .teacher-assistant-fab {transition:none}
+  .teacher-assistant-fab:hover,.teacher-assistant-fab:active {transform:none}
+}
+@media print {.teacher-assistant-fab {display:none!important}}
+
+.contact-directory-head {display:flex;align-items:center;gap:10px}
+.contact-directory-head small {color:var(--muted)}
+.contact-directory-tools {display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,.35fr);gap:7px}
+.contact-directory-tools .search {width:100%;min-width:0}
+.contact-directory-tools select {min-width:0}
+.contact-directory-grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:8px}
+.messenger-contact {display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:11px;min-width:0;border:1px solid var(--border);border-radius:14px;background:var(--paper)}
+.messenger-contact:focus-within {border-color:var(--role-edge)}
+.contact-card-person {display:flex;align-items:center;gap:9px;min-width:0}
+.contact-card-person>div {min-width:0}
+.contact-card-person h3 {color:var(--text);overflow-wrap:anywhere;line-height:1.45}
+.contact-card-person .chat-role-icon {width:43px;height:43px;font-weight:700}
+.contact-card-circles {display:flex;align-items:flex-start;gap:6px;font-size:.8rem;line-height:1.5;overflow-wrap:anywhere}
+.contact-card-circles>svg {margin-top:2px;color:var(--green)}
+.messenger-contact>.btn {align-self:flex-end;margin-block-start:auto}
+@media(max-width:450px){
+  .contact-directory-grid {grid-template-columns:minmax(0,1fr)}
+  .messenger-contact {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 7px}
+  .contact-card-person {grid-column:1;grid-row:1}
+  .contact-card-circles {grid-column:1;grid-row:2}
+  .messenger-contact>.btn {grid-column:2;grid-row:1/span 2;align-self:center}
+}

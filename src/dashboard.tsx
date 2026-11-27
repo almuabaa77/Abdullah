@@ -7,9 +7,8 @@ import { Avatar, Badge, Empty, StudentIndicators, dateLabel, matches, nameFor, u
 type RosterFilter = 'all' | 'due' | 'present' | 'incomplete' | RecitationStatus
 const recitationOrder: Record<RecitationStatus,number> = {awaiting:0,partial:1,complete:2,absent:3,leave:4}
 
-export function Dashboard() {
+export function Dashboard({rosterOnly,circleId,selectCircle}:{rosterOnly:boolean;circleId:string;selectCircle:(id:string)=>void}) {
   const {data,t,en,go,open} = useWorkspace()
-  const [circleId,setCircle] = useState('')
   const [query,setQuery] = useState('')
   const [filter,setFilter] = useState<RosterFilter>('all')
   const [overflow,setOverflow] = useState('')
@@ -26,28 +25,33 @@ export function Dashboard() {
   const recited = roster.filter(({status})=>status==='complete').length
   const due = meeting ? roster.filter(({record})=>isRecitationDue(record)).length : 0
   const progress = students.length ? Math.round(complete/students.length*100) : 0
-  const visible = roster.filter(({student,record,status})=>matches(student,query) && (
+  const visible = rosterOnly?roster.filter(({student,record,status})=>matches(student,query) && (
     filter==='all' || filter==='present'&&record?.attendance==='present' ||
     filter==='incomplete'&&statusFor(record)!=='complete' || filter==='due'&&meeting&&isRecitationDue(record) || status===filter
-  )).sort((a,b)=>recitationOrder[a.status]-recitationOrder[b.status])
+  )).sort((a,b)=>recitationOrder[a.status]-recitationOrder[b.status]):[]
   const changeFilter = (value:RosterFilter) => {setFilter(value);setOverflow('');setLimit(24)}
+  function viewStudents(value:RosterFilter) {
+    setQuery('')
+    changeFilter(value)
+    go('students')
+  }
   const metrics = [
-    ['all',Users,t('طلاب الحلقة','Circle students'),students.length,'green'],
+    ['all',Users,t('الطلاب النشطون','Active students'),students.length,'green'],
     ['present',UserCheck,t('حاضرون','Present'),present,'blue'],
     ['complete',CircleCheck,t('أتمّوا التسميع','Recited'),recited,'green'],
     ['due',Clock3,t('بانتظار التسميع','To recite'),due,'gold'],
   ] as const
   const name = data.sample && en ? 'Abdulrahman' : data.user?.name
   const canRecord = meeting&&students.length>0
-  return <div className="teacher-dashboard page-stack">
+  return <div className={'teacher-dashboard page-stack'+(rosterOnly?' teacher-roster-page':'')}>
     <section className="panel teacher-overview teacher-today">
       <div className="teacher-heading">
         <div>
           <p className="teacher-date"><CalendarDays size={15}/>{dateLabel(data.date,en,true)}</p>
-          <h1>{t('حلقة اليوم','Today’s circle')}</h1>
+          <h1>{rosterOnly?t('طلاب الحلقة','Circle students'):t('حلقة اليوم','Today’s circle')}</h1>
           {name&&<p className="muted">{name}</p>}
         </div>
-        <label className="circle-picker"><BookOpen size={16}/><select aria-label={t('الحلقة','Circle')} value={circle?.id||''} onChange={event=>{setCircle(event.target.value);setQuery('');changeFilter('all')}}>
+        <label className="circle-picker"><BookOpen size={16}/><select aria-label={t('الحلقة','Circle')} value={circle?.id||''} onChange={event=>{selectCircle(event.target.value);setQuery('');changeFilter('all')}}>
           {!data.circles.length&&<option value="">{t('لا توجد حلقات','No circles')}</option>}
           {data.circles.map(item=><option key={item.id} value={item.id}>{data.sample && en ? 'Imam Asim Circle' : item.name} · {data.students.filter(student=>student.active&&student.circleId===item.id).length}</option>)}
         </select><ChevronDown size={15}/></label>
@@ -55,11 +59,11 @@ export function Dashboard() {
       <div className="teacher-actions">
         <button className="btn btn-primary" disabled={!canRecord} onClick={()=>open(undefined,'recite',undefined,circle?.id)}><Plus size={17}/>{t('تسجيل تسميع','Record recitation')}</button>
         <button className="btn btn-outline" disabled={!canRecord} onClick={()=>open(undefined,'attendance',undefined,circle?.id)}><UserCheck size={17}/>{t('تسجيل الحضور','Record attendance')}</button>
-        <button className="btn btn-outline" onClick={()=>{if(circle)sessionStorage.setItem('halaqat-assistant-circle',circle.id);go('assistant')}}><Sparkles size={17}/>{t('المساعد الذكي','Smart assistant')}</button>
       </div>
     </section>
+    {!rosterOnly&&<>
     <div className="teacher-metrics" aria-label={t('تصفية الطلاب بحسب مؤشرات اليوم','Filter students by today’s activity')}>
-      {metrics.map(([value,Icon,label,count,color])=><button className="panel teacher-metric" type="button" key={value} aria-pressed={value===filter} onClick={()=>changeFilter(value)}>
+      {metrics.map(([value,Icon,label,count,color])=><button className="panel teacher-metric" type="button" key={value} onClick={()=>viewStudents(value)}>
         <span className={'stat-icon tint-'+color}><Icon size={19}/></span><span><strong>{count}</strong><small>{label}</small></span>
       </button>)}
     </div>
@@ -67,16 +71,16 @@ export function Dashboard() {
       <div><strong>{t('إنجاز اليوم','Daily completion')}</strong><span>{t(`${complete} من ${students.length} أكملوا جميع المهام`,`${complete} of ${students.length} completed all tasks`)}</span></div>
       <progress value={progress} max={100} aria-label={t('إنجاز اليوم','Daily completion')}/>
       <span className="count-pill"><bdi>{progress}%</bdi></span>
-      {absent>0&&<button className="text-button" onClick={()=>changeFilter('absent')}>{t(`${absent} غائب`,`${absent} absent`)}</button>}
+      {absent>0&&<button className="text-button" onClick={()=>viewStudents('absent')}>{t(`${absent} غائب`,`${absent} absent`)}</button>}
     </section>}
     {requests.length>0&&<section className="panel section-panel teacher-enrollments">
       <div className="section-title"><h2>{t('طلبات تسجيل الحلقة','Circle enrollment requests')} <span className="count-pill">{requests.length}</span></h2></div>
       <ul>{requests.map(request=><li key={request.id}><strong>{request.name}</strong><Badge status="pending" label={t('بانتظار اعتماد الإدارة','Awaiting administration approval')}/></li>)}</ul>
     </section>}
-    <section className="panel roster">
+    </>}
+    {rosterOnly&&<section className="panel roster">
       <div className="section-title">
-        <h2>{t('طلاب الحلقة','Circle students')} <span className="count-pill" aria-live="polite">{visible.length} / {students.length}</span></h2>
-        <button className="btn btn-outline compact" onClick={()=>go('records')}>{t('سجل الحلقة','Circle records')}</button>
+        <h2>{t('قائمة الطلاب','Student list')} <span className="count-pill" aria-live="polite">{visible.length} / {students.length}</span></h2>
       </div>
       {circle&&!meeting&&<div className="hint-line"><CalendarDays size={15}/>{t('اليوم إجازة للحلقة','The circle is off today')}</div>}
       <div className="toolbar teacher-roster-tools">
@@ -102,7 +106,7 @@ export function Dashboard() {
       </button>}
       {!visible.length&&<Empty title={!students.length?t('لا يوجد طلاب في الحلقة','No students in this circle'):t('لا توجد نتائج مطابقة','No matching students')} action={students.length>0&&<button className="btn btn-outline compact" onClick={()=>{setQuery('');changeFilter('all')}}>{t('عرض جميع الطلاب','Show all students')}</button>}/>}
       </div>
-    </section>
+    </section>}
   </div>
 }
 export function StudentHome() {
@@ -146,7 +150,7 @@ export function StudentHome() {
     </section>
     <section className="panel section-panel">
       <div className="section-title"><div><h2>{t('متابعة الطالب','Student activity')}</h2><p>{nameFor(student,en)}</p></div></div>
-      <div className="chip-row"><button className="btn btn-outline" onClick={()=>go('records')}>{t('سجل الحفظ والحضور','Recitation and attendance')}</button><button className="btn btn-outline" onClick={()=>go('exams')}>{t('الاختبارات','Assessments')}</button><button className="btn btn-outline" onClick={()=>go('leaves')}>{t('طلب استئذان','Request leave')}</button></div>
+      <div className="chip-row"><button className="btn btn-outline" onClick={()=>go('achievements')}>{t('سجل الحفظ والحضور','Recitation and attendance')}</button><button className="btn btn-outline" onClick={()=>go('exams')}>{t('الاختبارات','Assessments')}</button><button className="btn btn-outline" onClick={()=>go('leaves')}>{t('طلب استئذان','Request leave')}</button></div>
     </section>
   </div>
 }

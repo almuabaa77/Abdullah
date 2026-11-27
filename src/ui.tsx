@@ -6,7 +6,7 @@ import { segmentLabel, statusFor, type Daily, type ReminderField, type Student, 
 
 export type Tr = (ar: string, en: string) => string
 export type Action = (action: string, values?: Record<string, unknown>, op?: string) => Promise<View>
-export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves' | 'lessons'
+export type Page = 'home' | 'assistant' | 'students' | 'achievements' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves' | 'lessons'
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
