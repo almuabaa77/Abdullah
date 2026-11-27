@@ -1,4 +1,6 @@
 import { activeNotices, NotificationList, useNoticeTime } from './notifications'
+import { LessonCenter } from './lesson-center'
+import type { LessonCredentials } from './lessons'
 import { AnnouncementFeed } from './announcements'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -23,7 +25,7 @@ import './styles.css'
 import './workbench.css'
 
 type InstallEvent = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
-const pages = ['home','assistant','records','chat','more','admin','store','exams','leaves']
+const pages = ['home','assistant','records','chat','more','admin','store','exams','leaves','lessons']
 const currentPage = ():Page => {
   if (location.pathname === '/admin' || location.pathname === '/admin/') return 'admin'
   const fragment = location.hash.slice(1)
@@ -276,6 +278,14 @@ function App() {
       go('records')
       open(target,mode,{date},circleId,field)
     }
+    if(notice.lesson){
+      sessionStorage.setItem('halaqat-open-lesson',notice.lesson.id)
+      if(adminAccess){
+        history.pushState(null,'','/admin?section=lessons&lesson='+encodeURIComponent(notice.lesson.id))
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      } else if(workspaceVisible)go('lessons')
+      window.dispatchEvent(new Event('halaqat-open-lesson'))
+    }
     if(notice.kind==='group-invitation'&&workspaceVisible){
       sessionStorage.setItem('halaqat-group-invitations','1')
       window.dispatchEvent(new Event('halaqat-group-invitations'))
@@ -333,7 +343,7 @@ function App() {
     ['more',Ellipsis,t('المزيد','More')],
   ] as const
   const extras = [
-    ['exams',CalendarDays,t('الاختبارات','Assessments')],['leaves',UserCheck,t('الاستئذانات','Leave requests')],
+    ['lessons',CalendarDays,t('جلسات التسميع','Live sessions')],['exams',CalendarDays,t('الاختبارات','Assessments')],['leaves',UserCheck,t('الاستئذانات','Leave requests')],
   ] as const
   const assistantOpen=Boolean(workspaceVisible&&teacher&&page==='assistant')
   const chatOpen=workspaceVisible&&page==='chat'
@@ -353,7 +363,13 @@ function App() {
   },[activeChatCall])
   const label=[...nav,...extras].find(([p])=>p===page)?.[2]||t('الرئيسية','Home')
   const userName=data.sample&&en?({admin:'Abdulrahman Al-Sarhan',teacher:'Abdulrahman Al-Sarhan',student:'Abdullah Al-Shehri',parent:'Student guardian'} as Record<string,string>)[role]:data.user?.name
-  const workspace = {data,en,t,post,go,tell,open}
+  async function lessonRtc(id:string):Promise<LessonCredentials> {
+    const result=await fetch('/api/lesson-rtc',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({id})})
+    const value=await result.json()
+    if(!result.ok)throw new Error(value.error||t('تعذر الوصول إلى غرفة الوسائط','Could not access the media room'))
+    return value
+  }
+  const workspace = {data,en,t,post,go,tell,open,lessonRtc,refresh:()=>refreshWorkspace.current()}
   const signOut = useCallback(async (next:Page) => {
     if(!auth)return
     const {endPhone}=await import('./phone')
@@ -435,7 +451,7 @@ function App() {
             catch(error){tell((error as Error).message,true)}
             finally{setRegistering(false)}
           }}/>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone}/>:
-          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>
       {teacherNavigation&&<nav className="teacher-bottom-nav" aria-label={t('قائمة المحفّظ السفلية','Teacher bottom navigation')}>

@@ -1,13 +1,15 @@
 import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, CircleMinus, CircleX, Clock3, Star, X } from 'lucide-react'
+import type { LessonCredentials } from './lessons'
 import { segmentLabel, statusFor, type Daily, type ReminderField, type Student, type View } from './domain'
 
 export type Tr = (ar: string, en: string) => string
 export type Action = (action: string, values?: Record<string, unknown>, op?: string) => Promise<View>
-export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves'
+export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves' | 'lessons'
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
+  refresh:()=>void; lessonRtc:(id:string)=>Promise<LessonCredentials>;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => void
 }
 export const Context = createContext<Workspace | null>(null)

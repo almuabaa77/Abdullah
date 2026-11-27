@@ -1,3 +1,7 @@
+import type { AgoraEnvironment } from './agora'
+import type { LessonCredentials } from '../src/lessons'
+import { ApiError } from './errors'
+import { applyLessonAction, lessonActions, lessonRtcGrant, lessonNoticeAllowed, projectLessons } from './lesson-workspace'
 import { activeAccount, chatAccess, chatCanSend, directContext, groupEligible, groupMessages } from './chat-access'
 import { announcementVisible } from './announcements'
 import { scheduleAssessment } from './assessment'
@@ -14,11 +18,11 @@ export type Repository = {
   write(id: string, revision: number, state: State, notices?: Notice[]): Promise<boolean>
 }
 export type PushGateway = (request:Request,user:User,payload:Record<string,unknown>) => Promise<Response>
-export type Env = { FIREBASE_WEB_CONFIG?: string; BOOTSTRAP_UID?: string }
+export type Env = AgoraEnvironment & { FIREBASE_WEB_CONFIG?: string; BOOTSTRAP_UID?: string }
 type Identity = { id: string; phone?: string; workspace: string; bootstrap?: User }
 type Payload = Record<string, unknown>
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
-export class ApiError extends Error { constructor(message: string, public status = 400) { super(message) } }
+export { ApiError } from './errors'
 const deny = (msg = 'ليست لديك صلاحية تنفيذ هذه العملية'): never => { throw new ApiError(msg, 403) }
 const clean = (x: unknown, max = 160) => typeof x === 'string' ? x.trim().slice(0, max) : ''
 const required = (x: unknown, max = 160) => { const v = clean(x, max); if (!v) throw new ApiError('أكمل الحقول المطلوبة'); return v }
@@ -133,7 +137,7 @@ function matchesReminderCircle(notice:Notice,state:State) {
 }
 export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:string) {
   if(user.status!=='active'||user.duplicateOf||user.role==='admin'&&user.id!==adminUid)return false
-  if(notice.announcement&&user.role==='admin'||noticeExpiresAt(notice)<=Date.now())return false
+  if(notice.announcement&&user.role==='admin'||noticeExpiresAt(notice)<=Date.now()||!lessonNoticeAllowed(state,notice,user))return false
   const students=notice.announcement||notice.recordReminder||notice.studentId&&!notice.users?scope(state,user):[]
   const ids=new Set(students.map(student=>student.id))
   if(notice.chatInvitationId) {
@@ -142,9 +146,9 @@ export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:st
   }
   return announcementVisible(notice,state,user,students)&&!notice.announcement?.withdrawn&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
 }
-function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string): View {
+function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string,rtcConfigured=false): View {
   if (!user || user.status !== 'active') {
-    const { operations: _discardEmpty, closedAccounts: _closedAccounts, ...emptyView } = createState()
+    const { operations: _discardEmpty, closedAccounts: _closedAccounts, lessons:_lessons, lessonSeries:_lessonSeries, lessonRestrictions:_lessonRestrictions, lessonHealth:_lessonHealth, ...emptyView } = createState()
     return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
   }
   const students = scope(state, user)
@@ -169,7 +173,8 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
   const participants = new Set(chats.flatMap(chat=>[...(chat.group?state.users.filter(account=>chatAccess(state,chat,account)).map(account=>account.id):chat.members),...groupMessages(chat,user).map(message=>message.from)]))
   const isAdmin = user.role === 'admin'
   return {
-    user, revision, phoneEnabled, chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
+    user, revision, phoneEnabled, lessons:projectLessons(state,user),lessonTeacherScheduling:state.lessonTeacherScheduling,
+    lessonHealth:{rtcConfigured,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
@@ -181,7 +186,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
       .map(notice=>({...notice.recordReminder!,teacherId:notice.users![0],time:notice.time})):undefined,
     calls:state.calls?.filter(call=>call.from===user.id||call.to===user.id).slice(0,50).map(call=>currentCall(state,call)),
     notices: state.notices.filter(notice => (notice.kind==='announcement'||noticeExpiresAt(notice)>Date.now()) && announcementVisible(notice,state,user,students)&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
-      &&(!notice.chatInvitationId||invitations.some(invitation=>invitation.id===notice.chatInvitationId)))
+      &&(!notice.chatInvitationId||invitations.some(invitation=>invitation.id===notice.chatInvitationId))&&lessonNoticeAllowed(state,notice,user))
       .map(notice=>{
         if(isAdmin||notice.kind!=='announcement')return notice
         const meta=notice.announcement
@@ -264,6 +269,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   }
   if (!user || user.status !== 'active') throw new ApiError('الحساب بانتظار التفعيل', 403)
   const u = user
+  if(lessonActions.has(action))return applyLessonAction(state,u,action,p,op)
   const visible = scope(state, u)
   const ids = new Set(visible.map(x => x.id))
   const student = () => { const s = visible.find(x => x.id === p.studentId && x.active); if (!s) throw new ApiError('الطالب خارج نطاق صلاحيتك', 403); return s }
@@ -818,27 +824,28 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   state.audit.push({ time:new Date().toISOString(),actor:u.name,action,target:clean(p.studentId || p.id || p.circleId) || undefined })
 }
 
-export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway) {
+export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials) {
   try {
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
     const pushRoute = url.pathname === '/api/push'
+    const rtcRoute = url.pathname === '/api/lesson-rtc'
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && (request.method !== 'GET' || events || pushRoute)) throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events || pushRoute || rtcRoute)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
-    if (url.pathname !== '/api/workspace' && !events && !pushRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !rtcRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
-    if (events && !get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
+    if (events && !get || rtcRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
     if (!get && request.headers.get('sec-fetch-site') === 'cross-site') deny()
     const raw = get ? '' : await request.text()
     if (raw.length > 75000) throw new ApiError('حجم الطلب غير مدعوم',413)
     const payload = get ? {} : JSON.parse(raw) as Payload
-    const action = get||pushRoute ? '' : required(payload.action,40)
-    const op = get||pushRoute ? '' : required(payload.op,70)
-    if (!get && !pushRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
+    const action = get||pushRoute||rtcRoute ? '' : required(payload.action,40)
+    const op = get||pushRoute||rtcRoute ? '' : required(payload.op,70)
+    if (!get && !pushRoute && !rtcRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
     for (let attempt = 0; attempt < 6; attempt++) {
       const current = await repo.read(identity.workspace)
       if (!current) {
@@ -849,7 +856,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       let user = state.users.find(x => x.id === identity.id) ?? null
       if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
-        if (events || pushRoute) return deny()
+        if (events || pushRoute || rtcRoute) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
       }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
@@ -896,6 +903,12 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
           for (const circle of state.circles) if (circle.teacherId===oldId) circle.teacherId = identity.id
           for (const chat of state.chats) chat.members = chat.members.map(id=>id===oldId ? identity.id : id)
           for (const link of state.links) if(link.parentId===oldId)link.parentId=identity.id
+          for(const meeting of [...(state.lessons??[]),...(state.lessonSeries??[]).map(series=>series.draft)]){
+            if(meeting.teacherId===oldId)meeting.teacherId=identity.id
+            if(meeting.substituteId===oldId)meeting.substituteId=identity.id
+            meeting.invitees=meeting.invitees.map(id=>id===oldId?identity.id:id)
+          }
+          for(const notice of state.notices)if(notice.lesson&&notice.users)notice.users=notice.users.map(id=>id===oldId?identity.id:id)
           await repo.write(identity.workspace,current.revision,state)
           continue
         }
@@ -923,6 +936,12 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return restricted('duplicate')
       }
       const operationKey=identity.id+':'+op
+      if(rtcRoute) {
+        if(!user||user.status!=='active'||identity.workspace!=='school')return deny()
+        if(!rtc)throw new ApiError('إعدادات Agora غير مكتملة',503)
+        if(typeof payload.id!=='string'||payload.id.length>100)throw new ApiError('تحقق من معرّف الجلسة')
+        return Response.json(rtc(lessonRtcGrant(state,user,payload.id)),{headers})
+      }
       if (pushRoute) {
         if(!user||user.status!=='active')return deny()
         if(!push||identity.workspace!=='school')throw new ApiError('تنبيهات الخلفية غير متاحة في هذا الإصدار',503)
@@ -940,7 +959,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return new Response(null,{status:204,headers})
       }
       if (get || state.operations.includes(operationKey)) {
-        const view=project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID)
+        const view=project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,Boolean(rtc&&identity.workspace==='school'))
         if(!user&&identity.phone) {
           view.verifiedPhone=identity.phone
           view.enrollmentCircles=state.circles.map(({id,name})=>({id,name}))
@@ -948,11 +967,11 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return Response.json(view,{headers})
       }
       const previousNotices=state.notices.length
-      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID),{headers})
+      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,Boolean(rtc&&identity.workspace==='school')),{headers})
       state.operations.push(operationKey)
       if (!(await repo.write(identity.workspace,current.revision,state,state.notices.slice(0,state.notices.length-previousNotices).filter(notice=>!notice.announcement||notice.announcement.publishedAt)))) continue
       user = state.users.find(x => x.id === identity.id) ?? null
-      return Response.json(project(state,user,current.revision + 1,phoneEnabled,env.BOOTSTRAP_UID),{headers})
+      return Response.json(project(state,user,current.revision + 1,phoneEnabled,env.BOOTSTRAP_UID,Boolean(rtc&&identity.workspace==='school')),{headers})
     }
     throw new ApiError('حدث تحديث متزامن، أعد المحاولة',409)
   } catch (error) {

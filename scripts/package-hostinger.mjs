@@ -10,7 +10,7 @@ const stage = await mkdtemp(join(tmpdir(), 'halaqat-hostinger-'))
 try {
   const { name, version, engines } = JSON.parse(await readFile('package.json', 'utf8'))
   const { packages } = JSON.parse(await readFile('package-lock.json', 'utf8'))
-  const dependencies = Object.fromEntries(['express', 'mysql2', 'web-push'].map(
+  const dependencies = Object.fromEntries(['express', 'mysql2', 'web-push', 'agora-token', '@js-temporal/polyfill'].map(
     (dependency) => [dependency, packages['node_modules/' + dependency].version],
   ))
   const manifest = {

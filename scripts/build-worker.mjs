@@ -20,7 +20,7 @@ for (const file of (await readdir(directory,{recursive:true,withFileTypes:true})
 const routes = Object.keys(assets).sort()
 const version = createHash('sha256').update(JSON.stringify(routes.map(route=>[route,assets[route]]))).update(serviceWorker).digest('hex').slice(0,12)
 const html = Buffer.from(assets['/'][1],'base64').toString('utf8').replace('__BUILD_VERSION__',version)
-serviceWorker = serviceWorker.replace('__BUILD_VERSION__',version).replace("'__CACHEABLE_FILES__'",JSON.stringify(routes.filter(route=>route.startsWith('/assets/'))))
+serviceWorker = serviceWorker.replace('__BUILD_VERSION__',version).replace("'__CACHEABLE_FILES__'",JSON.stringify(routes.filter(route=>route.startsWith('/assets/')&&!route.startsWith('/assets/AgoraRTC_'))))
 const versionFile = JSON.stringify({version})
 assets['/'] = [types['.html'],Buffer.from(html).toString('base64')]
 assets['/sw.js'] = [types['.js'],Buffer.from(serviceWorker).toString('base64')]

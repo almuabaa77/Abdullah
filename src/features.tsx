@@ -122,6 +122,7 @@ export function More({ changeLanguage, switchRole, currentRole, install,showPerm
   const parent = data.user?.role === 'parent'
   const staff = data.user?.role==='admin'||data.user?.role==='teacher'
   const opts = [
+    [CalendarDays,t('جلسات التسميع','Live sessions'),()=>go('lessons')],
     [CalendarDays,t('الاختبارات','Assessments'),()=>go('exams')],
     [UserCheck,t('الاستئذانات','Leave requests'),()=>go('leaves')],
     ...(staff?[[BookOpen,t('السجل والتقارير','Records and reports'),()=>go('records')]] as const:[]),

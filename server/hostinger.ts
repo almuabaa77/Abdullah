@@ -1,3 +1,5 @@
+import { agoraConfig, agoraPresence, issueAgora, revokeAgora } from './agora'
+import { applyPresence, runLessonSchedule } from './lesson-workspace'
 import express, { type ErrorRequestHandler, type Request as HttpRequest, type Response as HttpResponse } from 'express'
 import { createPool, type Pool, type PoolOptions, type QueryResult, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise'
 import { api, ApiError, type Repository } from './api'
@@ -110,6 +112,7 @@ const repository:Repository = {
   },
 }
 
+const agora=agoraConfig(env)
 let publishing=false
 const scheduleTimer=setInterval(async()=>{
   if(publishing||databaseStatus!=='ready')return
@@ -121,16 +124,67 @@ const scheduleTimer=setInterval(async()=>{
       const state=JSON.parse(current.data) as State
       const due=publishScheduled(state)
       const now=Date.now()
+      const previousNotices=state.notices.length
+      const scheduledLessons=runLessonSchedule(state,now)
+      const lessonNotices=state.notices.slice(0,state.notices.length-previousNotices)
       const notices=state.notices.filter(notice=>notice.kind==='announcement'||noticeExpiresAt(notice)>now)
-      if(!due.length&&notices.length===state.notices.length)break
+      if(!scheduledLessons&&!due.length&&notices.length===state.notices.length)break
       state.notices=notices
-      if(await repository.write('school',current.revision,state,due))break
+      if(await repository.write('school',current.revision,state,[...due,...lessonNotices]))break
     }
   } catch(error) {
     console.error('Scheduled workspace maintenance failed',error instanceof Error?error.name:'UnknownError')
   } finally {publishing=false}
 },10_000)
 scheduleTimer.unref()
+
+let checkingRtc=false
+let presenceCursor=0
+const rtcTimer=setInterval(async()=>{
+  if(checkingRtc||databaseStatus!=='ready')return
+  checkingRtc=true
+  try {
+    const snapshot=await repository.read('school')
+    if(!snapshot)return
+    const state=JSON.parse(snapshot.data) as State
+    const now=Date.now()
+    const restrictions=state.lessonRestrictions??[]
+    const next=restrictions.filter(rule=>rule.nextAttempt<=now&&rule.expiresAt>now).slice(0,12)
+    const live=(state.lessons??[]).filter(lesson=>lesson.status==='live')
+    const window=live.slice(presenceCursor,presenceCursor+8)
+    presenceCursor=presenceCursor+8>=live.length?0:presenceCursor+8
+    const results=agora?await Promise.all(next.map(async rule=>{
+      try{await revokeAgora(agora,rule.lessonId,rule.uid);return {rule,approved:true}}
+      catch{return {rule,approved:false}}
+    })):[]
+    const presence=agora?await Promise.all(window.map(async lesson=>{
+      try{return {id:lesson.id,ids:await agoraPresence(agora,lesson.id)}}
+      catch{return {id:lesson.id,ids:undefined}}
+    })):[]
+    if(!results.length&&!presence.length&&!restrictions.some(rule=>rule.expiresAt<=now))return
+    for(let retry=0;retry<4;retry++){
+      const current=await repository.read('school')
+      if(!current)break
+      const updated=JSON.parse(current.data) as State
+      updated.lessonRestrictions=(updated.lessonRestrictions??[]).filter(rule=>rule.expiresAt>now&&!results.some(result=>result.approved&&result.rule.id===rule.id))
+      for(const {rule,approved} of results)if(!approved){
+        const target=updated.lessonRestrictions.find(item=>item.id===rule.id)
+        if(target&&target.attempts===rule.attempts){
+          target.attempts++
+          target.nextAttempt=now+Math.min(60_000,2500*2**target.attempts)
+        }
+      }
+      for(const entry of presence){
+        const lesson=updated.lessons?.find(item=>item.id===entry.id&&item.status==='live')
+        if(lesson&&entry.ids)applyPresence(lesson,entry.ids,now)
+      }
+      updated.lessonHealth={...updated.lessonHealth,lastError:results.some(result=>!result.approved)||presence.some(item=>!item.ids)?'تعذر تأكيد طلب لدى Agora. ستُعاد المحاولة.':undefined}
+      if(await repository.write('school',current.revision,updated))break
+    }
+  } catch { console.error('Meeting media maintenance failed') }
+  finally{checkingRtc=false}
+},10_000)
+rtcTimer.unref()
 
 function appRequest(req:HttpRequest) {
   const headers = new Headers()
@@ -164,6 +218,7 @@ app.get('/api/health',(_req,res)=>{
     databaseIssue,
     phoneAuthConfigured:Boolean(env.FIREBASE_WEB_CONFIG),
     pushReady:push.ready(),
+    lessonRtcConfigured:Boolean(agora),
   })
 })
 app.get('/api/workspace/events',async (req,res)=>{
@@ -178,7 +233,7 @@ app.use('/api',express.text({type:'application/json',limit:80000}),async (req,re
     res.status(405).set('Allow','GET, POST').json({error:'Method not allowed'})
     return
   }
-  await forward(res,await api(appRequest(req),repository,env,push.handle))
+  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined))
 })
 app.use(async (req,res)=>{ await forward(res,serveAsset(appRequest(req))) })
 
@@ -199,6 +254,7 @@ const server = app.listen(port,'0.0.0.0',()=>{
 })
 process.once('SIGTERM',()=>{
   clearInterval(scheduleTimer)
+  clearInterval(rtcTimer)
   push.stop()
   revisions.stop()
   server.close(()=>{void connection?.end()})

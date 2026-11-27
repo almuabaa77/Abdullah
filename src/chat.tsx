@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, Check, Flag, MailPlus, LockKeyhole, MessageCircle, Phone, Pin, Plus, Reply, Search, Send, Settings, Users, Video, X } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Check, Flag, MailPlus, LockKeyhole, MessageCircle, Phone, Pin, Plus, Reply, Search, Send, Settings, Users, Video, X } from 'lucide-react'
 import { callPeer, defaultCommunication, idFor, type Chat, type ChatContact, type Role } from './domain'
 import { Empty, Modal, normal, RoleName, useWorkspace } from './ui'
 
@@ -13,7 +13,7 @@ const contactRoles:Record<Role,[string,string]> = {
 }
 
 export function ChatPage({showPermissions,management=false}:{showPermissions?:()=>void;management?:boolean}={}) {
-  const {data,t,en,post,tell} = useWorkspace()
+  const {data,t,en,post,tell,go} = useWorkspace()
   const user = data.user?.id ?? ''
   const previewKey='halaqat-chat-preview:'+user
   const [previews,setPreviews]=useState(()=>localStorage.getItem(previewKey)!=='off')
@@ -45,6 +45,7 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   }
   const chats = data.chats.filter(item=>!management||!item.circleId&&item.members.includes(user)).sort((a,b)=>Number(b.pinnedBy.includes(user))-Number(a.pinnedBy.includes(user)) || (b.messages.at(-1)?.time ?? '').localeCompare(a.messages.at(-1)?.time ?? ''))
   const chat = chats.find(item=>item.id===selected)
+  const appointments=chat?(data.lessons??[]).filter(lesson=>lesson.status==='scheduled'||lesson.status==='live').filter(lesson=>lesson.chatId===chat.id||!lesson.chatId&&lesson.kind==='circle'&&lesson.circleId===chat.circleId).slice(0,4):[]
   const unread = (item:Chat) => item.messages.filter(message=>message.from!==user&&!message.readBy.includes(user)).length
   const unreadCount = chat ? unread(chat) : 0
   const visible = chats.filter(item=>normal(title(item)).includes(normal(threadQuery)))
@@ -149,7 +150,10 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   </>
 
   return <div className={management?"messenger-workspace admin-inbox":"messenger-workspace"}>
-    {tab==='calls'&&<ChatCallList {...calling} openChats={()=>setTab('messages')}/>}
+    {tab==='calls'&&<>
+      <div className="lesson-call-launch"><button className="btn btn-outline compact" type="button" onClick={()=>go('lessons')}><CalendarDays size={18}/>{t('جلسات التسميع والتقويم','Live sessions and calendar')}</button></div>
+      <ChatCallList {...calling} openChats={()=>setTab('messages')}/>
+    </>}
     {tab==='contacts'&&<section className="messenger-tab-content">
       <h2>{t('جهات اتصال الحلقة','Circle contacts')}</h2>
       <label className="search"><Search size={17}/><input type="search" aria-label={t('البحث في جهات الاتصال','Search contacts')}
@@ -208,6 +212,10 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
         <button type="button" className="icon-button messenger-back" aria-label={t('العودة إلى المحادثات','Back to conversations')} onClick={()=>openThread('')}><ArrowLeft size={21}/></button>
         <span className="stat-icon tint-green"><MessageCircle size={20}/></span>
         <div><h2>{title(chat)}</h2><p>{chat.circleId?t('مجموعة الحلقة','Circle group'):otherMember?<RoleName role={otherMember.role}/>:t('محادثة فردية','Direct conversation')}</p></div>
+        {!management&&data.user?.role==='teacher'&&data.lessonTeacherScheduling&&<button type="button" className="icon-button" aria-label={t('جدولة جلسة','Schedule a session')} onClick={()=>{
+          sessionStorage.setItem('halaqat-plan-lesson',JSON.stringify({chatId:chat.id,circleId:chat.circleId,studentId:chat.students[0]}))
+          go('lessons')
+        }}><CalendarDays size={17}/></button>}
         {canCall&&<span className="messenger-call-actions">
           <button type="button" className="icon-button" disabled={calling.busy||!communication.audio} aria-label={t('مكالمة صوتية','Voice call')} onClick={()=>calling.start(chat,'audio')}><Phone size={18}/></button>
           <button type="button" className="icon-button" disabled={calling.busy||!communication.video} aria-label={t('مكالمة مرئية','Video call')} onClick={()=>calling.start(chat,'video')}><Video size={18}/></button>
@@ -226,6 +234,9 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
       </header>
       {searching&&<label className="search messenger-message-search"><Search size={17}/><input autoFocus type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder={t('بحث داخل المحادثة','Search conversation')} aria-label={t('بحث داخل المحادثة','Search conversation')}/></label>}
       <div className="messenger-messages" role="log" aria-label={t('الرسائل','Messages')} ref={list} onScroll={event=>{const node=event.currentTarget;follow.current=node.scrollHeight-node.scrollTop-node.clientHeight<96}}>
+        {appointments.map(lesson=><button className="lesson-chat-card" key={lesson.id} type="button" onClick={()=>{
+          sessionStorage.setItem('halaqat-open-lesson',lesson.id);go('lessons')
+        }}><CalendarDays size={18}/><span><strong>{lesson.title}</strong><small>{new Intl.DateTimeFormat(en?'en-GB':'ar-SA-u-ca-gregory',{dateStyle:'medium',timeStyle:'short',timeZone:lesson.zone}).format(new Date(lesson.startsAt))} · {lesson.zone}</small><small>{lesson.media==='video'?t('صوت وفيديو','Audio and video'):t('صوت فقط','Audio only')} · {Math.round((Date.parse(lesson.endsAt)-Date.parse(lesson.startsAt))/60_000)} {t('دقيقة','minutes')}</small></span></button>)}
         {messages.map(message=><article className={'message '+(message.from===user?'outgoing':'incoming')} key={message.id}>
           <strong className="message-sender">{message.from===user?t('أنت','You'):accounts.get(message.from)?.name??t('عضو الحلقة','Circle member')}
             {accounts.get(message.from)&&<small className="chat-role" data-role={accounts.get(message.from)?.role}><RoleName role={accounts.get(message.from)!.role}/></small>}</strong>

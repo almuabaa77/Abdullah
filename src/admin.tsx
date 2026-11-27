@@ -7,6 +7,7 @@ import type { Circle, Prize, Student, User } from './domain'
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
+import { LessonCenter } from './lesson-center'
 import { ChatPage } from './chat'
 import { AdminChats } from './admin-chats'
 import { Exams, Leaves } from './features'
@@ -28,6 +29,7 @@ const sections = [
   {id:'circles',group:'school',icon:BookOpen,label:['الحلقات','Circles'],short:['الحلقات','Circles'],add:['إضافة حلقة','Add circle'],edit:'circle',search:true},
   {id:'links',group:'school',icon:Link2,label:['ربط الأبناء','Family links']},
   {id:'duplicates',group:'school',icon:ShieldAlert,label:['الأرقام المكررة','Duplicate numbers']},
+  {id:'lessons',group:'services',icon:CalendarDays,label:['جلسات التسميع والاجتماعات','Recitation sessions & meetings']},
   {id:'chats',group:'services',icon:MessageCircle,label:['الإشراف على المحادثات','Conversation moderation']},
   {id:'exams',group:'services',icon:CalendarDays,label:['الاختبارات','Assessments']},
   {id:'leaves',group:'services',icon:UserCheck,label:['الاستئذانات','Leave requests']},
@@ -210,6 +212,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         {tab==='records'&&<Records embedded/>}
         {tab==='exams'&&<Exams embedded/>}
         {tab==='leaves'&&<Leaves embedded/>}
+        {tab==='lessons'&&<LessonCenter management/>}
         {tab==='chats'&&<>
           <div className="seg-toggle admin-chat-switch">
             <button type="button" className={inbox?'selected':''} aria-pressed={inbox} onClick={()=>setInbox(true)}>{t('رسائل الإدارة','Administration inbox')}</button>

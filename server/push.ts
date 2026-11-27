@@ -16,6 +16,8 @@ const alertDescriptions:Record<string,[string,string]>={
   attendance:['هناك تحديث في الحضور.','There is an attendance update.'],
   'record-reminder':['لديك تنبيه من الإدارة لمراجعة سجل طالب.','Administration requested that you review a student record.'],
   'group-invitation':['لديك دعوة للانضمام إلى مجموعة الحلقة.','You have an invitation to join a circle group.'],
+  lesson:['لديك تحديث على جلسة مقررة.','There is an update about a scheduled session.'],
+  'lesson-reminder':['لديك جلسة مقررة قريبًا.','You have an upcoming session.'],
   message:['لديك رسالة جديدة.','You have a new message.'],
   call:['لديك مكالمة واردة.','You have an incoming call.'],
   'chat-report':['هناك بلاغ محادثة بانتظار المراجعة.','A conversation report is awaiting review.'],
@@ -51,6 +53,7 @@ function subscriptionFor(input:unknown):webPush.PushSubscription {
 
 function target(user:User,notice?:Notice) {
   const kind=notice?.kind
+  if(notice?.lesson)return user.role==='admin'?'/admin?section=lessons&lesson='+encodeURIComponent(notice.lesson.id):'/?lesson='+encodeURIComponent(notice.lesson.id)+'#lessons'
   if(user.role==='teacher'&&notice?.recordReminder)return '/?reminder='+encodeURIComponent(notice.id)+'#records'
   if(user.role==='admin') {
     if(kind==='message')return '/admin?section=chats&inbox=1'
