@@ -281,3 +281,31 @@ body:has(.call-shell) .modal-backdrop:has(>.entry-dialog) {z-index:110}
   .call-controls {width:min(94%,790px);margin:3px auto}
   .call-meta {gap:4px}
 }
+.call-quality-panel {display:grid;gap:9px;border:1px solid var(--call-line);border-radius:13px;padding:11px;background:#f7faf3}
+.call-quality-panel h3 {margin:0;display:flex;align-items:center;gap:6px;color:var(--call-forest)}
+.call-quality-panel p {font-size:.73rem}
+.call-quality-metrics {margin:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.call-quality-metrics div {min-width:0;padding:6px 5px;border-radius:8px;background:#e9f2e7}
+.call-quality-metrics dt {font-size:.66rem;color:#496457}
+.call-quality-metrics dd {margin:2px 0 0;color:var(--call-forest);font-size:.73rem;font-weight:650;overflow-wrap:anywhere}
+.call-audio-fallback {position:absolute;inset-block-start:8px;inset-inline-end:8px;display:inline-flex;align-items:center;gap:4px;max-width:72%;background:#fff2d8;color:#6f5017;padding:4px 7px;border-radius:8px;font-size:.68rem}
+.call-tile-current .call-audio-fallback {inset-block-start:47px}
+.call-head {padding-inline-start:max(clamp(12px,2vw,24px),env(safe-area-inset-right));padding-inline-end:max(clamp(12px,2vw,24px),env(safe-area-inset-left))}
+.call-stage {scrollbar-gutter:stable}
+.call-tile-footer,.call-side-tabs {overflow-wrap:anywhere}
+@media(max-width:550px) {
+  .call-head {padding-inline:8px}
+  .call-stage {scrollbar-gutter:auto}
+  .call-controls {padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right))}
+  .call-compose {padding-bottom:max(8px,env(safe-area-inset-bottom))}
+}
+@media (orientation:landscape) and (max-height:500px) {
+  .call-stage {padding-left:max(8px,env(safe-area-inset-left));padding-right:max(8px,env(safe-area-inset-right))}
+  .call-side.call-side-open {max-height:calc(100% - 8px)}
+}
+.call-video-player,.call-video-wait {position:absolute;inset:0}
+.call-video-wait {display:grid;place-content:center;justify-items:center;gap:6px;background:#e9f0e5;color:#2a5341;padding:8px 8px 40px}
+.call-video-wait small {font-size:.7rem}
+@media (min-width:971px) and (max-width:1240px), (max-width:390px) {
+  .call-side-tabs>button:not(.call-small-button) {flex-direction:column;gap:3px;white-space:nowrap}
+}

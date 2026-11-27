@@ -1,51 +1,45 @@
-import { lazy, Suspense, useState } from 'react'
-import { CheckCircle2, CircleAlert, RadioTower } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Activity, RadioTower, ShieldCheck } from 'lucide-react'
 import type { LessonRtcStatus } from './lessons'
+import { probeAgoraConnection, type ConnectionProbe } from './lesson-agora-client'
 import { useWorkspace } from './ui'
 
-const AgoraAppIdTest=lazy(()=>import('./lesson-agora-test').then(module=>({default:module.AgoraAppIdTest})))
-
+type StatusResult={mode:LessonRtcStatus['mode'];rest:LessonRtcStatus['rest'];probe?:ConnectionProbe}
 export function LessonAgoraStatus() {
   const {data,t,lessonRtcStatus}=useWorkspace()
-  const [status,setStatus]=useState<LessonRtcStatus>()
+  const running=useRef(false)
+  const [status,setStatus]=useState<StatusResult>()
   const [loading,setLoading]=useState(false)
   const [failure,setFailure]=useState('')
-  const [testing,setTesting]=useState(()=>new URLSearchParams(location.search).has('agoraTest'))
   async function run(){
-    setLoading(true);setFailure('')
-    try{setStatus(await lessonRtcStatus())}
-    catch(error){setFailure((error as Error).message)}
-    finally{setLoading(false)}
+    if(running.current)return
+    running.current=true;setLoading(true);setFailure('');setStatus(undefined)
+    try{
+      const {mode,rest,probe}=await lessonRtcStatus()
+      setStatus({mode,rest,probe:probe?await probeAgoraConnection(probe):undefined})
+    }catch(error){setFailure((error as Error).message||t('تعذر فحص الاتصال','Connection check failed'))}
+    finally{running.current=false;setLoading(false)}
   }
-  const fields=status&&[
-    {key:'AGORA_APP_ID',present:Boolean(status.appId)},
-    {key:'AGORA_APP_CERTIFICATE',present:status.certificate},
-    {key:'AGORA_CUSTOMER_ID',present:status.customerId},
-    {key:'AGORA_CUSTOMER_SECRET',present:status.customerSecret},
-    {key:'AGORA_COHOST_AUTH_ENABLED',present:status.coHostConfirmed},
-  ]
+  const result=status?.probe
   return <section className="lesson-agora" aria-label={t('فحص Agora','Agora diagnostics')}>
     <div className="lesson-agora-top"><div><RadioTower size={18}/><strong>{t('اتصال Agora','Agora connection')}</strong>
-      {data.lessonHealth?.encryptedMode&&<span className="badge status-active">{t('غرف الجلسات مشفّرة','Encrypted session rooms')}</span>}</div>
-      <div className="chip-row">
-        <button className="btn btn-primary compact" type="button" onClick={()=>setTesting(true)}>{t('تجربة Agora بمعرّف التطبيق','Test Agora with App ID')}</button>
-        <button className="btn btn-outline compact" type="button" disabled={loading} onClick={()=>void run()}>
-          {loading?t('جارٍ الفحص…','Checking…'):t('فحص اتصال Agora','Check Agora connection')}
-        </button>
-      </div>
+      {!!data.lessonHealth?.rtcConfigured&&<span className="badge status-active"><ShieldCheck size={13}/>{data.lessonHealth.encryptedMode?t('اتصال مشفّر','Encrypted connection'):t('اتصال موقّع','Signed connection')}</span>}</div>
+      <button className="btn btn-outline compact" type="button" disabled={loading} onClick={()=>void run()}>
+        <Activity size={16}/>{loading?t('جارٍ فحص الاتصال الحالي…','Checking current connection…'):t('فحص اتصال Agora','Check Agora connection')}
+      </button>
     </div>
     {failure&&<p className="error-text" role="alert">{failure}</p>}
     {status&&<div className="lesson-agora-results" role="status">
-      {status.appId&&<p><strong>{t('معرّف المشروع','Project ID')}</strong> <code dir="ltr">{status.appId}</code></p>}
-      <ul>{fields?.map(({key,present})=><li key={key}>{present?<CheckCircle2 size={15}/>:<CircleAlert size={15}/>}
-        <code dir="ltr">{key}</code><span>{present?t('مُعدّ','Set'):t('ناقص أو غير صالح','Missing or invalid')}</span></li>)}</ul>
-      <p>{status.rest==='accepted'?t('قبل Agora طلب الفحص. اختبر مكالمة بحسابين للتحقق من الشهادة وصلاحيات النشر.','Agora accepted the request. Test a call with two accounts to verify the certificate and publishing permissions.')
-        :status.rest==='rejected'?t('رفض Agora طلب الفحص. تحقّق من مفاتيح REST وانتماء المشروع إلى الحساب نفسه.','Agora rejected the request. Check the REST keys and make sure the project belongs to the same account.')
-        :status.rest==='unavailable'?t('تعذر الاتصال بخدمة Agora الآن. أعد الفحص بعد قليل.','The Agora service could not be reached. Try again shortly.')
-        :t('يبدأ فحص الخادم بعد إضافة معرّف المشروع ومفاتيح REST.','The server checks the connection after you add the project ID and REST keys.')}</p>
+      {result?.state==='connected'?<>
+        <strong>{t('نجح الاتصال بخادم Agora','Connected to the Agora server')}</strong>
+        <p>{t('مدة الانضمام','Join time')} <bdi>{result.elapsedMs}</bdi> {t('مللي ثانية','ms')}
+          {result.rtt>0&&<> · {t('زمن الاستجابة','Round-trip time')} <bdi>{result.rtt}</bdi> {t('مللي ثانية','ms')}</>}
+        </p>
+      </>:<p>{!result?t('إعداد الاتصال الحالي غير مكتمل.','The current connection is not configured.')
+          :result.state==='unsupported'?t('بيئة المتصفح الحالية لا تدعم اتصال Agora.','This browser environment does not support the Agora connection.')
+          :result.state==='timeout'?t('لم يكتمل الانضمام إلى Agora في الوقت المحدد.','The Agora join timed out.')
+          :t('تعذّر الانضمام إلى Agora بإعداد الاتصال الحالي.','Could not join Agora with the current connection setup.')}</p>}
+      {status.mode==='signed'&&status.rest!=='accepted'&&<p className="error-text">{t('تعذّر التحقق من واجهة Agora لإدارة الاتصال والحضور.','The Agora presence and moderation API could not be verified.')}</p>}
     </div>}
-    {testing&&<Suspense fallback={<p className="hint-line" role="status">{t('جارٍ فتح غرفة الاختبار…','Opening the test room…')}</p>}>
-      <AgoraAppIdTest close={()=>setTesting(false)}/>
-    </Suspense>}
   </section>
 }

@@ -114,6 +114,39 @@ test('repeating lessons skip holidays and an occurrence edit preserves the rest 
   assert.equal(state.lessons?.find(item=>item.id===old.id)?.title,'موعد معدل')
   assert.equal(state.lessons?.find(item=>item.localDate==='2026-12-03')?.title,draft.title)
 })
+test('permanent deletion requires a current manager confirmation and removes only the selected recurrence',()=>{
+  const {state,admin,teacher,outsider,learners,draft,action}=fixture()
+  action(admin,'lesson-save',{...draft,repeat:'daily',through:'2026-12-03'},before)
+  const [lesson,next]=state.lessons!
+  const deletion={id:lesson.id,revision:lesson.revision,confirmed:true}
+  assert.throws(()=>action(outsider,'lesson-delete',deletion,before),{status:403})
+  assert.throws(()=>action(learners[0],'lesson-delete',deletion,before),{status:403})
+  assert.throws(()=>action(teacher,'lesson-delete',{...deletion,confirmed:false},before))
+  assert.throws(()=>action(teacher,'lesson-delete',{...deletion,revision:lesson.revision+1},before),{status:409})
+  assert.ok(state.notices.some(notice=>notice.lesson?.id===lesson.id))
+  action(teacher,'lesson-delete',deletion,before)
+  runLessonSchedule(state,before)
+  assert.ok(!state.lessons?.some(item=>item.id===lesson.id))
+  assert.ok(!state.notices.some(notice=>notice.lesson?.id===lesson.id))
+  assert.ok(state.lessons?.some(item=>item.id===next.id))
+  assert.ok(state.lessonSeries?.[0].except.includes(lesson.localDate))
+  assert.ok(state.audit.some(event=>event.target===lesson.id&&event.action.includes('حذف')))
+})
+test('deleting a live encrypted session retires room access and retains unrelated student records',()=>{
+  const {state,admin,teacher,learners,action,create}=fixture()
+  const entry=create(),id=entry.id
+  const learner=learners[0]
+  action(teacher,'lesson-join',{id})
+  action(learner,'lesson-join',{id})
+  action(teacher,'lesson-admit',{id,userId:learner.id})
+  const room=prepareLessonMediaRoom(state,entry)
+  const grant=lessonRtcGrant(state,learner,id,at,true)
+  const prior=state.daily
+  action(admin,'lesson-delete',{id,revision:entry.revision,confirmed:true})
+  assert.equal(entry.mediaRoom,undefined)
+  assert.equal(state.daily,prior)
+  assert.throws(()=>recordLessonMediaPresence(state,learner,id,grant.uid,room.version,at),{status:403})
+})
 test('only admitted participants get a scoped grant; turn and media changes revoke previous grants',()=>{
   const {state,admin,teacher,outsider,learners,action,create}=fixture()
   const lesson=create(),id=lesson.id,learner=learners[0]

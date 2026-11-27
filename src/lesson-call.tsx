@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ArrowDown, ArrowLeft, ArrowUp, AudioLines, BookOpen, CalendarDays, Check, ChevronRight, ChevronUp, Clock3, Ellipsis, Grid2X2, Hand, Home, ListOrdered, Maximize2, MessageSquare, Mic, MicOff, PanelRightClose, PhoneOff, Settings, ShieldCheck, Signal, User, Users, Video, VideoOff, X } from 'lucide-react'
+import { Activity, ArrowDown, ArrowLeft, ArrowUp, AudioLines, BookOpen, CalendarDays, Check, ChevronRight, ChevronUp, Clock3, Ellipsis, Grid2X2, Hand, Home, ListOrdered, Maximize2, MessageSquare, Mic, MicOff, PanelRightClose, PhoneOff, Settings, ShieldCheck, Signal, User, Users, Video, VideoOff, X } from 'lucide-react'
 import { recitationAssignment, segmentLabel } from './domain'
-import { CallVideo, useLessonRtc, type CallDevices } from './lesson-rtc'
+import { CallVideo, useLessonRtc, type CallAudioProfile, type CallDevices, type CallVideoQuality } from './lesson-rtc'
 import type { LessonPerson, LessonView } from './lessons'
 import { CallPermissionStatus } from './lesson-permissions'
 import { Brand, Modal, useWorkspace } from './ui'
@@ -50,13 +50,16 @@ function LessonAssignments({lesson,studentId,showEmpty=false}:{lesson:LessonView
 function ParticipantTile({person,rtc,self,current,dominant=false}:{person:LessonPerson;rtc:Rtc;self:boolean;current:boolean;dominant?:boolean}) {
   const {t}=useWorkspace()
   const uid=person.mediaUid
-  const track=self?rtc.localVideo:uid===undefined?undefined:rtc.remote.find(item=>item.uid===uid)?.track
+  const fallback=!self&&uid!==undefined&&rtc.fallbackVideo.includes(uid)
+  const track=self?rtc.localVideo:uid===undefined||fallback?undefined:rtc.remote.find(item=>item.uid===uid)?.track
   const mic=self?rtc.micOn:uid!==undefined&&rtc.audioPeers.includes(uid)
   const level=rtc.levels[String(self?rtc.connection?.credentials.uid:uid)]??0
   const Microphone=mic?Mic:MicOff
   const micLabel=mic?t('الميكروفون يعمل','Microphone on'):t('الميكروفون مكتوم','Microphone muted')
   return <article className={'call-tile call-tile-'+person.role+(current?' call-tile-current':'')+(track?' has-video':'')+(dominant?' call-tile-primary':'')} aria-label={person.name}>
-    {track?<CallVideo track={track} local={self}/>:<div className="call-tile-placeholder"><CallAvatar name={person.name}/></div>}
+    {track?<CallVideo track={track} local={self} waiting={<><CallAvatar name={person.name}/><small>{t('جارٍ تشغيل الفيديو…','Starting video…')}</small></>}/>
+      :<div className="call-tile-placeholder"><CallAvatar name={person.name}/></div>}
+    {fallback&&<span className="call-audio-fallback"><Signal size={13}/>{t('صوت فقط لاتصال ضعيف','Audio over a weak connection')}</span>}
     {current&&<span className="call-now"><AudioLines size={15}/>{t('يسمّع الآن','Reciting now')}</span>}
     <div className="call-tile-footer">
       <span className={'call-mic-state'+(mic?' on':'')} title={micLabel} aria-label={micLabel}><Microphone size={16}/></span>
@@ -71,6 +74,32 @@ function ParticipantTile({person,rtc,self,current,dominant=false}:{person:Lesson
 
 function CallAction({icon,children,pressed,disabled,onClick,danger=false,desktop=false}:{icon:ReactNode;children:string;pressed?:boolean;disabled?:boolean;onClick:()=>void;danger?:boolean;desktop?:boolean}) {
   return <button type="button" className={'call-action'+(danger?' call-end':'')+(desktop?' call-desktop-action':'')} aria-label={children} aria-pressed={pressed} disabled={disabled} onClick={onClick}>{icon}<span>{children}</span></button>
+}
+
+function CallQuality({rtc,video}:{rtc:Rtc;video:boolean}) {
+  const {t}=useWorkspace()
+  return <section className="call-quality-panel" aria-label={t('جودة الصوت والفيديو','Sound and video quality')}>
+    <h3><Activity size={16}/>{t('جودة الاتصال','Connection quality')}</h3>
+    {rtc.stats&&rtc.network==='CONNECTED'&&<dl className="call-quality-metrics">
+      <div><dt>{t('الاستجابة','Latency')}</dt><dd>{rtc.stats.rtt>0?<><bdi>{rtc.stats.rtt}</bdi> {t('مللي ثانية','ms')}</>:'—'}</dd></div>
+      <div><dt>{t('الإرسال','Upload')}</dt><dd><bdi>{Math.round(rtc.stats.send/1000)}</bdi> {t('ك.بت/ث','kbps')}</dd></div>
+      <div><dt>{t('الاستقبال','Download')}</dt><dd><bdi>{Math.round(rtc.stats.receive/1000)}</bdi> {t('ك.بت/ث','kbps')}</dd></div>
+    </dl>}
+    <label>{t('نمط الميكروفون','Microphone profile')}
+      <select aria-label={t('نمط الميكروفون','Microphone profile')} value={rtc.audioProfile} onChange={event=>rtc.setAudioProfile(event.target.value as CallAudioProfile)}>
+        <option value="recitation">{t('التسميع · صوت طبيعي','Recitation · natural voice')}</option>
+        <option value="speech">{t('المحادثة · تخفيف الضوضاء','Conversation · noise reduction')}</option>
+      </select>
+    </label>
+    {rtc.micOn&&<p className="muted">{t('يُطبّق النمط عند تشغيل الميكروفون مرة أخرى.','The profile applies the next time you turn on the microphone.')}</p>}
+    {video&&<label>{t('جودة الفيديو','Video quality')}
+      <select aria-label={t('جودة الفيديو','Video quality')} value={rtc.videoQuality} onChange={event=>rtc.setVideoQuality(event.target.value as CallVideoQuality)}>
+        <option value="auto">{t('تلقائية · توازن الجودة والسرعة','Auto · balanced quality')}</option>
+        <option value="high">{t('عالية · حتى 720p','High · up to 720p')}</option>
+        <option value="data">{t('توفير البيانات','Data saver')}</option>
+      </select>
+    </label>}
+  </section>
 }
 
 export function LessonDeviceOptions({devices,setDevices,sources}:{devices:CallDevices;setDevices:(devices:CallDevices)=>void;sources:MediaDeviceInfo[]}) {
@@ -99,7 +128,7 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
   const [menu,setMenu]=useState(false)
   const [grid,setGrid]=useState(false)
   const [page,setPage]=useState(0)
-  const [confirm,setConfirm]=useState(false)
+  const [confirm,setConfirm]=useState<{kind:'end'|'delete';revision:number}>()
   const [message,setMessage]=useState('')
   const [sources,setSources]=useState<MediaDeviceInfo[]>([])
   const feed=useRef<HTMLDivElement>(null)
@@ -185,7 +214,10 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
     }
   }
   async function finish() {
-    if(!busy&&await actor('lesson-end'))setConfirm(false)
+    if(busy||!confirm)return
+    if(confirm.kind==='delete'){
+      if(await actor('lesson-delete',{revision:confirm.revision,confirmed:true}))close()
+    }else if(await actor('lesson-end'))setConfirm(undefined)
   }
   async function answerMic(accept:boolean) {
     if(accept&&!rtc.micOn&&!(await rtc.toggle('audio')))return
@@ -243,7 +275,7 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
         </div>}
         {lesson.self?.micRequested&&<div className="call-mic-request">
           <p>{t('طلب المحفّظ تشغيل الميكروفون لدورك.','The teacher asked you to enable your microphone.')}</p>
-          <button className="btn btn-primary compact" type="button" disabled={!rtc.canPublish||busy} onClick={()=>void answerMic(true)}>{t('تشغيل الميكروفون','Enable microphone')}</button>
+          <button className="btn btn-primary compact" type="button" disabled={!rtc.canPublish||rtc.deviceBusy||busy} onClick={()=>void answerMic(true)}>{t('تشغيل الميكروفون','Enable microphone')}</button>
           <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void answerMic(false)}>{t('ليس الآن','Not now')}</button>
         </div>}
         <div className={grid?'call-mosaic is-grid':'call-mosaic'}>
@@ -350,8 +382,9 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
             <button type="button" aria-pressed={grid} onClick={()=>{setGrid(true);setPage(0);closeSheet()}}><Grid2X2 size={15}/>{t('الشبكة','Grid')}</button>
           </div>
           <CallPermissionStatus permissions={rtc.permissions} videoAllowed={lesson.media==='video'}/>
+          <CallQuality rtc={rtc} video={lesson.media==='video'}/>
           <LessonDeviceOptions devices={devices} setDevices={setDevices} sources={sources}/>
-          {lesson.media==='video'&&<button type="button" className="btn btn-outline compact" onClick={()=>void rtc.switchAudioOnly()}>
+          {lesson.media==='video'&&<button type="button" className="btn btn-outline compact" disabled={rtc.deviceBusy} onClick={()=>void rtc.switchAudioOnly()}>
             {rtc.audioOnly?t('استعادة الفيديو','Restore video'):t('التبديل إلى الصوت لتقليل استهلاك الشبكة','Use audio to save bandwidth')}</button>}
           {!rtc.connection&&rtc.allowed&&<button type="button" className="btn btn-outline compact" disabled={rtc.loading} onClick={rtc.retry}>{t('إعادة الاتصال بالوسائط','Reconnect media')}</button>}
           {lesson.manager&&<>
@@ -359,10 +392,13 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
               <option value="audio">{t('صوت فقط','Audio only')}</option><option value="video">{t('صوت وفيديو','Audio and video')}</option>
             </select></label>}
             <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void actor('lesson-extend',{minutes:15})}>{t('تمديد 15 دقيقة','Extend by 15 minutes')}</button>
-            {!confirm?<button type="button" className="btn btn-outline compact lesson-danger" disabled={busy} onClick={()=>setConfirm(true)}>{t('إنهاء للجميع','End for everyone')}</button>:<div className="call-confirm" role="group" aria-label={t('تأكيد إنهاء الجلسة','Confirm session end')}>
-              <p>{t('سينقطع الاتصال عن جميع المشاركين ويظهر ملخص الجلسة.','Everyone will disconnect and see the session summary.')}</p>
-              <button className="btn btn-outline compact lesson-danger" type="button" disabled={busy} onClick={()=>void finish()}>{t('تأكيد الإنهاء','Confirm end')}</button>
-              <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>setConfirm(false)}>{t('تراجع','Cancel')}</button>
+            {!confirm?<div className="chip-row">
+              <button type="button" className="btn btn-outline compact lesson-danger" disabled={busy} onClick={()=>setConfirm({kind:'end',revision:lesson.revision})}>{t('إنهاء للجميع','End for everyone')}</button>
+              <button type="button" className="btn btn-outline compact lesson-danger" disabled={busy} onClick={()=>setConfirm({kind:'delete',revision:lesson.revision})}>{t('إنهاء وحذف الموعد','End and delete schedule')}</button>
+            </div>:<div className="call-confirm" role="group" aria-label={confirm.kind==='delete'?t('تأكيد حذف الموعد','Confirm schedule deletion'):t('تأكيد إنهاء الجلسة','Confirm session end')}>
+              <p>{confirm.kind==='delete'?t('ستنتهي المكالمة للجميع، ويُحذف الموعد والملخص والرسائل نهائيًا.','Everyone will disconnect, and the schedule, summary, and messages will be permanently deleted.'):t('سينقطع الاتصال عن جميع المشاركين ويظهر ملخص الجلسة.','Everyone will disconnect and see the session summary.')}</p>
+              <button className="btn lesson-delete-submit compact" type="button" disabled={busy} onClick={()=>void finish()}>{confirm.kind==='delete'?t('تأكيد الحذف','Confirm deletion'):t('تأكيد الإنهاء','Confirm end')}</button>
+              <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>setConfirm(undefined)}>{t('تراجع','Cancel')}</button>
             </div>}
           </>}
         </div>}
@@ -372,8 +408,8 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
         </div>}
       </aside>
       <footer className="call-controls" inert={modalSheet}>
-        <CallAction pressed={rtc.micOn} disabled={!rtc.canPublish} icon={rtc.micOn?<Mic/>:<MicOff/>} onClick={()=>void rtc.toggle('audio')}>{t('الميكروفون','Microphone')}</CallAction>
-        {lesson.media==='video'&&<CallAction pressed={rtc.cameraOn} disabled={!rtc.canVideo} icon={rtc.cameraOn?<Video/>:<VideoOff/>} onClick={()=>void rtc.toggle('video')}>{t('الكاميرا','Camera')}</CallAction>}
+        <CallAction pressed={rtc.micOn} disabled={!rtc.canPublish||rtc.deviceBusy} icon={rtc.micOn?<Mic/>:<MicOff/>} onClick={()=>void rtc.toggle('audio')}>{t('الميكروفون','Microphone')}</CallAction>
+        {lesson.media==='video'&&<CallAction pressed={rtc.cameraOn} disabled={!rtc.canVideo||rtc.deviceBusy} icon={rtc.cameraOn?<Video/>:<VideoOff/>} onClick={()=>void rtc.toggle('video')}>{t('الكاميرا','Camera')}</CallAction>}
         {data.user?.role==='student'&&<CallAction pressed={Boolean(lesson.self?.hand)} disabled={busy} icon={<Hand/>} onClick={()=>void actor('lesson-hand',{raised:!lesson.self?.hand})}>{lesson.self?.hand?t('خفض اليد','Lower hand'):t('رفع اليد','Raise hand')}</CallAction>}
         <CallAction desktop icon={<Users/>} onClick={()=>showPanel('people')}>{t('المشاركون','Participants')}</CallAction>
         <CallAction desktop icon={<MessageSquare/>} onClick={()=>showPanel('messages')}>{t('المحادثة','Chat')}</CallAction>

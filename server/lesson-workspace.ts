@@ -7,7 +7,7 @@ import { ApiError } from './errors'
 
 const minute=60_000
 export const lessonActions=new Set([
-  'lesson-save','lesson-cancel','lesson-join','lesson-leave','lesson-admit','lesson-decline','lesson-remove',
+  'lesson-save','lesson-cancel','lesson-delete','lesson-join','lesson-leave','lesson-admit','lesson-decline','lesson-remove',
   'lesson-hand','lesson-message','lesson-turn','lesson-order','lesson-mic-request','lesson-mic-answer',
   'lesson-media','lesson-extend','lesson-end','lesson-settings',
 ])
@@ -276,6 +276,18 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
   const seat=lesson.seats[id]
   const member=state.users.find(account=>account.id===id)
   const requireManager=()=>{if(!manager)throw forbidden()}
+  if(action==='lesson-delete'){
+    requireManager()
+    if(p.confirmed!==true)throw new ApiError('أكّد حذف موعد المكالمة نهائيًا')
+    if(p.revision!==lesson.revision)throw new ApiError('تغيّر الموعد. افتح تفاصيله وأكّد الحذف مجددًا.',409)
+    if(scheduledOrLive(lesson))complete(state,lesson,now,lesson.status==='live'?'completed':'cancelled')
+    const series=lesson.seriesId&&seriesList.find(item=>item.id===lesson.seriesId)
+    if(series&&!series.except.includes(lesson.localDate))series.except.push(lesson.localDate)
+    state.lessons=all.filter(item=>item.id!==lesson.id)
+    state.notices=state.notices.filter(notice=>notice.lesson?.id!==lesson.id)
+    audit(state,user,lesson,'حذف موعد المكالمة نهائيًا',now)
+    return
+  }
   if(action==='lesson-cancel'||action==='lesson-end'){
     requireManager()
     if(!scheduledOrLive(lesson))throw new ApiError('الجلسة مغلقة')

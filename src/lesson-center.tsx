@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowDownToLine, CalendarDays, ChevronLeft, ChevronRight, Clock3, Headphones, Mic, Plus, Radio, Search, Users, Video, VideoOff } from 'lucide-react'
+import { ArrowDownToLine, CalendarDays, ChevronLeft, ChevronRight, Clock3, Headphones, Mic, Plus, Radio, Search, Trash2, Users, Video, VideoOff } from 'lucide-react'
 import { dateKey, dayOffset, hasCompletedRecitation, segmentLabel } from './domain'
 import { CallAvatar, CallRole, LessonBack, LessonCall, LessonDeviceOptions, useCallClock, type SaveLesson } from './lesson-call'
 import { LessonAgoraStatus } from './lesson-agora-status'
@@ -287,6 +287,7 @@ export function LessonCenter({management=false}:{management?:boolean}={}) {
   const reload=useRef(refresh);reload.current=refresh
   const [limit,setLimit]=useState(25)
   const [error,setError]=useState('')
+  const [deleteTarget,setDeleteTarget]=useState<{id:string;revision:number}>()
   const all=data.lessons??[]
   const focused=all.find(lesson=>lesson.id===selected)
   const canPlan=management||data.user?.role==='teacher'&&data.lessonTeacherScheduling
@@ -317,8 +318,8 @@ export function LessonCenter({management=false}:{management?:boolean}={}) {
   })
   if(historyMode)list.sort((a,b)=>b.endsAt.localeCompare(a.endsAt))
   const live=all.filter(lesson=>lesson.status==='live'&&!lessonClosed(lesson,now)&&matches(lesson))
-  const close=()=>{setSelected('');setError('')}
-  const select=(id:string)=>{setError('');setSelected(id);setDevices(initialDevices)}
+  const close=()=>{setSelected('');setError('');setDeleteTarget(undefined)}
+  const select=(id:string)=>{setError('');setDeleteTarget(undefined);setSelected(id);setDevices(initialDevices)}
   async function save(action:string,values:Record<string,unknown>) {
     if(working.current)return false
     working.current=true;setBusy(true);setError('')
@@ -336,6 +337,12 @@ export function LessonCenter({management=false}:{management?:boolean}={}) {
         duration(period.from,period.to??person.seat?.lastSeen??period.from),
       ])??[]),
     ],'halaqat-session-'+focused.localDate,!en)).catch(error=>tell((error as Error).message,true))
+  }
+  async function deleteSchedule() {
+    if(deleteTarget&&await save('lesson-delete',{...deleteTarget,confirmed:true})){
+      close()
+      tell(t('حُذف موعد المكالمة','Call schedule deleted'))
+    }
   }
   return <div className="lesson-center page-stack">
     <section className="panel section-panel lesson-calendar">
@@ -401,6 +408,18 @@ export function LessonCenter({management=false}:{management?:boolean}={}) {
             {focused.status==='scheduled'&&!lessonClosed(focused,now)&&<button type="button" className="btn btn-outline compact lesson-danger" disabled={busy}
               onClick={()=>{if(window.confirm(t('إلغاء هذا الموعد؟','Cancel this session?')))void save('lesson-cancel',{id:focused.id})}}>{t('إلغاء الموعد','Cancel session')}</button>}
             <button type="button" className="btn btn-outline compact" onClick={exportAttendance}><ArrowDownToLine size={17}/>{t('تصدير الحضور','Export attendance')}</button>
+            {deleteTarget?.id!==focused.id&&<button type="button" className="btn btn-outline compact lesson-danger" disabled={busy} onClick={()=>setDeleteTarget({id:focused.id,revision:focused.revision})}>
+              <Trash2 size={16}/>{t('حذف الموعد نهائيًا','Permanently delete schedule')}
+            </button>}
+          </div>}
+          {focused.manager&&deleteTarget?.id===focused.id&&<div className="lesson-delete-confirm" role="group" aria-label={t('تأكيد حذف الموعد','Confirm schedule deletion')}>
+            <strong>{focused.title}</strong>
+            <p>{t('سيُحذف هذا الموعد وملخص المكالمة ورسائلها. الحذف نهائي.','This schedule, call summary, and call messages will be permanently deleted.')}</p>
+            {focused.seriesId&&<p>{t('ينطبق الحذف على هذا الموعد من السلسلة.','This deletes the selected occurrence from the series.')}</p>}
+            <div className="chip-row">
+              <button type="button" className="btn btn-outline compact" disabled={busy} onClick={()=>setDeleteTarget(undefined)}>{t('تراجع','Cancel')}</button>
+              <button type="button" className="btn lesson-delete-submit compact" disabled={busy} onClick={()=>void deleteSchedule()}>{t('تأكيد الحذف','Confirm deletion')}</button>
+            </div>
           </div>}
           {error&&<div className="error-box" role="alert">{error}</div>}
         </div>

@@ -374,7 +374,7 @@ function App() {
     return value
   }
   async function lessonRtcStatus():Promise<LessonRtcStatus> {
-    const response=await fetch('/api/lesson-rtc/status',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:'{}'})
+    const response=await fetch('/api/lesson-rtc/status',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({probe:true})})
     const value=await response.json()
     if(!response.ok)throw new Error(value.error||t('تعذر فحص Agora','Could not check Agora'))
     return value

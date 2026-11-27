@@ -75,18 +75,11 @@
 .lesson-agora-results {display:grid;gap:6px;font-size:.82rem}
 .lesson-agora-results p {margin:0;overflow-wrap:anywhere}
 .lesson-agora-results code {unicode-bidi:isolate;font-size:.75rem}
-.lesson-agora-results ul {display:grid;gap:4px;list-style:none;margin:0;padding:0}
-.lesson-agora-results li {display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0}
-.lesson-agora-results li svg {color:var(--green)}
-.lesson-agora-results li span {color:var(--muted)}
 .call-device-permissions {display:flex;align-items:center;flex-wrap:wrap;gap:5px}
 .call-device-permissions span {display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border:1px solid #dfe8dd;border-radius:20px;color:#455e52;background:#f3f6ef;font-size:.74rem}
 .call-device-permissions span[data-state=granted] {color:#1b5b38;background:#e9f4e8}
 .call-device-permissions span:is([data-state=denied],[data-state=missing],[data-state=busy],[data-state=unsupported]) {color:#763524;background:#faf0e7;border-color:#f0dfd1}
-.lesson-agora-trial .modal-body>p {margin:0;overflow-wrap:anywhere}
-.agora-trial-link {display:flex;flex-wrap:wrap;gap:7px}
-.agora-trial-link input {flex:1 1 230px;min-width:0}
-.agora-trial-call {display:grid;gap:10px}
-.agora-trial-videos {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.agora-trial-video {position:relative;isolation:isolate;display:grid;place-items:center;min-height:115px;aspect-ratio:4/3;overflow:hidden;border-radius:12px;background:#e4efe4;color:#34594b}
-.agora-trial-video span {position:absolute;inset-inline:6px;inset-block-end:6px;padding:4px 7px;border-radius:7px;background:#fffffff0;color:#143d31;font-size:.75rem;text-align:center}
+.lesson-delete-confirm {display:grid;gap:7px;border:1px solid #e9c1ba;border-radius:12px;padding:12px;background:#fcf0ed;color:#702b25}
+.lesson-delete-confirm p {margin:0}
+.lesson-delete-submit.btn {background:#9b292f;color:#fff;border:1px solid #9b292f}
+.lesson-delete-submit.btn:hover {background:#802128}

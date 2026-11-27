@@ -168,9 +168,11 @@
 .live-register {display:flex;flex-direction:column;gap:12px;min-width:0}
 .live-register-expanded {
   position:fixed;z-index:60;inset:0;
-  padding:max(12px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
+  padding:max(5px,env(safe-area-inset-top)) max(6px,env(safe-area-inset-right)) max(5px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));
   background:var(--paper);
 }
+.live-table-only-bar {display:flex;justify-content:flex-end;flex:none}
+.live-table-only-bar .btn {min-height:44px}
 body:has(.live-register-expanded) {overflow:hidden}
 .admin-shell:has(.live-register-expanded) :is(.topbar,.admin-hero,.admin-nav,.admin-bottom-nav) {visibility:hidden}
 .live-register-head,.live-register-head>div,.live-register-toolbar {
@@ -201,7 +203,7 @@ body:has(.live-register-expanded) {overflow:hidden}
   flex:1 1 auto;min-height:0;min-width:0;max-height:min(64vh,760px);overflow:auto;overscroll-behavior:contain;
   border:1px solid var(--border);border-radius:12px;background:var(--paper);
 }
-.live-register-expanded .live-table-scroll {max-height:none}
+.live-register-expanded .live-table-scroll {max-height:none;scrollbar-gutter:stable}
 .live-table {border-collapse:separate;border-spacing:0;width:100%;min-width:1000px;line-height:1.45}
 .live-table th,.live-table td {padding:8px 10px;border-block-end:1px solid var(--border);text-align:start;vertical-align:middle}
 .live-table tr:last-child td,.live-table tbody tr:last-child th {border-block-end:0}
@@ -260,13 +262,9 @@ body:has(.live-register-expanded) {overflow:hidden}
 }
 @media(max-height:490px) {
   .live-register-expanded {gap:5px}
-  .live-register-expanded .admin-live-metrics,.live-register-expanded .live-scroll-hint {display:none}
 }
 @media(min-width:1450px) {
   .live-scroll-hint {display:none}
-}
-@media(min-width:1050px) {
-  .live-register-expanded .live-scroll-hint {display:none}
 }
 
 .enrollment-details {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr));gap:10px}

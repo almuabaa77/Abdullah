@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { IAgoraRTCClient, IAgoraRTCRemoteUser, ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, ILocalVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng'
 import type { LessonCredentials, LessonMedia, LessonView } from './lessons'
 import { callDeviceError, useCallDevicePermissions } from './lesson-permissions'
-import { useWorkspace, type Tr } from './ui'
+import { configureLessonEncryption, createLiveAgoraClient } from './lesson-agora-client'
+import { useWorkspace } from './ui'
 
-type SessionCredentials = LessonCredentials|{appId:string;channel:string;uid:number;audio:boolean;video:boolean;token:null;encryption?:undefined;version?:undefined}
-type Connection = {client:IAgoraRTCClient; credentials:SessionCredentials; scope:string; resumeAudio:()=>void}
+type Connection = {client:IAgoraRTCClient; credentials:LessonCredentials; scope:string; resumeAudio:()=>void}
 export type CallDevices = {micId:string;cameraId:string;speakerId:string}
+export type CallVideoQuality='auto'|'high'|'data'
+export type CallAudioProfile='recitation'|'speech'
 type Remote = {uid:number|string; track:IRemoteVideoTrack}
 type RtcOptions = {
   scope:string; enabled:boolean; changing?:boolean; speak:boolean; media:LessonMedia
-  test?:boolean; publisherUids?:number[]; getCredentials:()=>Promise<SessionCredentials>
+  publisherUids?:number[]; priorityUids:number[]; getCredentials:()=>Promise<LessonCredentials>
 }
 
 export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
@@ -22,6 +24,8 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
     enabled:Boolean(data.lessonHealth?.rtcConfigured&&lesson.status==='live'&&lesson.self?.status==='admitted'),
     changing:lesson.mediaChanging,speak,media:lesson.media,getCredentials:()=>lessonRtc(lesson.id),
     publisherUids:encrypted?lesson.people.flatMap(person=>person.canPublish&&person.mediaUid!==undefined?[person.mediaUid]:[]):undefined,
+    priorityUids:lesson.people.flatMap(person=>person.mediaUid!==undefined&&
+      (person.id===lesson.currentStudent||person.id===lesson.teacherId||person.id===lesson.substituteId)?[person.mediaUid]:[]),
   },devices)
   const presence=useRef({report:lessonRtcPresence,refresh});presence.current={report:lessonRtcPresence,refresh}
   const grant=rtc.connection?.credentials
@@ -45,7 +49,7 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
   return rtc
 }
 
-export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publisherUids,getCredentials}:RtcOptions,devices:CallDevices) {
+function useAgoraRtc({scope,enabled,changing,speak,media,publisherUids,priorityUids,getCredentials}:RtcOptions,devices:CallDevices) {
   const {t}=useWorkspace()
   const [requested,setRequested]=useState(true)
   const {permissions,report}=useCallDevicePermissions(media==='video')
@@ -53,6 +57,15 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
   const [quality,setQuality]=useState(0)
+  const [videoQuality,setVideoQuality]=useState<CallVideoQuality>('auto')
+  const [audioProfile,setAudioProfile]=useState<CallAudioProfile>('recitation')
+  const [reduceUpload,setReduceUpload]=useState(false)
+  const [stats,setStats]=useState<{rtt:number;send:number;receive:number}>()
+  const [fallbackVideo,setFallbackVideo]=useState<(number|string)[]>([])
+  const priorityKey=priorityUids.join(',')
+  const playbackPolicy=useRef({videoQuality,priority:new Set(priorityUids)})
+  playbackPolicy.current={videoQuality,priority:new Set(priorityUids)}
+  const encoder=videoQuality==='data'||videoQuality==='auto'&&reduceUpload?'360p_4':videoQuality==='high'?'720p_2':'720p_1'
   const [network,setNetwork]=useState('')
   const [remote,setRemote]=useState<Remote[]>([])
   const [levels,setLevels]=useState<Record<string,number>>({})
@@ -69,7 +82,9 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
   const speakerRef=useRef(devices.speakerId);speakerRef.current=devices.speakerId
   const devicesRef=useRef(devices);devicesRef.current=devices
   const [localVideo,setLocalVideo]=useState<ICameraVideoTrack>()
+  const currentEncoder=useRef<{track:ICameraVideoTrack;encoder:typeof encoder}|undefined>(undefined)
   const [micOn,setMicOn]=useState(false),[cameraOn,setCameraOn]=useState(false)
+  const [deviceBusy,setDeviceBusy]=useState(false)
   const mic=useRef<IMicrophoneAudioTrack|undefined>(undefined),camera=useRef<ICameraVideoTrack|undefined>(undefined)
   const generation=useRef(0)
   const localAction=useRef(false)
@@ -92,19 +107,15 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
       try{
         const parameters=await credentials.current()
         if(!active())return
-        if(!test&&!parameters.token&&!parameters.encryption)throw new Error(t('تعذر التحقق من إذن دخول الجلسة.','Could not verify the session grant.'))
-        const {default:sdk}=await import('agora-rtc-sdk-ng')
+        if(!parameters.token&&!parameters.encryption)throw new Error(t('تعذر التحقق من إذن دخول الجلسة.','Could not verify the session grant.'))
+        const live=await createLiveAgoraClient()
         if(!active())return
-        sdk.setLogLevel(4)
-        if(!sdk.checkSystemRequirements())throw new Error(t('المتصفح لا يدعم مكالمات Agora. افتح المنصة في إصدار حديث.','This browser does not support Agora calls. Open the site in a current browser.'))
-        const codecs=await sdk.getSupportedCodec().catch(()=>undefined)
-        if(!active())return
-        const codec=codecs?.video.includes('H264')&&!codecs.video.includes('VP8')?'h264':'vp8'
-        client=sdk.createClient({mode:test?'rtc':'live',codec})
+        if(!live)throw new Error(t('المتصفح لا يدعم مكالمات Agora. افتح المنصة في إصدار حديث.','This browser does not support Agora calls. Open the site in a current browser.'))
+        const {sdk}=live
+        client=live.client
         const target=client
         if(parameters.encryption){
-          const salt=Uint8Array.from(atob(parameters.encryption.salt),character=>character.charCodeAt(0))
-          target.setEncryptionConfig('aes-256-gcm2',parameters.encryption.secret,salt)
+          configureLessonEncryption(target,parameters)
           target.on('crypt-error',()=>{if(active())setError(t('تعذر فك تشفير الوسائط. أعد الاتصال بالغرفة.','Could not decrypt the media. Reconnect to the room.'))})
         }
         target.on('connection-state-change',(next,previous)=>{
@@ -115,7 +126,20 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
             setError(t('انقطع اتصال الوسائط. أعد الاتصال من هذه الشاشة.','Media disconnected. Reconnect from this screen.'))
           }
         })
-        target.on('network-quality',stats=>{if(active())setQuality(Math.max(stats.uplinkNetworkQuality,stats.downlinkNetworkQuality))})
+        let poorSamples=0,goodSamples=0
+        target.on('network-quality',sample=>{
+          if(!active())return
+          setQuality(Math.max(sample.uplinkNetworkQuality,sample.downlinkNetworkQuality))
+          poorSamples=sample.uplinkNetworkQuality>=4?poorSamples+1:0
+          goodSamples=sample.uplinkNetworkQuality>0&&sample.uplinkNetworkQuality<=2?goodSamples+1:0
+          if(poorSamples===3)setReduceUpload(true)
+          if(goodSamples===5)setReduceUpload(false)
+          const measured=target.getRTCStats()
+          setStats({rtt:measured.RTT,send:measured.SendBitrate,receive:measured.RecvBitrate})
+        })
+        target.on('stream-fallback',(uid,state)=>{
+          if(active())setFallbackVideo(items=>state==='fallback'?[...new Set([...items,uid])]:items.filter(item=>item!==uid))
+        })
         target.on('volume-indicator',values=>{
           if(active())setLevels(Object.fromEntries(values.map(item=>[String(item.uid),item.level])))
         })
@@ -137,6 +161,11 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
           (!filterPublishers||typeof uid==='number'&&publisherPolicy.current.has(uid))
           &&(kind==='audio'||media==='video'&&!audioOnlyRef.current)
         const pending=new Set<string>()
+        const setStreamQuality=(peer:IAgoraRTCRemoteUser)=>{
+          const {videoQuality:quality,priority}=playbackPolicy.current
+          const requested=quality==='data'||quality==='auto'&&(typeof peer.uid!=='number'||!priority.has(peer.uid))?1:0
+          void target.setRemoteVideoStreamType(peer.uid,requested).catch(()=>{})
+        }
         const subscribe=async(peer:IAgoraRTCRemoteUser,kind:'audio'|'video')=>{
           const key=peer.uid+':'+kind
           if(!permitted(peer.uid,kind)||pending.has(key))return
@@ -152,6 +181,8 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
             }
             if(kind==='video'&&peer.videoTrack&&!audioOnlyRef.current){
               const track=peer.videoTrack
+              void target.setStreamFallbackOption(peer.uid,2).catch(()=>{})
+              setStreamQuality(peer)
               setRemote(items=>[...items.filter(item=>item.uid!==peer.uid),{uid:peer.uid,track}])
             }
           }catch{if(active())setError(t('تعذر تشغيل وسائط من أحد المشاركين.','One participant’s media could not be played.'))}
@@ -165,8 +196,12 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
                 track.stop()
                 void target.unsubscribe(peer,kind).catch(()=>{})
                 if(kind==='audio')setAudioPeers(items=>items.filter(id=>id!==peer.uid))
-                else setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+                else {
+                  setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+                  setFallbackVideo(items=>items.filter(id=>id!==peer.uid))
+                }
               }else if(permitted(peer.uid,kind)&&!track&&(kind==='audio'?peer.hasAudio:peer.hasVideo))void subscribe(peer,kind)
+              else if(kind==='video'&&track)setStreamQuality(peer)
             }
           }
         }
@@ -175,7 +210,10 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
         })
         target.on('user-unpublished',(peer,kind)=>{
           if(!active())return
-          if(kind==='video')setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+          if(kind==='video'){
+            setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+            setFallbackVideo(items=>items.filter(id=>id!==peer.uid))
+          }
           if(kind==='audio')setAudioPeers(items=>items.filter(id=>id!==peer.uid))
         })
         target.on('user-left',peer=>{
@@ -183,6 +221,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
           if(!active())return
           setRemote(items=>items.filter(item=>item.uid!==peer.uid))
           setAudioPeers(items=>items.filter(id=>id!==peer.uid))
+          setFallbackVideo(items=>items.filter(id=>id!==peer.uid))
         })
         if(parameters.token){
           const renew=async()=>{
@@ -199,17 +238,23 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
           target.on('token-privilege-will-expire',()=>void renew())
           target.on('token-privilege-did-expire',()=>{if(active()){setRequested(false);setError(t('انتهت صلاحية الاتصال. أعد محاولة الاتصال.','The connection grant expired. Connect again.'))}})
         }
-        if(!test)await target.setClientRole(parameters.audio?'host':'audience')
+        await target.setClientRole(parameters.audio?'host':'audience')
+        if(parameters.video){
+          try{
+            target.setLowStreamParameter({width:320,height:180,framerate:12,bitrate:140})
+            await target.enableDualStream()
+          }catch{ /* Playback can use the main stream on SDKs without dual-stream support. */ }
+        }
         if(!active())return
-        const uid=await target.join(parameters.appId,parameters.channel,parameters.token,test?null:parameters.uid)
+        await target.join(parameters.appId,parameters.channel,parameters.token,parameters.uid)
         if(!active()){void target.leave().catch(()=>{});return}
         target.enableAudioVolumeIndicator()
         refreshPeers()
-        setConnection({client:target,credentials:{...parameters,uid:typeof uid==='number'?uid:parameters.uid},scope,resumeAudio:()=>sdk.resumeAudioContext()})
+        setConnection({client:target,credentials:parameters,scope,resumeAudio:()=>sdk.resumeAudioContext()})
       }catch(error){
         if(active()){
           setRequested(false)
-          setError(test?testConnectionError(error,t):(error as Error).message||t('تعذر الاتصال بالوسائط.','Could not connect to media.'))
+          setError((error as Error).message||t('تعذر الاتصال بالوسائط.','Could not connect to media.'))
         }
       }finally{if(active())setLoading(false)}
     }
@@ -221,16 +266,21 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
       unbindPlayback?.()
       setConnection(undefined);setRemote([]);setAudioPeers([]);setPeerIds([]);setLevels({})
       setLocalVideo(undefined);setMicOn(false);setCameraOn(false);setLoading(false);setQuality(0);setNetwork('');setPlaybackBlocked(false)
+      setFallbackVideo([]);setReduceUpload(false);setStats(undefined)
       if(client)void client.leave().catch(()=>{})
     }
-  },[scope,requested,allowed,test,filterPublishers,media])
+  },[scope,requested,allowed,filterPublishers,media])
 
   useEffect(()=>{
     if(!connection)return
     for(const peer of connection.client.remoteUsers)if(peer.audioTrack)void routeAudio(peer.audioTrack,devices.speakerId)
   },[connection,devices.speakerId])
 
-  useEffect(()=>{if(connection)reconcileStreams.current()},[connection,audioOnly,publisherPolicyKey])
+  useEffect(()=>{if(connection)reconcileStreams.current()},[connection,audioOnly,publisherPolicyKey,priorityKey,videoQuality])
+  useEffect(()=>{
+    if(!localVideo||currentEncoder.current?.track===localVideo&&currentEncoder.current.encoder===encoder)return
+    void localVideo.setEncoderConfiguration(encoder).then(()=>{currentEncoder.current={track:localVideo,encoder}}).catch(()=>{})
+  },[localVideo,encoder])
 
   async function toggle(kind:'audio'|'video',wanted?:boolean) {
     if(!connection||connection.scope!==scope||network!=='CONNECTED'||!speak||localAction.current||!connection.credentials[kind])return false
@@ -240,6 +290,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
     if(wanted===Boolean(current))return true
     setError('')
     localAction.current=true
+    setDeviceBusy(true)
     try{
       if(current){
         await connection.client.unpublish(current)
@@ -247,7 +298,11 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
         ref.current=undefined
       }else {
         const {default:sdk}=await import('agora-rtc-sdk-ng')
-        const track=kind==='audio'?await sdk.createMicrophoneAudioTrack({microphoneId:devicesRef.current.micId||undefined}):await sdk.createCameraVideoTrack({cameraId:devicesRef.current.cameraId||undefined,encoderConfig:'360p_4'})
+        const speech=audioProfile==='speech'
+        const track=kind==='audio'?await sdk.createMicrophoneAudioTrack({
+          microphoneId:devicesRef.current.micId||undefined,encoderConfig:speech?'speech_standard':'music_standard',
+          AEC:true,ANS:speech,AGC:speech,
+        }):await sdk.createCameraVideoTrack({cameraId:devicesRef.current.cameraId||undefined,encoderConfig:encoder})
         try {
           if(attempt!==generation.current){track.close();return}
           await connection.client.publish(track)
@@ -255,7 +310,10 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
         } catch(error){track.close();throw error}
         report(kind,true)
         if(kind==='audio')mic.current=track as IMicrophoneAudioTrack
-        else camera.current=track as ICameraVideoTrack
+        else {
+          camera.current=track as ICameraVideoTrack
+          currentEncoder.current={track:camera.current,encoder}
+        }
         track.on('track-ended',()=>{
           if(attempt!==generation.current||ref.current!==track)return
           ref.current=undefined
@@ -276,7 +334,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
     }catch(error){
       if(attempt===generation.current){report(kind,false,error);setError(callDeviceError(error,kind,t))}
       return false
-    }finally{localAction.current=false}
+    }finally{localAction.current=false;setDeviceBusy(false)}
   }
   const canPublish=Boolean(connection&&network==='CONNECTED'&&connection.scope===scope&&speak&&connection.credentials.audio)
   const canVideo=Boolean(canPublish&&connection?.credentials.video&&media==='video'&&!audioOnly)
@@ -302,17 +360,9 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publi
     }
     setPlaybackBlocked(false)
   }
-  return {connection,loading,error,quality,network,remote,levels,audioPeers,peerIds,micOn,cameraOn,localVideo,permissions,
+  return {connection,loading,error,quality,network,remote,levels,audioPeers,peerIds,micOn,cameraOn,deviceBusy,localVideo,permissions,
+    videoQuality,setVideoQuality,audioProfile,setAudioProfile,stats,fallbackVideo,
     canPublish,canVideo,allowed,audioOnly,playbackBlocked,resumeAudio,switchAudioOnly,toggle,retry:()=>{setError('');setRequested(true)}}
-}
-
-function testConnectionError(error:unknown,t:Tr) {
-  const failure=error as {code?:string;message?:string}
-  const detail=(failure.code??'')+' '+(failure.message??'')
-  if(/invalid vendor key|invalid app\s*id|cannot find appid|can not find appid/i.test(detail))return t('لم يتعرّف Agora على معرّف المشروع. راجع App ID وحالة المشروع في Agora Console.','Agora did not recognize this App ID. Check the ID and project status in Agora Console.')
-  if(/invalid.?token|token.*(?:required|missing|empty)|dynamic.use.static.key|no.token/i.test(detail))return t('رفض Agora الانضمام بالمعرّف فقط. اختر مشروع اختبار يسمح بـ App ID Only في Agora Console.','Agora rejected App ID-only joining. Use a test project that allows App ID Only in Agora Console.')
-  return failure.code?t('تعذر اتصال اختبار Agora','Could not connect to Agora')+' ('+failure.code+')':
-    failure.message||t('تعذر اتصال اختبار Agora. أعد المحاولة.','Could not connect to Agora. Try again.')
 }
 
 async function routeAudio(track:IRemoteAudioTrack,device:string) {
@@ -321,12 +371,28 @@ async function routeAudio(track:IRemoteAudioTrack,device:string) {
   }
 }
 
-export function CallVideo({track,local=false}:{track:IRemoteVideoTrack|ILocalVideoTrack;local?:boolean}) {
+export function CallVideo({track,local=false,waiting}:{track:IRemoteVideoTrack|ILocalVideoTrack;local?:boolean;waiting:ReactNode}) {
   const box=useRef<HTMLDivElement>(null)
+  const [visibleTrack,setVisibleTrack]=useState<IRemoteVideoTrack|ILocalVideoTrack>()
   useEffect(()=>{
-    if(!box.current)return
-    track.play(box.current,{fit:'cover',mirror:local})
-    return ()=>track.stop()
+    const node=box.current
+    if(!node)return
+    const onFrame=()=>{
+      const video=node.querySelector('video')
+      if(video&&video.readyState>=HTMLMediaElement.HAVE_CURRENT_DATA)setVisibleTrack(track)
+    }
+    node.addEventListener('loadeddata',onFrame,true)
+    node.addEventListener('playing',onFrame,true)
+    track.play(node,{fit:'cover',mirror:local})
+    onFrame()
+    return ()=>{
+      node.removeEventListener('loadeddata',onFrame,true)
+      node.removeEventListener('playing',onFrame,true)
+      track.stop()
+    }
   },[track,local])
-  return <div ref={box} className="call-tile-video" aria-hidden="true"/>
+  return <div className="call-tile-video" aria-hidden="true">
+    <div ref={box} className="call-video-player"/>
+    {visibleTrack!==track&&<div className="call-video-wait">{waiting}</div>}
+  </div>
 }

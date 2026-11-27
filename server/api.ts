@@ -1,4 +1,5 @@
 import type { AgoraEnvironment } from './agora'
+import { newLessonMediaRoom } from './lesson-media-policy'
 import type { LessonCredentials, LessonRtcStatus } from '../src/lessons'
 import { ApiError } from './errors'
 import { applyLessonAction, lessonActions, lessonRtcGrant, lessonNoticeAllowed, prepareLessonMediaRoom, projectLessons, recordLessonMediaPresence } from './lesson-workspace'
@@ -944,7 +945,17 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       if(rtcStatusRoute) {
         if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()
         if(!rtcStatus)throw new ApiError('فحص Agora متاح على خادم الاستضافة',503)
-        return Response.json(await rtcStatus(),{headers})
+        const status:LessonRtcStatus={...await rtcStatus(),mode:rtcAppId?'encrypted':rtc?'signed':'disabled'}
+        if(payload.probe===true){
+          if(rtcAppId){
+            const room=newLessonMediaRoom(0)
+            status.probe={appId:rtcAppId,channel:room.channel,uid:1,token:null,audio:false,video:false,
+              encryption:{secret:room.secret,salt:room.salt},version:0}
+          }else if(rtc){
+            status.probe=rtc({lessonId:'diagnostic-'+crypto.randomUUID(),uid:1,audio:false,video:false,ttl:35})
+          }
+        }
+        return Response.json(status,{headers})
       }
       if(rtcRoute) {
         if(!user||user.status!=='active'||identity.workspace!=='school')return deny()
@@ -1001,7 +1012,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       const previousNotices=state.notices.length
       if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})
       state.operations.push(operationKey)
-      if (!(await repo.write(identity.workspace,current.revision,state,state.notices.slice(0,state.notices.length-previousNotices).filter(notice=>!notice.announcement||notice.announcement.publishedAt)))) continue
+      if (!(await repo.write(identity.workspace,current.revision,state,state.notices.slice(0,Math.max(0,state.notices.length-previousNotices)).filter(notice=>!notice.announcement||notice.announcement.publishedAt)))) continue
       user = state.users.find(x => x.id === identity.id) ?? null
       return Response.json(project(state,user,current.revision + 1,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})
     }

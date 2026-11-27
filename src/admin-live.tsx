@@ -28,7 +28,9 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
   const [clock,setClock] = useState(Date.now)
   const pendingSend = useRef(false)
   const nativeFullscreen = useRef(false)
+  const orientationLocked = useRef(false)
   const expandButton = useRef<HTMLButtonElement>(null)
+  const exitButton = useRef<HTMLButtonElement>(null)
   const date=selectedDate||data.date
   const records = new Map(data.daily.filter(record=>record.date===date).map(record=>[record.studentId,record]))
   const students = data.students.filter(student=>(student.active||records.has(student.id)) && (!circleId||student.circleId===circleId) && matches(student,query))
@@ -75,30 +77,35 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
     if(expanded) {
       setExpanded(false)
       if(nativeFullscreen.current&&document.fullscreenElement)await document.exitFullscreen().catch(()=>{})
+      requestAnimationFrame(()=>expandButton.current?.focus())
       return
     }
+    if(panel!=='records')return
     setExpanded(true)
     if(!document.fullscreenEnabled||document.fullscreenElement)return
     try {
       await document.documentElement.requestFullscreen()
       nativeFullscreen.current=true
       if(matchMedia('(pointer: coarse)').matches) {
-        await (screen.orientation as OrientationLock | undefined)?.lock?.('landscape')
+        const orientation=screen.orientation as OrientationLock | undefined
+        if(orientation?.lock){await orientation.lock('landscape');orientationLocked.current=true}
       }
     } catch { /* The table still fills the viewport and scrolls on browsers without these APIs. */ }
   }
   useEffect(()=>{
     if(!expanded)return
+    exitButton.current?.focus()
     function onFullscreenChange() {
       if(nativeFullscreen.current&&!document.fullscreenElement){
         nativeFullscreen.current=false
         setExpanded(false)
+        requestAnimationFrame(()=>expandButton.current?.focus())
       }
     }
     function onEscape(event:KeyboardEvent) {
       if(event.key==='Escape'&&!nativeFullscreen.current&&!document.querySelector('.modal-backdrop')){
         setExpanded(false)
-        expandButton.current?.focus()
+        requestAnimationFrame(()=>expandButton.current?.focus())
       }
     }
     document.addEventListener('fullscreenchange',onFullscreenChange)
@@ -108,6 +115,8 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       document.removeEventListener('keydown',onEscape)
       if(nativeFullscreen.current&&document.fullscreenElement)void document.exitFullscreen().catch(()=>{})
       nativeFullscreen.current=false
+      if(orientationLocked.current)screen.orientation?.unlock()
+      orientationLocked.current=false
     }
   },[expanded])
 
@@ -157,13 +166,13 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
   }
 
   return <div className={'live-register'+(expanded?' live-register-expanded':'')}>
+    {!expanded&&<>
     <header className="live-register-head">
       <div><h2>{t('المتابعة المباشرة','Live monitoring')}</h2>
         <span className={'live-status'+(status==='live'&&online?' connected':'')} role="status"><Radio size={15}/>{connectionLabel}</span></div>
-      <button ref={expandButton} className="btn btn-outline compact" type="button" aria-pressed={expanded} onClick={()=>void toggleExpanded()}>
-        {expanded?<Minimize size={17}/>:<Maximize size={17}/>}
-        {expanded?t('خروج من ملء الشاشة','Exit full screen'):t('عرض ملء الشاشة','Full screen')}
-      </button>
+      {panel==='records'&&<button ref={expandButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
+        <Maximize size={17}/>{t('الجدول بملء الشاشة','Full-screen table')}
+      </button>}
     </header>
     <div className="live-register-toolbar">
       <label className="circle-picker"><select aria-label={t('تصفية الحلقات','Filter circles')} value={circleId} onChange={event=>{setCircleId(event.target.value);setLimit(pageSize)}}><option value="">{t('جميع الحلقات','All circles')}</option>{data.circles.map(circle=><option key={circle.id} value={circle.id}>{circle.name}</option>)}</select></label>
@@ -183,9 +192,14 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
         ['activity',Activity,t('آخر النشاط','Activity')],
       ] as const).map(([id,Icon,title])=><button type="button" key={id} className={panel===id?'selected':''} aria-pressed={panel===id} onClick={()=>{setPanel(id);setLimit(pageSize);if(id==='reminders')setFilter('all')}}><Icon size={16}/>{title}</button>)}
     </div>
+    </>}
 
     {panel==='records'&&<section className="live-pane" aria-label={t('سجلات الطلاب','Student records')}>
-      <p className="live-scroll-hint">{t('مرّر الجدول أفقيًا أو أدر هاتفك لعرض المزيد من الأعمدة.','Swipe across the table or rotate your phone to see more columns.')}</p>
+      {expanded?<div className="live-table-only-bar">
+        <button ref={exitButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
+          <Minimize size={17}/>{t('خروج من ملء الشاشة','Exit full screen')}
+        </button>
+      </div>:<p className="live-scroll-hint">{t('مرّر الجدول أفقيًا أو أدر هاتفك لعرض المزيد من الأعمدة.','Swipe across the table or rotate your phone to see more columns.')}</p>}
       <div className="live-table-scroll" tabIndex={0} role="region" aria-label={t('جدول المتابعة قابل للتمرير','Scrollable monitoring table')}>
         <table className="live-table">
           <thead><tr>
@@ -228,7 +242,7 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       {visibleRows.length>limit&&<div className="live-more"><button className="btn btn-outline compact" type="button" onClick={()=>setLimit(limit+pageSize)}>{t('عرض طلاب إضافيين','Show more students')}</button></div>}
     </section>}
 
-    {panel==='reminders'&&<section className="live-pane live-list-pane" aria-label={t('الخانات التي تحتاج متابعة','Fields requiring follow-up')}>
+    {!expanded&&panel==='reminders'&&<section className="live-pane live-list-pane" aria-label={t('الخانات التي تحتاج متابعة','Fields requiring follow-up')}>
       <ul className="live-alerts">
         {alerts.slice(0,limit).map(({student,record,target})=>{
           const teacher=teacherFor(target)
@@ -244,7 +258,7 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       {alerts.length>limit&&<div className="live-more"><button className="btn btn-outline compact" type="button" onClick={()=>setLimit(limit+pageSize)}>{t('عرض تنبيهات إضافية','Show more reminders')}</button></div>}
     </section>}
 
-    {panel==='activity'&&<section className="live-pane live-list-pane" aria-label={t('آخر العمليات','Recent activity')}>
+    {!expanded&&panel==='activity'&&<section className="live-pane live-list-pane" aria-label={t('آخر العمليات','Recent activity')}>
       {events.length ? <ol className="live-activity">{events.map(event=><li key={event.id}>
         <strong>{nameFor(studentsById.get(event.studentId)!,en)}</strong>
         <small>{accounts.get(event.actorId)?.name ?? t('حساب سابق','Former account')} · <time dateTime={event.time}>{timeFormat.format(new Date(event.time))}</time></small>

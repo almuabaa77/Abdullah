@@ -39,6 +39,7 @@ export type LessonCredentials = {appId:string; channel:string; uid:number; audio
 export type LessonRtcStatus = {
   appId:string; certificate:boolean; customerId:boolean; customerSecret:boolean; coHostConfirmed:boolean
   rest:'pending'|'accepted'|'rejected'|'unavailable'
+  mode?:'signed'|'encrypted'|'disabled'; probe?:LessonCredentials
 }
 export type LessonHealth = {rtcConfigured:boolean; encryptedMode?:boolean; lastRun?:string; lastError?:string; pendingRestrictions?:number; scheduleConflicts?:number}
 export const lessonCapacity=24
