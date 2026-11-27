@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Activity, ArrowDown, ArrowLeft, ArrowUp, AudioLines, BookOpen, CalendarDays, Check, ChevronRight, ChevronUp, Clock3, Ellipsis, Grid2X2, Hand, Home, ListOrdered, Maximize2, MessageSquare, Mic, MicOff, PanelRightClose, PhoneOff, Settings, ShieldCheck, Signal, User, Users, Video, VideoOff, X } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent, type ReactNode } from 'react'
+import { Activity, ArrowDown, ArrowLeft, ArrowUp, AudioLines, BookOpen, CalendarDays, Check, ChevronRight, ChevronUp, Clock3, Ellipsis, Grid2X2, Hand, Home, ListOrdered, Maximize2, MessageSquare, Mic, MicOff, Minimize2, PanelRightClose, PhoneOff, Settings, ShieldCheck, Signal, Trophy, User, Users, Video, VideoOff, X } from 'lucide-react'
 import { recitationAssignment, segmentLabel } from './domain'
 import { CallVideo, useLessonRtc, type CallAudioProfile, type CallDevices, type CallVideoQuality } from './lesson-rtc'
 import type { LessonPerson, LessonView } from './lessons'
@@ -47,26 +47,76 @@ function LessonAssignments({lesson,studentId,showEmpty=false}:{lesson:LessonView
   </div></div>
 }
 
-function ParticipantTile({person,rtc,self,current,dominant=false}:{person:LessonPerson;rtc:Rtc;self:boolean;current:boolean;dominant?:boolean}) {
+function JoinBadge({order}:{order?:number}) {
   const {t}=useWorkspace()
+  if(!order)return null
+  const label=order===1?t('أول طالب انضم','First student to join'):t(`ترتيب الانضمام ${order}`,`Join order ${order}`)
+  return <span className="call-join-badge" data-first={order===1} title={label} role="img" aria-label={label}>
+    {order===1&&<Trophy size={13} aria-hidden="true"/>}<bdi aria-hidden="true">#{order}</bdi>
+  </span>
+}
+
+function ParticipantTile({person,rtc,self,current,dominant=false,zoomed,toggleZoom}:{
+  person:LessonPerson;rtc:Rtc;self:boolean;current:boolean;dominant?:boolean;zoomed:boolean;toggleZoom:()=>void
+}) {
+  const {t}=useWorkspace()
+  const press=useRef<{id:number;x:number;y:number;time:number}|undefined>(undefined)
+  const lastTap=useRef<{x:number;y:number;time:number}|undefined>(undefined)
+  const lastTouchAt=useRef(-Infinity)
   const uid=person.mediaUid
   const fallback=!self&&uid!==undefined&&rtc.fallbackVideo.includes(uid)
   const track=self?rtc.localVideo:uid===undefined||fallback?undefined:rtc.remote.find(item=>item.uid===uid)?.track
   const mic=self?rtc.micOn:uid!==undefined&&rtc.audioPeers.includes(uid)
   const level=rtc.levels[String(self?rtc.connection?.credentials.uid:uid)]??0
   const Microphone=mic?Mic:MicOff
+  const ZoomIcon=zoomed?Minimize2:Maximize2
   const micLabel=mic?t('الميكروفون يعمل','Microphone on'):t('الميكروفون مكتوم','Microphone muted')
-  return <article className={'call-tile call-tile-'+person.role+(current?' call-tile-current':'')+(track?' has-video':'')+(dominant?' call-tile-primary':'')} aria-label={person.name}>
-    {track?<CallVideo track={track} local={self} waiting={<><CallAvatar name={person.name}/><small>{t('جارٍ تشغيل الفيديو…','Starting video…')}</small></>}/>
-      :<div className="call-tile-placeholder"><CallAvatar name={person.name}/></div>}
-    {fallback&&<span className="call-audio-fallback"><Signal size={13}/>{t('صوت فقط لاتصال ضعيف','Audio over a weak connection')}</span>}
-    {current&&<span className="call-now"><AudioLines size={15}/>{t('يسمّع الآن','Reciting now')}</span>}
+  const zoomLabel=zoomed?t('الرجوع إلى البطاقات','Return to participant tiles')
+    :t(`تكبير بطاقة ${person.name}`,`Enlarge ${person.name}’s tile`)
+  const isControl=(target:EventTarget|null)=>target instanceof Element&&Boolean(target.closest('button'))
+  function startTap(event:PointerEvent) {
+    if(event.pointerType==='mouse'||!event.isPrimary||isControl(event.target))return
+    press.current={id:event.pointerId,x:event.clientX,y:event.clientY,time:performance.now()}
+  }
+  function finishTap(event:PointerEvent) {
+    if(event.pointerType==='mouse'||!event.isPrimary)return
+    const start=press.current
+    press.current=undefined
+    const time=performance.now(),x=event.clientX,y=event.clientY
+    lastTouchAt.current=time
+    if(!start||start.id!==event.pointerId||time-start.time>300||Math.hypot(x-start.x,y-start.y)>18){
+      lastTap.current=undefined
+      return
+    }
+    const previous=lastTap.current
+    if(previous&&time-previous.time<350&&Math.hypot(x-previous.x,y-previous.y)<30){
+      lastTap.current=undefined
+      toggleZoom()
+    }else lastTap.current={time,x,y}
+  }
+  return <article className={'call-tile call-tile-'+person.role+(current?' call-tile-current':'')+(track?' has-video':'')+
+    (dominant?' call-tile-primary':'')+(zoomed?' call-tile-zoomed':'')} aria-label={person.name}
+    onDoubleClick={event=>{if(!isControl(event.target)&&performance.now()-lastTouchAt.current>450)toggleZoom()}}
+    onPointerDown={startTap} onPointerUp={finishTap}
+    onPointerCancel={()=>{press.current=undefined;lastTap.current=undefined}}>
+    <div className="call-video-frame">
+      {track?<CallVideo track={track} local={self} waiting={<><CallAvatar name={person.name}/><small>{t('جارٍ تشغيل الفيديو…','Starting video…')}</small></>}/>
+        :<div className="call-tile-placeholder"><CallAvatar name={person.name}/></div>}
+      <div className="call-tile-top">
+        <div>{current&&<span className="call-now"><AudioLines size={15}/>{t('يسمّع الآن','Reciting now')}</span>}
+          <JoinBadge order={person.joinOrder}/></div>
+        <button className="call-tile-zoom" type="button" title={zoomLabel} aria-label={zoomLabel} onClick={toggleZoom}><ZoomIcon size={18}/></button>
+      </div>
+      {fallback&&<span className="call-audio-fallback"><Signal size={13}/>{t('صوت فقط لاتصال ضعيف','Audio over a weak connection')}</span>}
+    </div>
     <div className="call-tile-footer">
-      <span className={'call-mic-state'+(mic?' on':'')} title={micLabel} aria-label={micLabel}><Microphone size={16}/></span>
-      {mic&&level>5&&<span className="call-volume" role="meter" aria-label={t('مستوى الصوت','Volume')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={level}>
-        {[.45,.75,1,.66,.43].map((scale,index)=><i key={index} style={{height:3+scale*level*.15}}/>)}</span>}
-      <div className="call-tile-name"><strong>{person.name}{self&&<small> · {t('أنت','You')}</small>}</strong><CallRole role={person.role}/>
+      <div className="call-tile-name"><strong dir="auto">{person.name}{self&&<small> · {t('أنت','You')}</small>}</strong><CallRole role={person.role}/>
         {person.role==='admin'&&!mic&&<small className="call-monitor">{t('متابع','Observing')}</small>}
+      </div>
+      <div className="call-tile-audio">
+        {mic&&level>5&&<span className="call-volume" role="meter" aria-label={t('مستوى الصوت','Volume')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={level}>
+          {[.45,.75,1,.66,.43].map((scale,index)=><i key={index} style={{height:3+scale*level*.15}}/>)}</span>}
+        <span className={'call-mic-state'+(mic?' on':'')} title={micLabel} aria-label={micLabel}><Microphone size={16}/></span>
       </div>
     </div>
   </article>
@@ -118,7 +168,6 @@ export function LessonDeviceOptions({devices,setDevices,sources}:{devices:CallDe
 
 export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{lesson:LessonView;save:SaveLesson;busy:boolean;devices:CallDevices;setDevices:(value:CallDevices)=>void;close:()=>void;error:string}) {
   const {data,en,t,open,go}=useWorkspace()
-  const rtc=useLessonRtc(lesson,devices)
   const now=useCallClock()
   const [panel,setPanel]=useState<CallPanel>('queue')
   const [peek,setPeek]=useState<'queue'|'people'>('queue')
@@ -128,11 +177,15 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
   const [menu,setMenu]=useState(false)
   const [grid,setGrid]=useState(false)
   const [page,setPage]=useState(0)
+  const [enlarged,setEnlarged]=useState<string>()
+  const rtc=useLessonRtc(lesson,devices,enlarged)
   const [confirm,setConfirm]=useState<{kind:'end'|'delete';revision:number}>()
   const [message,setMessage]=useState('')
   const [sources,setSources]=useState<MediaDeviceInfo[]>([])
   const feed=useRef<HTMLDivElement>(null)
   const layout=useRef<HTMLDivElement>(null)
+  const stage=useRef<HTMLElement>(null)
+  const beforeZoom=useRef(0)
   const panelControl=useRef<HTMLDivElement>(null)
   const panelTrigger=useRef<HTMLElement|null>(null)
   const actor=(action:string,extra:Record<string,unknown>={})=>save(action,{id:lesson.id,...extra})
@@ -141,7 +194,21 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
     setPanel(next);setSheet(true);setShowSide(true);setMenu(false)
     if(next==='settings')void navigator.mediaDevices?.enumerateDevices().then(setSources).catch(()=>{})
   }
+  const priority={admin:0,teacher:1,student:2}
   const admitted=lesson.people.filter(person=>person.seat?.status==='admitted')
+    .sort((a,b)=>priority[a.role]-priority[b.role]||(a.joinOrder??Infinity)-(b.joinOrder??Infinity))
+  const zoomed=admitted.find(person=>person.id===enlarged)?.id
+  useEffect(()=>{if(enlarged&&!zoomed)setEnlarged(undefined)},[enlarged,zoomed])
+  function toggleZoom(id:string) {
+    if(id===zoomed){
+      setEnlarged(undefined)
+      requestAnimationFrame(()=>{if(stage.current)stage.current.scrollTop=beforeZoom.current})
+    }else{
+      beforeZoom.current=stage.current?.scrollTop??0
+      setEnlarged(id)
+      if(stage.current)stage.current.scrollTop=0
+    }
+  }
   const waiting=lesson.manager?lesson.people.filter(person=>person.seat?.status==='waiting'):[]
   const queue=lesson.order.flatMap(id=>{
     const person=lesson.people.find(member=>member.id===id)
@@ -155,12 +222,14 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
   const displayedQueue=[...(current?[current]:[]),...queue.filter(person=>person.id!==current?.id)]
   const host=admitted.find(person=>person.id===lesson.teacherId)??admitted.find(person=>person.id===lesson.substituteId)??admitted.find(person=>person.role==='teacher')
   const lead=current??host??admitted.find(person=>person.id===data.user?.id)??admitted[0]
-  const hero=[lead,host].filter((person,index,members):person is LessonPerson=>Boolean(person&&members.findIndex(member=>member?.id===person.id)===index))
-  const audience=admitted.filter(person=>!hero.some(member=>member.id===person.id)).sort((a,b)=>Number(b.role==='admin')-Number(a.role==='admin'))
+  const companion=admitted.length===2?admitted.find(person=>person.id!==lead?.id):undefined
+  const hero=[lead,companion??host].filter((person,index,members):person is LessonPerson=>Boolean(person&&members.findIndex(member=>member?.id===person.id)===index))
+  const audience=admitted.filter(person=>!hero.some(member=>member.id===person.id))
   const pageSize=grid?8:4
   const collection=grid?[...hero,...audience]:audience
   const pages=Math.max(1,Math.ceil(collection.length/pageSize))
   const shownPage=Math.min(page,pages-1)
+  const shownTiles=collection.filter((person,index)=>person.id===zoomed||Math.floor(index/pageSize)===shownPage)
   const mediaActive=rtc.network==='CONNECTED'
   const knownPeers=new Set(admitted.map(person=>person.mediaUid))
   const connected=mediaActive?Math.max(lesson.connected,rtc.peerIds.filter(uid=>typeof uid==='number'&&knownPeers.has(uid)).length+1):lesson.connected
@@ -228,8 +297,8 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
     {id:'people',label:t('المشاركون','Participants'),icon:Users},
     {id:'messages',label:t('المحادثة','Chat'),icon:MessageSquare},
   ]
-  const renderTile=(person:LessonPerson,dominant=false)=><ParticipantTile key={person.id} person={person} rtc={rtc} self={person.id===data.user?.id} current={person.id===current?.id} dominant={dominant}/>
-  return <Modal title={lesson.title} appearance="call-shell" fullScreen close={()=>modalSheet?closeSheet():menu?setMenu(false):void leave()}>
+  const renderTile=(person:LessonPerson,dominant=false)=><ParticipantTile key={person.id} person={person} rtc={rtc} self={person.id===data.user?.id} current={person.id===current?.id} dominant={dominant} zoomed={person.id===zoomed} toggleZoom={()=>toggleZoom(person.id)}/>
+  return <Modal title={lesson.title} appearance="call-shell" fullScreen close={()=>modalSheet?closeSheet():menu?setMenu(false):zoomed?toggleZoom(zoomed):void leave()}>
     <div ref={layout} className={'call-layout'+(!showSide?' call-side-collapsed':'')}>
       <nav className={'call-nav'+(menu?' call-nav-open':'')} aria-label={t('التنقل داخل المكالمة','Call navigation')}>
         <Brand/>
@@ -257,7 +326,7 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
           {waiting.length>0&&<button className="call-wait-count" type="button" onClick={()=>showPanel('queue')}>{waiting.length} {t('بانتظار القبول','waiting')}</button>}
         </div>
       </header>
-      <main className="call-stage" aria-label={t('مساحة التسميع','Recitation stage')} inert={modalSheet}>
+      <main ref={stage} className="call-stage" data-zoomed={Boolean(zoomed)} aria-label={t('مساحة التسميع','Recitation stage')} inert={modalSheet}>
         <span className="sr-only" role="status">{lastAnnouncement}</span>
         {endingSoon&&lesson.manager&&<div className="call-feedback">
           <p>{t('اقترب موعد انتهاء الجلسة.','The session is ending soon.')}</p>
@@ -278,10 +347,10 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
           <button className="btn btn-primary compact" type="button" disabled={!rtc.canPublish||rtc.deviceBusy||busy} onClick={()=>void answerMic(true)}>{t('تشغيل الميكروفون','Enable microphone')}</button>
           <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void answerMic(false)}>{t('ليس الآن','Not now')}</button>
         </div>}
-        <div className={grid?'call-mosaic is-grid':'call-mosaic'}>
+        <div className={'call-mosaic'+(grid?' is-grid':'')+(zoomed?' is-zoomed':'')}>
           {!grid&&<div className={'call-hero'+(hero.length===1?' call-hero-single':'')}>{hero.map((person,index)=>renderTile(person,index===0))}</div>}
           <LessonAssignments lesson={lesson} studentId={assignedStudent}/>
-          {collection.length>0&&<div className={'call-tiles'+(grid?' call-tiles-grid':'')}>{collection.slice(shownPage*pageSize,(shownPage+1)*pageSize).map(person=>renderTile(person))}</div>}
+          {collection.length>0&&<div className={'call-tiles'+(grid?' call-tiles-grid':'')}>{shownTiles.map(person=>renderTile(person))}</div>}
           {!grid&&next&&<button type="button" className="call-next" onClick={()=>showPanel('queue')}><ChevronRight size={17}/><strong>{t('التالي','Next')}</strong><span>{next.name}</span></button>}
           {!grid&&<section className="call-peek" aria-label={t('نظرة سريعة على المكالمة','Call at a glance')}>
             <div className="call-peek-grip"/>
@@ -292,7 +361,7 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
             <ul className="call-peek-list">
               {(peek==='queue'?displayedQueue:admitted).slice(0,2).map(person=><li key={person.id} className={peek==='queue'&&person.id===current?.id?'current':''}>
                 <CallAvatar name={person.name}/><strong>{person.name}</strong>
-                {peek==='people'?<CallRole role={person.role}/>:person.id===current?.id
+                {peek==='people'?<><CallRole role={person.role}/><JoinBadge order={person.joinOrder}/></>:person.id===current?.id
                   ?<><span>{t('الآن','Now')}</span><bdi>{clock(secondsSince(lesson.turnStartedAt,now)).slice(3)}</bdi></>
                   :person.id===next?.id&&<span>{t('التالي','Next')}</span>}
               </li>)}
@@ -304,7 +373,7 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
             </div>
           </section>}
         </div>
-        {pages>1&&<div className="call-pagination">
+        {pages>1&&!zoomed&&<div className="call-pagination">
           <button type="button" className="btn btn-outline compact" disabled={shownPage===0} onClick={()=>setPage(shownPage-1)}>{t('السابق','Previous')}</button>
           <span><bdi>{shownPage+1} / {pages}</bdi></span>
           <button type="button" className="btn btn-outline compact" disabled={shownPage+1===pages} onClick={()=>setPage(shownPage+1)}>{t('التالي','Next')}</button>
@@ -360,7 +429,7 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
         </div>}
         {panel==='people'&&<div className="call-panel-body"><h2>{t('المشاركون','Participants')} <span>{admitted.length}</span></h2>
           <ul className="call-roster">{admitted.map(person=><li key={person.id}>
-            <CallAvatar name={person.name}/><div className="call-roster-name"><strong>{person.name}</strong><CallRole role={person.role}/></div>
+            <CallAvatar name={person.name}/><div className="call-roster-name"><strong>{person.name}</strong><CallRole role={person.role}/></div><JoinBadge order={person.joinOrder}/>
             {lesson.manager&&person.role==='student'&&<button className="call-small-button call-reject" type="button" disabled={busy} aria-label={t('استبعاد','Remove')+' · '+person.name} onClick={()=>{if(window.confirm(t('استبعاد هذا المشارك من الجلسة؟','Remove this participant from the session?')))void actor('lesson-remove',{userId:person.id})}}><X size={17}/></button>}
           </li>)}</ul>
         </div>}

@@ -12,7 +12,7 @@ export type LessonAttendance = {from:string; to?:string}
 export type LessonSeat = {
   status:'waiting'|'admitted'|'declined'|'left'|'removed'
   at:string; rtcIndex:number; generation:number; hand?:boolean; periods:LessonAttendance[]; lastSeen?:string
-  micRequested?:boolean
+  micRequested?:boolean; joinOrder?:number
 }
 export type LessonMediaRoom = {channel:string; secret:string; salt:string; version:number}
 export type Lesson = Omit<LessonDraft,'date'|'start'|'end'> & {
@@ -27,7 +27,7 @@ export type LessonSeries = {
 }
 export type LessonRestriction = {id:string; lessonId:string; uid:number; attempts:number; nextAttempt:number; reason:string; expiresAt:number}
 export type LessonNotice = {id:string; revision:number; reminder?:number}
-export type LessonPerson = {id:string; name:string; role:'admin'|'teacher'|'student'; studentId?:string; seat?:LessonSeat; mediaUid?:number; canPublish?:boolean}
+export type LessonPerson = {id:string; name:string; role:'admin'|'teacher'|'student'; studentId?:string; seat?:LessonSeat; mediaUid?:number; canPublish?:boolean; joinOrder?:number}
 export type LessonView = Omit<Lesson,'seats'|'invitees'|'delivered'|'mediaRoom'> & {
   manager:boolean; self?:LessonSeat; people:LessonPerson[]; waiting:number; connected:number; mediaChanging:boolean
   inviteCount:number; mediaVersion?:number

@@ -15,7 +15,7 @@ type RtcOptions = {
   publisherUids?:number[]; priorityUids:number[]; getCredentials:()=>Promise<LessonCredentials>
 }
 
-export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
+export function useLessonRtc(lesson:LessonView,devices:CallDevices,focusedId?:string) {
   const {data,lessonRtc,lessonRtcPresence,refresh}=useWorkspace()
   const speak=Boolean(lesson.people.find(person=>person.id===data.user?.id)?.canPublish)
   const encrypted=Boolean(data.lessonHealth?.encryptedMode)
@@ -25,7 +25,7 @@ export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
     changing:lesson.mediaChanging,speak,media:lesson.media,getCredentials:()=>lessonRtc(lesson.id),
     publisherUids:encrypted?lesson.people.flatMap(person=>person.canPublish&&person.mediaUid!==undefined?[person.mediaUid]:[]):undefined,
     priorityUids:lesson.people.flatMap(person=>person.mediaUid!==undefined&&
-      (person.id===lesson.currentStudent||person.id===lesson.teacherId||person.id===lesson.substituteId)?[person.mediaUid]:[]),
+      (person.id===focusedId||person.id===lesson.currentStudent||person.id===lesson.teacherId||person.id===lesson.substituteId)?[person.mediaUid]:[]),
   },devices)
   const presence=useRef({report:lessonRtcPresence,refresh});presence.current={report:lessonRtcPresence,refresh}
   const grant=rtc.connection?.credentials
@@ -383,7 +383,7 @@ export function CallVideo({track,local=false,waiting}:{track:IRemoteVideoTrack|I
     }
     node.addEventListener('loadeddata',onFrame,true)
     node.addEventListener('playing',onFrame,true)
-    track.play(node,{fit:'cover',mirror:local})
+    track.play(node,{fit:'contain',mirror:local})
     onFrame()
     return ()=>{
       node.removeEventListener('loadeddata',onFrame,true)

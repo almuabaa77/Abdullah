@@ -73,6 +73,30 @@ function audit(state:State,user:User,lesson:Lesson,action:string,now:number) {
 function restrictionsPending(state:State,lesson:Lesson) {
   return Boolean(state.lessonRestrictions?.some(rule=>rule.lessonId===lesson.id))
 }
+function studentJoinOrders(state:State,lesson:Lesson) {
+  const order=new Map<string,number>()
+  const students=new Set(state.users.filter(account=>account.role==='student').map(account=>account.id))
+  const legacy:[string,LessonSeat][]=[]
+  for(const [id,seat] of Object.entries(lesson.seats)){
+    if(seat.joinOrder!==undefined)order.set(id,seat.joinOrder)
+    else if(students.has(id)&&(seat.status==='admitted'||seat.status==='removed'||seat.periods.length))legacy.push([id,seat])
+  }
+  const taken=new Set(order.values())
+  let rank=1
+  legacy.sort(([,a],[,b])=>(a.periods[0]?.from??a.at).localeCompare(b.periods[0]?.from??b.at)||a.rtcIndex-b.rtcIndex)
+  for(const [id] of legacy){
+    while(taken.has(rank))rank++
+    order.set(id,rank++)
+  }
+  return order
+}
+function rememberStudentJoinOrder(state:State,lesson:Lesson,id:string) {
+  const seat=lesson.seats[id]
+  if(seat.joinOrder!==undefined)return
+  const order=studentJoinOrders(state,lesson)
+  for(const [joined,rank] of order)lesson.seats[joined].joinOrder=rank
+  seat.joinOrder=order.get(id)??Math.max(0,...order.values())+1
+}
 export function projectLessons(state:State,user:User,now=Date.now(),encrypted=false):LessonView[] {
   const historical=45*24*60*minute
   return (state.lessons??[]).filter(lesson=>allowedInLesson(state,lesson,user)&&Date.parse(lesson.endsAt)>=now-historical).sort((a,b)=>a.startsAt.localeCompare(b.startsAt))
@@ -80,13 +104,16 @@ export function projectLessons(state:State,user:User,now=Date.now(),encrypted=fa
       const manager=isManager(state,lesson,user)
       const {seats,invitees:_invites,delivered:_sent,mediaRoom,...visible}=lesson
       const eligible=state.users.filter(account=>allowedInLesson(state,lesson,account))
+      const joinOrders=studentJoinOrders(state,lesson)
+      const inside=manager||seats[user.id]?.status==='admitted'
       const people=eligible.flatMap(account=>{
         const seat=seats[account.id]
         if(!manager&&account.id!==user.id&&seat?.status!=='admitted'&&account.id!==lesson.teacherId&&account.id!==lesson.substituteId)return []
         const role=account.role==='parent'?'student':account.role
         return [{id:account.id,name:account.name,role,studentId:manager?account.studentId:undefined,
           seat:manager||account.id===user.id?seat:seat?.status==='admitted'?{status:seat.status,at:seat.at,generation:0,rtcIndex:0,periods:[],lastSeen:seat.lastSeen}:undefined,
-          mediaUid:seat?.status==='admitted'&&(manager||seats[user.id]?.status==='admitted')?lessonUid(seat):undefined,
+          mediaUid:seat?.status==='admitted'&&inside?lessonUid(seat):undefined,
+          joinOrder:role==='student'&&seat?.status==='admitted'&&inside?joinOrders.get(account.id):undefined,
           canPublish:seat?.status==='admitted'&&canPublish(state,lesson,account)}]
       })
       const order=visible.order.filter(id=>manager||id===user.id||seats[id]?.status==='admitted')
@@ -312,7 +339,7 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
     if(direct&&seats>=(user.role==='admin'?lessonCapacity:capacityFor(state,lesson)))throw new ApiError('اكتملت سعة الجلسة')
     const rtcIndex=self?.rtcIndex??Math.max(0,...Object.values(lesson.seats).map(seat=>seat.rtcIndex))+1
     if(rtcIndex>=1024)throw new ApiError('لا يمكن إضافة مشاركين جدد لهذه الجلسة')
-    lesson.seats[user.id]={status:direct?'admitted':'waiting',at,rtcIndex,generation:self?.generation??0,periods:self?.periods??[]}
+    lesson.seats[user.id]={status:direct?'admitted':'waiting',at,rtcIndex,generation:self?.generation??0,periods:self?.periods??[],joinOrder:self?.joinOrder}
     if(!direct&&!lesson.order.includes(user.id))lesson.order.push(user.id)
     if(manager&&!lesson.actualStart){
       lesson.actualStart=at
@@ -329,6 +356,7 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
   }
   if(action==='lesson-leave'){
     if(self?.status!=='admitted'&&self?.status!=='waiting')return false
+    if(user.role==='student'&&self.status==='admitted')rememberStudentJoinOrder(state,lesson,user.id)
     restrict(state,lesson,user.id,'leave',now)
     attendanceEnd(self,at)
     self.status='left'
@@ -376,6 +404,7 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
   if(action==='lesson-admit'||action==='lesson-decline'||action==='lesson-remove'){
     if(!seat||!member||isManager(state,lesson,member)||!allowedInLesson(state,lesson,member))throw forbidden()
     if(action==='lesson-remove'&&seat.status==='admitted'){
+      if(member.role==='student')rememberStudentJoinOrder(state,lesson,id)
       restrict(state,lesson,id,'remove',now)
       attendanceEnd(seat,at)
       seat.status='removed'
@@ -383,6 +412,7 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
     } else {
       if(seat.status!=='waiting'||action==='lesson-remove')throw new ApiError('تغيّرت حالة المشارك')
       if(action==='lesson-admit'&&liveSeats(lesson).length>=capacityFor(state,lesson))throw new ApiError('اكتملت سعة الجلسة')
+      if(action==='lesson-admit'&&member.role==='student')rememberStudentJoinOrder(state,lesson,id)
       seat.status=action==='lesson-admit'?'admitted':'declined'
       if(action==='lesson-admit')lessonNotice(state,lesson,'lesson','تم قبول دخولك إلى الجلسة',[id],now)
     }

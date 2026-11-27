@@ -268,3 +268,27 @@ test('queue changes and microphone requests respect the active turn and scope',(
   action(teacher,'lesson-turn',{id})
   assert.deepEqual(projectLessons(state,teacher,at)[0].finishedTurns,[tail])
 })
+
+test('student video cards preserve first admission order across reconnection',()=>{
+  const {state,teacher,learners,action,create}=fixture(3)
+  const lesson=create(),{id}=lesson
+  const [requestedFirst,admittedFirst,waiting]=learners
+  action(teacher,'lesson-join',{id})
+  for(const learner of learners)action(learner,'lesson-join',{id})
+  action(teacher,'lesson-admit',{id,userId:admittedFirst.id})
+  action(teacher,'lesson-admit',{id,userId:requestedFirst.id})
+  // Simulate a seat written before join order was stored.
+  delete lesson.seats[admittedFirst.id].joinOrder
+  lesson.seats[admittedFirst.id].periods.push({from:new Date(at).toISOString()})
+  const rank=(viewer:User,target:User)=>projectLessons(state,viewer,at,true)[0].people.find(person=>person.id===target.id)?.joinOrder
+  assert.equal(rank(teacher,admittedFirst),1)
+  assert.equal(rank(requestedFirst,requestedFirst),2)
+  assert.equal(rank(waiting,admittedFirst),undefined)
+  action(teacher,'lesson-admit',{id,userId:waiting.id})
+  assert.equal(rank(teacher,waiting),3)
+  action(admittedFirst,'lesson-leave',{id},at+1000)
+  action(admittedFirst,'lesson-join',{id},at+2000)
+  action(teacher,'lesson-admit',{id,userId:admittedFirst.id},at+3000)
+  assert.equal(rank(teacher,admittedFirst),1)
+  assert.equal(rank(teacher,requestedFirst),2)
+})
