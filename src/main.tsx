@@ -10,7 +10,7 @@ import { Records } from './records'
 import { Exams, Leaves, More, Store } from './features'
 import { ChatPage } from './chat'
 import { AccountAccess } from './account-access'
-import { watchRecordRevisions } from './live-records'
+import { subscribeRecordRevisions, type RecordStreamStatus } from './live-records'
 import { Starting, Welcome } from './welcome'
 import { applyAppUpdate, watchAppUpdates } from './app-updates'
 import type { PhoneAuth, PhoneAvailability } from './phone'
@@ -38,9 +38,20 @@ async function request(token:string,role:string,body?:Record<string,unknown>,sig
     ...(body?{'Content-Type':'application/json'}:{}),
     ...(token?{'Authorization':'Bearer '+token}:{'X-Preview-Role':role}),
   },body:body?JSON.stringify(body):undefined,signal,cache:'no-store'})
+  return readView(response)
+}
+async function readView(response:Response):Promise<View> {
   const value = await response.json() as View & {error?:string}
   if(!response.ok || value.error) throw new WorkspaceError(value.error || 'Unable to load the workspace',response.status)
   return value
+}
+async function refreshView(token:string,role:string,signal:AbortSignal,known?:Pick<View,'revision'|'date'>) {
+  const bounded=typeof AbortSignal.any==='function'&&typeof AbortSignal.timeout==='function'
+    ? AbortSignal.any([signal,AbortSignal.timeout(14_000)]) : signal
+  if(!known)return request(token,role,undefined,bounded)
+  const query=new URLSearchParams({since:String(known.revision),date:known.date})
+  const response=await fetch('/api/workspace?'+query,{headers:{Authorization:'Bearer '+token},signal:bounded,cache:'no-store'})
+  return response.status===204?null:readView(response)
 }
 function retryWhenOnline() {
   return new Promise<void>((resolve,reject)=>{
@@ -64,6 +75,8 @@ function App() {
   activeUid.current = uid
   const [loadedUid,setLoadedUid] = useState<string>()
   const [data,setData] = useState<View>(emptyData)
+  const latestView=useRef(data)
+  latestView.current=data
   const [loading,setLoading] = useState(true)
   const [loadError,setLoadError] = useState('')
   const [sessionExpired,setSessionExpired] = useState(false)
@@ -79,9 +92,10 @@ function App() {
   const [registering,setRegistering] = useState(false)
   const [recheck,setRecheck] = useState(0)
   const [unregistered,setUnregistered] = useState(false)
-  const [liveRecords,setLiveRecords] = useState(false)
+  const [liveRecords,setLiveRecords] = useState<RecordStreamStatus>('connecting')
   const lastStreamMessage = useRef(0)
-  const lastRevision = useRef(0)
+  const announcedRevision = useRef(0)
+  const lastWorkspaceSync = useRef(0)
   const refreshWorkspace = useRef<()=>void>(()=>{})
   const refreshedUid = useRef('')
   const t:Tr = (ar,english)=>en?english:ar
@@ -168,8 +182,12 @@ function App() {
       pulling=true
       let retrying = false
       try {
-        const result=await request(token,role,undefined,controller.signal)
+        const current=latestView.current
+        const known=!initial&&token&&current.user?.id===uid&&current.user?.role==='admin'&&current.user.status==='active'?current:undefined
+        const result=await refreshView(token,role,controller.signal,known)
         if(!active)return
+        lastWorkspaceSync.current=Date.now()
+        if(!result)return
         setData(previous=>initial||previous.user?.id!==result.user?.id||previous.revision<=result.revision?result:previous)
         setUnregistered(Boolean(token&&!result.user&&!result.accountAccess))
         setLoadError('')
@@ -180,13 +198,14 @@ function App() {
         routedAdmin.current=adminId
       } catch(e){
         const expired = e instanceof WorkspaceError&&e.status===401
+        const revoked = e instanceof WorkspaceError&&e.status===403
         if(active&&expired&&uid&&auth?.currentUser?.uid===uid&&refreshedUid.current!==uid) {
           refreshedUid.current=uid
           const renewed=await auth.currentUser.getIdToken(true).catch(()=>undefined)
           if(active&&renewed&&renewed!==token){retrying=true;setSession({token:renewed,uid});return}
         }
-        if(active&&initial)setData(emptyData)
-        if(active&&(initial||expired)){setSessionExpired(expired);setLoadError((e as Error).message)}
+        if(active&&(initial||revoked))setData(emptyData)
+        if(active&&(initial||expired||revoked)){setSessionExpired(expired);setLoadError((e as Error).message)}
       } finally {
         pulling=false
         if(active&&initial&&!retrying){setLoadedUid(uid);setLoading(false)}
@@ -196,7 +215,11 @@ function App() {
     const refresh=()=>{if(navigator.onLine)void pull()}
     refreshWorkspace.current=refresh
     void pull(pending)
-    const timer=window.setInterval(()=>{if(Date.now()-lastStreamMessage.current>14000&&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))refresh()},6500)
+    const timer=window.setInterval(()=>{
+      const now=Date.now()
+      if((now-lastStreamMessage.current>14000||now-lastWorkspaceSync.current>75000||announcedRevision.current>latestView.current.revision)
+        &&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))refresh()
+    },6500)
     window.addEventListener('online',refresh);window.addEventListener('focus',refresh)
     return ()=>{active=false;refreshWorkspace.current=()=>{};controller.abort();clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh)}
   },[authReady,auth,token,uid,role,recheck,go])
@@ -242,26 +265,19 @@ function App() {
   const adminPage = page==='admin'
   const workspaceVisible=show&&!adminPage
   const adminAccess=show&&data.user?.role==='admin'
-  const streamEnabled = Boolean(adminPage&&adminAccess&&token)
-  useEffect(()=>{lastRevision.current=data.revision},[data.revision])
+  const streamEnabled = Boolean(adminPage&&adminAccess&&token&&online)
   useEffect(()=>{
     if(!streamEnabled)return
-    const controller=new AbortController()
-    let retry:number|undefined
-    const connect = async () => {
-      try {
-        await watchRecordRevisions(token,controller.signal,revision=>{
-          if(revision>lastRevision.current)refreshWorkspace.current()
-        },()=>{lastStreamMessage.current=Date.now();setLiveRecords(true)})
-      } catch { /* Periodic refresh continues while the stream is unavailable. */ }
-      if(controller.signal.aborted)return
-      lastStreamMessage.current=0
-      setLiveRecords(false)
-      refreshWorkspace.current()
-      retry=window.setTimeout(()=>void connect(),4500)
-    }
-    void connect()
-    return ()=>{controller.abort();window.clearTimeout(retry);lastStreamMessage.current=0;setLiveRecords(false)}
+    const stop=subscribeRecordRevisions(token,revision=>{
+      announcedRevision.current=revision
+      if(revision!==latestView.current.revision)refreshWorkspace.current()
+    },status=>{
+      const wasLive=lastStreamMessage.current>0
+      lastStreamMessage.current=status==='live'?Date.now():0
+      setLiveRecords(status)
+      if(status==='polling'&&wasLive)refreshWorkspace.current()
+    })
+    return ()=>{stop();lastStreamMessage.current=0;announcedRevision.current=0}
   },[streamEnabled,token])
   useEffect(()=>{
     document.title = adminPage
@@ -302,7 +318,7 @@ function App() {
   const loadingLabel=t('جارٍ التحميل','Loading')
   const phoneProps={auth,availability:phoneAvailability,retry:()=>retryPhone(n=>n+1)}
   const adminContent = adminAccess
-    ? <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>}><Admin liveRecords={liveRecords} mobileMenuOpen={openPanel==='navigation'} closeMobileMenu={()=>setOpenPanel('')}/></Suspense>
+    ? <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/><div/><div/></div>}><Admin liveRecords={liveRecords} online={online}/></Suspense>
     : token||data.user
       ? <div className="panel"><Empty title={t('صلاحية الإدارة مطلوبة','Administration access required')} body={t('يمكنك المتابعة باستخدام حساب مدير معتمد.','Use an authorized administration account to continue.')} action={token?<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>:undefined}/></div>
       : <Suspense fallback={<div className="loading-layout" aria-label={loadingLabel}><div/></div>}><PhoneSignIn {...phoneProps} administration/></Suspense>
@@ -327,7 +343,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-title">{workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
           <div className="topbar-actions">
-            {(workspaceVisible||adminAccess)&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
+            {workspaceVisible&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
             {adminPage&&<button className="icon-button" onClick={()=>go('home')} aria-label={t('العودة إلى المنصة','Back to the platform')} title={t('العودة إلى المنصة','Back to the platform')}><Home size={19}/></button>}
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {(workspaceVisible||adminAccess)&&<>

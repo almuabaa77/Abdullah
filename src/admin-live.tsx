@@ -2,18 +2,20 @@ import { useState } from 'react'
 import { Activity, CalendarDays, Pencil, Radio, Search } from 'lucide-react'
 import { segmentLabel, type RecordSection } from './domain'
 import { Badge, dateLabel, Empty, matches, nameFor, useWorkspace } from './ui'
+import type { RecordStreamStatus } from './live-records'
 
 const sectionNames: Record<RecordSection,[string,string]> = {
   memorization:['الحفظ','Memorization'],review:['المراجعة','Revision'],nextMemorization:['الحفظ المجدول','Assigned memorization'],
   nextReview:['المراجعة المجدولة','Assigned revision'],attendance:['الحضور','Attendance'],points:['النقاط','Points'],note:['الملاحظة','Note'],
 }
 
-export function AdminLive({ connected }: {connected:boolean}) {
+export function AdminLive({status,online}:{status:RecordStreamStatus;online:boolean}) {
   const {data,t,en,open} = useWorkspace()
-  const [date,setDate] = useState(data.date)
+  const [selectedDate,setDate] = useState('')
   const [circleId,setCircleId] = useState('')
   const [query,setQuery] = useState('')
   const [limit,setLimit] = useState(20)
+  const date=selectedDate||data.date
   const records = new Map(data.daily.filter(record=>record.date===date).map(record=>[record.studentId,record]))
   const students = data.students.filter(student=>(student.active||records.has(student.id)) && (!circleId||student.circleId===circleId) && matches(student,query))
   const names = new Map(data.users.map(user=>[user.id,user.name]))
@@ -23,11 +25,15 @@ export function AdminLive({ connected }: {connected:boolean}) {
   const rows = students.map(student=>({student,record:records.get(student.id)})).sort((a,b)=>(b.record?.updatedAt ?? '').localeCompare(a.record?.updatedAt ?? ''))
   const timeFormat = new Intl.DateTimeFormat(en?'en-GB':'ar-SA',{hour:'numeric',minute:'2-digit',second:'2-digit',timeZone:'Asia/Riyadh'})
   const label = (kind:RecordSection) => t(...sectionNames[kind])
+  const connectionLabel = !online?t('دون اتصال','Offline')
+    :status==='live'?t('متصل بالتحديث المباشر','Live updates connected')
+    :status==='connecting'?t('جارٍ الاتصال','Connecting'):t('تحديث دوري','Periodic updates')
 
   return <div className="live-register">
     <div className="live-register-toolbar">
-      <span className={'live-status'+(connected?' connected':'')}><Radio size={16}/>{connected?t('متصل بالتحديث المباشر','Live updates connected'):t('تحديث دوري','Periodic updates')}</span>
-      <label className="circle-picker"><CalendarDays size={16}/><input type="date" aria-label={t('تاريخ السجل','Record date')} max={data.date} value={date} onChange={event=>{if(event.target.value){setDate(event.target.value);setLimit(20)}}}/></label>
+      <span className={'live-status'+(status==='live'&&online?' connected':'')} role="status"><Radio size={16}/>{connectionLabel}</span>
+      <label className="circle-picker"><CalendarDays size={16}/><input type="date" aria-label={t('تاريخ السجل','Record date')} max={data.date} value={date} onChange={event=>{if(event.target.value){setDate(event.target.value===data.date?'':event.target.value);setLimit(20)}}}/></label>
+      {selectedDate&&<button className="btn btn-outline compact" type="button" onClick={()=>{setDate('');setLimit(20)}}>{t('اليوم','Today')}</button>}
       <label className="circle-picker"><select aria-label={t('تصفية الحلقات','Filter circles')} value={circleId} onChange={event=>{setCircleId(event.target.value);setLimit(20)}}><option value="">{t('جميع الحلقات','All circles')}</option>{data.circles.map(circle=><option key={circle.id} value={circle.id}>{circle.name}</option>)}</select></label>
       <label className="search"><Search size={16}/><input type="search" aria-label={t('ابحث عن طالب','Search students')} placeholder={t('ابحث عن طالب','Search students')} value={query} onChange={event=>{setQuery(event.target.value);setLimit(20)}}/></label>
     </div>

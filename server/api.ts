@@ -50,9 +50,10 @@ const scope = (s: State, u: User) => s.students.filter(st => u.role === 'admin'
   || u.role === 'parent' && s.links.some(l => l.parentId === u.id && l.studentId === st.id && l.status === 'accepted'))))
 const chatVisible = (chat: Chat, user: User, ids: Set<string>, enabled: boolean) => user.role === 'admin' || enabled && (chat.members.includes(user.id) || Boolean(chat.circleId) && chat.students.some(id => ids.has(id)))
 function project(state: State, user: User | null, revision: number, phoneEnabled: boolean): View {
-  const empty = createState()
-  const { operations: _discardEmpty, closedAccounts: _closedAccounts, ...emptyView } = empty
-  if (!user || user.status !== 'active') return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
+  if (!user || user.status !== 'active') {
+    const { operations: _discardEmpty, closedAccounts: _closedAccounts, ...emptyView } = createState()
+    return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
+  }
   const students = scope(state, user)
   const ids = new Set(students.map(s => s.id))
   const publicStudent = (s: Student) => ({ ...s, phone: user.role === 'admin' || user.studentId === s.id ? s.phone : undefined })
@@ -79,9 +80,13 @@ async function identify(request: Request, env: Env): Promise<Identity | null> {
     const config=firebaseConfig(env)
     if(!config)throw new ApiError('خدمة التحقق بالجوال غير متصلة',503)
     const { apiKey }=config
-    const reply = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: token })
-    })
+    let reply:Response
+    try {
+      reply = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: token }),
+        signal: AbortSignal.timeout(8000),
+      })
+    } catch {throw new ApiError('تعذر الوصول إلى خدمة التحقق بالجوال',503)}
     if(reply.status===429||reply.status>=500)throw new ApiError('تعذر الوصول إلى خدمة التحقق بالجوال',503)
     const profile = (await reply.json() as { users?: { localId: string; phoneNumber?: string; disabled?: boolean }[] }).users?.[0]
     if (!reply.ok || !profile?.phoneNumber || profile.disabled) throw new ApiError('انتهت جلسة التحقق، سجّل الدخول مجددًا', 401)
@@ -522,6 +527,10 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
       if (events) {
         if (user?.role!=='admin'||user.status!=='active') return deny()
         return Response.json({revision:current.revision},{headers})
+      }
+      if (get && identity.workspace==='school' && user?.role==='admin' && user.status==='active'
+        && url.searchParams.get('since')===String(current.revision) && url.searchParams.get('date')===dateKey()) {
+        return new Response(null,{status:204,headers})
       }
       if (get || state.operations.includes(operationKey)) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
       if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
