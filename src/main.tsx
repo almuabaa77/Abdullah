@@ -312,6 +312,7 @@ function App() {
   const manager=Boolean(adminAccess&&token)
   const adminPage = Boolean(adminAccess&&(manager||page==='admin'))
   const workspaceVisible=show&&!adminPage
+  const welcomeView=!show&&!loadingView&&!loadError&&!data.accountAccess&&!data.user&&!unregistered
   const receivingReminders = Boolean(workspaceVisible&&data.user?.role==='teacher'&&token&&online)
   useEffect(()=>{
     if(!receivingReminders)return
@@ -468,7 +469,7 @@ function App() {
   const loadingLabel=t('جارٍ التحميل','Loading')
   const phoneProps={auth,availability:phoneAvailability,retry:()=>retryPhone(n=>n+1)}
   return <Context.Provider value={workspace}>
-    <div data-role={show?data.user?.role:undefined} className={['app-shell',workspaceVisible?'':'intro-shell',assistantOpen?'assistant-shell':'',chatOpen?'chat-shell':'',teacherNavigation?'teacher-navigation':'',adminPage&&adminAccess?'admin-shell':''].filter(Boolean).join(' ')}>
+    <div data-role={show?data.user?.role:undefined} className={['app-shell',workspaceVisible?'':'intro-shell',welcomeView?'welcome-shell':'',assistantOpen?'assistant-shell':'',chatOpen?'chat-shell':'',teacherNavigation?'teacher-navigation':'',adminPage&&adminAccess?'admin-shell':''].filter(Boolean).join(' ')}>
       {workspaceVisible&&<aside className="sidebar">
         <button className="brand-button" onClick={()=>go('home')} aria-label={t('الصفحة الرئيسية','Home')}><Brand/></button>
         <div className="sidebar-divider"/>
