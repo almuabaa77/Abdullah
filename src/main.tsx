@@ -337,7 +337,8 @@ function App() {
   ] as const
   const assistantOpen=Boolean(workspaceVisible&&teacher&&page==='assistant')
   const chatOpen=workspaceVisible&&page==='chat'
-  const teacherNavigation=workspaceVisible&&data.user?.role==='teacher'&&!chatOpen
+  const focusedWorkspace=assistantOpen||chatOpen
+  const teacherNavigation=workspaceVisible&&data.user?.role==='teacher'&&!focusedWorkspace
   const incomingCall=workspaceVisible&&!chatOpen&&data.calls?.some(call=>call.to===data.user?.id&&callState(call)==='ringing')
   const incomingReminder=workspaceVisible&&data.user?.role==='teacher'&&!chatOpen&&!wizard&&notices.find(notice=>notice.recordReminder)
   const activeChatCall=chatOpen&&data.calls?.some(call=>{
@@ -395,9 +396,13 @@ function App() {
       </aside>}
       <div className="app-body">
         <header className="topbar">
-          <div className="topbar-title">{workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
+          <div className="topbar-title">{focusedWorkspace?<>
+            <button className="workspace-home" type="button" onClick={()=>go('home')}
+              aria-label={t('العودة إلى الرئيسية','Return to home')}><Home size={17}/><span>{t('الرئيسية','Home')}</span></button>
+            <strong className="workspace-section-title">{label}</strong>
+          </>:workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
           <div className="topbar-actions">
-            {workspaceVisible&&!teacherNavigation&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
+            {workspaceVisible&&!teacherNavigation&&!focusedWorkspace&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {(workspaceVisible||adminAccess)&&<>
               {!token&&<button type="button" className="phone-topbar" onClick={openPhone} aria-label={t('الدخول أو التسجيل بالجوال','Sign in or register by phone')}><Smartphone size={17}/><span>{t('الدخول بالجوال','Mobile sign-in')}</span></button>}

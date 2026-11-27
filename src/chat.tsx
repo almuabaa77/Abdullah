@@ -149,11 +149,6 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   </>
 
   return <div className={management?"messenger-workspace admin-inbox":"messenger-workspace"}>
-    <nav className="messenger-tabs" aria-label={t('أقسام الدردشة','Messaging sections')}>
-      {tabs.filter(([id])=>!management||id==='messages'||id==='contacts').map(([id,Icon,label])=><button key={id} type="button" aria-current={id===tab?'page':undefined} onClick={()=>setTab(id)}>
-        <Icon size={19}/><span>{label}</span>{id==='groups'&&invites.length>0&&<small className="messenger-unread">{invites.length}</small>}
-      </button>)}
-    </nav>
     {tab==='calls'&&<ChatCallList {...calling} openChats={()=>setTab('messages')}/>}
     {tab==='contacts'&&<section className="messenger-tab-content">
       <h2>{t('جهات اتصال الحلقة','Circle contacts')}</h2>
@@ -250,6 +245,11 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
     {choose&&<Modal title={t('محادثة جديدة','New conversation')} close={()=>{if(!opening)setChoose(false)}}><form onSubmit={openConversation}><div className="modal-body"><label>{t('المستلم','Recipient')}<select required value={target} onChange={event=>setTarget(event.target.value)}><option value="">{t('اختر جهة الاتصال','Choose a contact')}</option>
       {allContacts.map(peer=><option key={peer.id} value={peer.id}>{peer.name} · {t(...contactRoles[peer.role])}</option>)}</select></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={!target||opening}>{t('فتح المحادثة','Open conversation')}</button></div></form></Modal>}
   </section>}
+    <nav className="messenger-tabs" aria-label={t('أقسام الدردشة','Messaging sections')}>
+      {tabs.filter(([id])=>!management||id==='messages'||id==='contacts').map(([id,Icon,label])=><button key={id} type="button" aria-current={id===tab?'page':undefined} onClick={()=>setTab(id)}>
+        <Icon size={19}/><span>{label}</span>{id==='groups'&&invites.length>0&&<small className="messenger-unread">{invites.length}</small>}
+      </button>)}
+    </nav>
     {groupEditor&&<Modal title={groupEditor.chat?t('إعدادات المجموعة','Group settings'):t('إنشاء مجموعة حلقة','Create a circle group')} close={()=>{if(!groupBusy)setGroupEditor(undefined)}}>
       <form onSubmit={saveGroup}><div className="modal-body">
         <label>{t('اسم المجموعة','Group name')}<input name="title" maxLength={80} defaultValue={groupEditor.chat?.title} required/></label>
