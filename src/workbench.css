@@ -636,3 +636,28 @@ body {background:var(--bg)}
   .workbench-hero h1 {font-size:clamp(1.2rem,4vw,1.55rem)}
   .workbench-panel-head {padding-block:5px}
 }
+
+html,body,.app-shell {touch-action:pan-x pan-y}
+.app-shell {-webkit-user-select:none;user-select:none}
+.app-shell :is(input,textarea,[contenteditable]:not([contenteditable="false"]),[data-allow-copy]) {-webkit-user-select:text;user-select:text}
+.topbar {background:var(--paper)}
+.topbar-actions .refresh-app {color:var(--role-ink);background:var(--role-tint);border:1px solid var(--role-edge);flex:none}
+.refresh-app[aria-busy=true] svg {animation:app-refresh-spin .8s linear infinite}
+@keyframes app-refresh-spin {to {transform:rotate(1turn)}}
+@media(prefers-reduced-motion:reduce){.refresh-app[aria-busy=true] svg {animation:none}}
+html[data-custom-appearance] .app-shell {
+  --role-ink:var(--green);
+  --role-tint:var(--appearance-role-tint);
+  --role-edge:var(--appearance-role-edge);
+  --role-surface:var(--bg);
+}
+html[data-custom-appearance] .phone-topbar {background:var(--soft);border-color:var(--border);color:var(--green)}
+html[data-custom-appearance] .brand img {object-fit:cover;border-radius:24%}
+@media(max-width:420px){
+  .topbar-title {min-width:0}
+  .topbar-actions {gap:4px}
+  .topbar .refresh-app {width:34px;height:36px}
+}
+html[data-custom-appearance] .nav-item.active i,
+html[data-custom-appearance] .notification-trigger i {background:var(--gold)}
+html[data-custom-appearance] .welcome-screen {border-block-start:3px solid var(--gold)}

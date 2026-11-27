@@ -1,3 +1,4 @@
+import { brandIconUrl } from './appearance'
 import { LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
 import { useWorkspace } from './ui'
 
@@ -17,9 +18,9 @@ export function Welcome({signIn}:{signIn:()=>void}) {
 }
 
 export function Starting() {
-  const {t} = useWorkspace()
+  const {t,data} = useWorkspace()
   return <section className="starting-screen" role="status" aria-live="polite">
-    <img width="64" height="64" src="/assets/icon-64.png" alt=""/>
+    <img width="64" height="64" src={brandIconUrl(data.appearance?.iconVersion)} alt=""/>
     <span><LoaderCircle className="spinner" size={17}/>{t('جارٍ تجهيز حسابك','Preparing your account')}</span>
   </section>
 }

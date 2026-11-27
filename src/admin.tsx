@@ -1,9 +1,10 @@
+import { AdminAppearance } from './admin-appearance'
 import { AnnouncementFields, AnnouncementRow } from './announcements'
 import { AssessmentPolicyFields, PolicySettings } from './admin-policies'
 import { ManageFamilyLinks } from './family-links'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Plus, Search, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
-import type { Circle, Prize, Student, User } from './domain'
+import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Palette, Plus, Search, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { circleMeets, type Circle, type Prize, type Student, type User } from './domain'
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
@@ -18,6 +19,8 @@ import { Avatar, Badge, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace
 import './admin.css'
 
 type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}|{kind:'enrollment';item:User}|{kind:'assessment';item:Circle}
+
+const weekDays = [['الأحد','Sun'],['الاثنين','Mon'],['الثلاثاء','Tue'],['الأربعاء','Wed'],['الخميس','Thu'],['الجمعة','Fri'],['السبت','Sat']] as const
 
 const sections = [
   {id:'live',group:'monitor',icon:Activity,label:['المتابعة المباشرة','Live monitoring'],short:['المتابعة','Live']},
@@ -36,6 +39,7 @@ const sections = [
   {id:'store',group:'services',icon:Gift,label:['المتجر والطلبات','Store & orders'],add:['إضافة جائزة','Add reward'],edit:'prize',search:true},
   {id:'announcements',group:'services',icon:Bell,label:['الإعلانات','Announcements'],add:['إعلان جديد','New announcement'],edit:'announcement'},
   {id:'settings',group:'services',icon:Settings,label:['النقاط وصلاحيات التواصل','Points & communication']},
+  {id:'appearance',group:'services',icon:Palette,label:['هوية التطبيق','App appearance']},
 ] as const
 
 type Tab = typeof sections[number]['id']
@@ -56,11 +60,11 @@ function readTab():Tab {
   return sections.find(section=>section.id===value)?.id ?? 'live'
 }
 
-function AdminList<T>({items,render,empty,filtered=false}:{items:T[];render:(item:T,index:number)=>ReactNode;empty:string;filtered?:boolean}) {
+function AdminList<T>({items,render,empty,filtered=false,grid=false}:{items:T[];render:(item:T,index:number)=>ReactNode;empty:string;filtered?:boolean;grid?:boolean}) {
   const {t} = useWorkspace()
   const [limit,setLimit] = useState(rosterPage)
   if(!items.length)return <Empty title={filtered?t('لا توجد نتائج مطابقة','No matching results'):empty}/>
-  return <div className="admin-list">
+  return <div className={grid?'admin-list admin-circle-grid':'admin-list'}>
     {items.slice(0,limit).map(render)}
     {limit<items.length&&<button type="button" className="btn btn-outline" onClick={()=>setLimit(n=>n+rosterPage)}>
       {t('عرض المزيد','Show more')} <span className="count-pill">{Math.min(items.length,limit)} / {items.length}</span>
@@ -86,9 +90,11 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   },[])
   if(data.user?.role!=='admin'||data.user.status!=='active') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
 
-  function openTab(id:Tab) {
-    if(id!==tab) {
+  function openTab(id:Tab,circleId?:string) {
+    if(id!==tab||circleId) {
       const url=new URL(location.href)
+      if(circleId)url.searchParams.set('circle',circleId)
+      else url.searchParams.delete('circle')
       if(id==='live')url.searchParams.delete('section')
       else url.searchParams.set('section',id)
       history.pushState(null,'',url)
@@ -143,7 +149,12 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const circleNames=new Map(data.circles.map(circle=>[circle.id,circle.name]))
   const studentNames=new Map(data.students.map(student=>[student.id,nameFor(student,en)]))
   const circleSizes=new Map<string,number>()
-  for(const student of data.students)circleSizes.set(student.circleId,(circleSizes.get(student.circleId)??0)+1)
+  const circleEntries=new Map<string,number>()
+  const rosterToday=new Set(data.daily.filter(record=>record.date===data.date).map(record=>record.studentId))
+  for(const student of data.students)if(student.active){
+    circleSizes.set(student.circleId,(circleSizes.get(student.circleId)??0)+1)
+    if(rosterToday.has(student.id))circleEntries.set(student.circleId,(circleEntries.get(student.circleId)??0)+1)
+  }
   const pendingCount=data.users.filter(user=>user.status==='pending').length
   const pendingLinks=data.links.filter(link=>link.status==='pending').length
   const activeBadge=(account:User)=>account.duplicateOf?t('بانتظار تأكيد الإنهاء','Awaiting closure confirmation'):account.status==='pending'?t('بانتظار الاعتماد','Pending approval'):undefined
@@ -238,16 +249,26 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
             <div className="name-line"><Avatar student={student}/><div><strong>{studentNames.get(student.id)}</strong><p>{circleNames.get(student.circleId)}</p></div></div>
             <div className="chip-row"><Badge status={student.active?'active':'disabled'}/><button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'student',item:student})}>{t('تعديل','Edit')}</button></div>
           </div>}/>}
-        {tab==='circles'&&<AdminList key={query} empty={t('لا توجد حلقات','No circles')} filtered={Boolean(search)}
-          items={data.circles.filter(circle=>includes(circle.name,userNames.get(circle.teacherId)))}
-          render={circle=><div className="entity-row" key={circle.id}>
-            <div><strong>{circle.name}</strong><p>{userNames.get(circle.teacherId)} · {circleSizes.get(circle.id)??0} {t('طالب','students')}</p></div>
-            <div className="chip-row">
-              {circle.autoExam&&<span className="count-pill">{circle.autoExam.threshold} {t('آية للاختبار','verses for assessment')}</span>}
-              <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'assessment',item:circle})}>{t('الاختبار الآلي','Automatic assessment')}</button>
-              <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
-            </div>
-          </div>}/>}
+        {tab==='circles'&&<AdminList grid key={query} empty={t('لا توجد حلقات','No circles')} filtered={Boolean(search)}
+          items={data.circles.filter(circle=>includes(circle.name,userNames.get(circle.teacherId))).sort((a,b)=>a.name.localeCompare(b.name,en?'en':'ar'))}
+          render={circle=>{
+            const teacher=data.users.find(user=>user.id===circle.teacherId)
+            const meets=circleMeets(data.date,circle)
+            const total=circleSizes.get(circle.id)??0
+            const entered=circleEntries.get(circle.id)??0
+            return <article className="admin-circle-card" key={circle.id}>
+              <header><span className="admin-circle-icon"><BookOpen size={21}/></span><div><h3>{circle.name}</h3><p>{teacher?.status==='active'?teacher.name:t('لا يوجد محفّظ مفعّل','No active teacher')}</p></div>
+                <span className="admin-circle-state" data-active={meets}>{meets?t('تنعقد اليوم','Meets today'):t('لا تنعقد اليوم','No session today')}</span></header>
+              <dl><div><dt>{t('الطلاب النشطون','Active students')}</dt><dd>{total}</dd></div>
+                <div><dt>{t('سجلات اليوم','Records today')}</dt><dd>{entered} / {total}</dd></div></dl>
+              <div className="chip-row">{weekDays.map(([ar,english],day)=>circle.days.includes(day)&&<span key={day} className="count-pill">{t(ar,english)}</span>)}</div>
+              <div className="admin-circle-actions">
+                <button className="btn btn-primary compact" type="button" onClick={()=>openTab('live',circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
+                <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
+                <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'assessment',item:circle})}>{t('الاختبار الآلي','Automatic assessment')}</button>
+              </div>
+            </article>
+          }}/>}
         {tab==='links'&&<ManageFamilyLinks save={submit} busy={busy}/>}
         {tab==='store'&&<>
           <AdminList key={'prizes:'+query} empty={t('لا توجد جوائز','No rewards')} filtered={Boolean(search)}
@@ -273,6 +294,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         {tab==='announcements'&&<AdminList empty={t('لا توجد إعلانات','No announcements')}
           items={data.notices.filter(notice=>notice.kind==='announcement')}
           render={notice=><AnnouncementRow key={notice.id} notice={notice} busy={busy} withdraw={()=>void submit('announcement-withdraw',{id:notice.id})}/>}/>}
+        {tab==='appearance'&&<AdminAppearance busy={busy} save={submit}/>}
         {tab==='settings'&&<PolicySettings busy={busy} save={submit}/>}
         {tab==='audit'&&<AdminList key={query} empty={t('لا توجد عمليات مسجلة','No audit entries')} filtered={Boolean(search)}
           items={data.audit.filter(entry=>includes(entry.actor,entry.action))}
@@ -300,7 +322,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
           <label>{t('جوال الطالب (اختياري لسجل بلا حساب)','Student mobile (optional for a roster-only record)')}<input name="phone" type="tel" dir="ltr" defaultValue={edit.item?.phone} placeholder="05X XXX XXXX" readOnly={Boolean(edit.item&&data.users.some(user=>user.studentId===edit.item?.id))}/></label>
           <label className="check-line"><input type="checkbox" name="active" defaultChecked={edit.item?.active??true}/>{t('طالب نشط','Active student')}</label>
         </>}
-        {edit.kind==='circle'&&<><label>{t('اسم الحلقة','Circle name')}<input name="name" required defaultValue={edit.item?.name}/></label><label>{t('المحفّظ','Teacher')}<select name="teacherId" defaultValue={edit.item?.teacherId} required>{data.users.filter(u=>(u.role==='teacher'||u.role==='admin')&&u.status==='active').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label><fieldset className="day-select"><legend>{t('أيام الحلقة','Circle days')}</legend>{(en?['Sun','Mon','Tue','Wed','Thu','Fri','Sat']:['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']).map((day,i)=><label key={day} className="check-line"><input name="days" type="checkbox" value={i} defaultChecked={edit.item?.days.includes(i)??i<5}/>{day}</label>)}</fieldset><label>{t('تواريخ الإجازات (YYYY-MM-DD)','Holidays (YYYY-MM-DD)')}<textarea name="holidays" defaultValue={edit.item?.holidays.join('\n')}/></label></>}
+        {edit.kind==='circle'&&<><label>{t('اسم الحلقة','Circle name')}<input name="name" required defaultValue={edit.item?.name}/></label><label>{t('المحفّظ','Teacher')}<select name="teacherId" defaultValue={edit.item?.teacherId} required>{data.users.filter(u=>(u.role==='teacher'||u.role==='admin')&&u.status==='active').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label><fieldset className="day-select"><legend>{t('أيام الحلقة','Circle days')}</legend>{weekDays.map(([ar,english],i)=><label key={english} className="check-line"><input name="days" type="checkbox" value={i} defaultChecked={edit.item?.days.includes(i)??i<5}/>{t(ar,english)}</label>)}</fieldset><label>{t('تواريخ الإجازات (YYYY-MM-DD)','Holidays (YYYY-MM-DD)')}<textarea name="holidays" defaultValue={edit.item?.holidays.join('\n')}/></label></>}
         {edit.kind==='prize'&&<><label>{t('اسم الجائزة','Reward name')}<input name="name" defaultValue={edit.item?.name} required/></label><label>{t('الوصف','Description')}<textarea name="description" defaultValue={edit.item?.description} required/></label><label>{t('رابط الصورة','Image URL')}<input name="image" type="url" defaultValue={edit.item?.image}/></label><div className="field-pair"><label>{t('السعر بالنقاط','Points price')}<input name="price" type="number" min={1} defaultValue={edit.item?.price} required/></label><label>{t('الكمية','Stock')}<input name="stock" type="number" min={0} defaultValue={edit.item?.stock} required/></label></div><label className="check-line"><input name="active" type="checkbox" defaultChecked={edit.item?.active??true}/>{t('متاح للطلاب','Visible to students')}</label></>}
         {edit.kind==='announcement'&&<AnnouncementFields scheduled={scheduled} setScheduled={setScheduled}/>}
         {edit.kind==='assessment'&&<AssessmentPolicyFields circle={edit.item}/>}

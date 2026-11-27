@@ -1,10 +1,12 @@
+import { brandIconUrl, defaultPalette, paletteKeys, paletteVariables, type Appearance, type Palette } from './appearance'
+import { protectAppText } from './app-interactions'
 import { activeNotices, NotificationList, useNoticeTime } from './notifications'
 import { LessonCenter } from './lesson-center'
 import type { LessonCredentials, LessonRtcStatus } from './lessons'
 import { AnnouncementFeed } from './announcements'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, Menu, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
+import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, Menu, MessageCircle, RefreshCw, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
 import { callState, idFor, type Daily, type Notice, type ReminderField, type Student, type View } from './domain'
 import { Context, Brand, Empty, Modal, RoleName, type Page, type Tr, type WizardMode } from './ui'
 import { Dashboard, StudentHome } from './dashboard'
@@ -19,7 +21,7 @@ import { Registration } from './enrollment-form'
 import { AccountAccess } from './account-access'
 import { subscribeRecordRevisions, type RecordStreamStatus } from './live-records'
 import { Starting, Welcome } from './welcome'
-import { applyAppUpdate, watchAppUpdates } from './app-updates'
+import { applyAppUpdate, refreshApp, watchAppUpdates } from './app-updates'
 import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
@@ -93,6 +95,9 @@ function App() {
   const [loadError,setLoadError] = useState('')
   const [sessionExpired,setSessionExpired] = useState(false)
   const [availableUpdate,setAvailableUpdate] = useState<string>()
+  const [refreshing,setRefreshing] = useState(false)
+  const [publicAppearance,setPublicAppearance] = useState<{appearance?:Appearance;iconGeneration?:boolean}>({})
+  const appearance=data.user?.status==='active'?data.appearance:publicAppearance.appearance
   const [openPanel,setOpenPanel] = useState<'notices'|'profile'|'navigation'|''>('')
   const [phone,setPhone] = useState(phoneRequested)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
@@ -132,6 +137,43 @@ function App() {
   const changeLanguage = ()=>setEn(!en)
   useEffect(()=>{document.documentElement.lang=en?'en':'ar';document.documentElement.dir=en?'ltr':'rtl';localStorage.setItem('halaqat-language',en?'en':'ar')},[en])
   useEffect(()=>watchAppUpdates(setAvailableUpdate),[])
+  useEffect(protectAppText,[])
+  useEffect(()=>{
+    const controller=new AbortController()
+    const sync=async ()=>{
+      try {
+        const response=await fetch('/api/appearance',{cache:'no-store',signal:controller.signal})
+        if(response.ok)setPublicAppearance(await response.json())
+      } catch { /* The app keeps its current appearance through a network interruption. */ }
+    }
+    void sync()
+    window.addEventListener('focus',sync)
+    window.addEventListener('online',sync)
+    return ()=>{controller.abort();window.removeEventListener('focus',sync);window.removeEventListener('online',sync)}
+  },[])
+  useEffect(()=>{
+    const root=document.documentElement
+    const custom=appearance&&paletteKeys.some(key=>appearance[key]!==defaultPalette[key])
+    if(custom)for(const [name,value] of Object.entries(paletteVariables(appearance)))root.style.setProperty(name,value)
+    root.toggleAttribute('data-custom-appearance',Boolean(custom))
+    const theme=document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    if(theme)theme.content=appearance?.background??defaultPalette.background
+    const icon=document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    const touchIcon=document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')
+    if(icon){icon.href=brandIconUrl(appearance?.iconVersion);icon.type=appearance?.iconVersion?'image/webp':'image/png'}
+    if(touchIcon)touchIcon.href=appearance?.iconVersion?brandIconUrl(appearance.iconVersion):'/assets/icon-192.png'
+    return ()=>{for(const name of Object.keys(paletteVariables(defaultPalette)))root.style.removeProperty(name)}
+  },[appearance])
+  async function reloadApplication() {
+    if(refreshing)return
+    setRefreshing(true)
+    try {await refreshApp()}
+    catch {
+      setRefreshing(false)
+      tell(navigator.onLine?t('تعذّر جلب الإصدار الأخير. حاول مرة أخرى.','Could not fetch the latest release. Try again.')
+        :t('اتصل بالإنترنت لتحديث التطبيق.','Connect to the internet to update.'),true)
+    }
+  }
   useEffect(()=>{
     const desktop=matchMedia('(min-width: 851px)')
     const closeMenu=()=>{if(desktop.matches)setOpenPanel(current=>current==='navigation'?'':current)}
@@ -383,7 +425,15 @@ function App() {
     const result=await fetch('/api/lesson-rtc/presence',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({id,uid,version})})
     return result.ok
   }
-  const workspace = {data,en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,lessonRtcPresence,refresh:()=>refreshWorkspace.current()}
+  async function generateIcon(description:string,palette:Palette):Promise<string> {
+    const response=await fetch('/api/appearance/generate',{method:'POST',cache:'no-store',signal:typeof AbortSignal.timeout==='function'?AbortSignal.timeout(90_000):undefined,
+      headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({description,palette})})
+    const value=await response.json() as {image?:string;error?:string}
+    if(!response.ok||!value.image)throw new Error(value.error??t('تعذّر توليد الأيقونة.','Could not generate an icon.'))
+    return value.image
+  }
+  const workspace = {data:appearance===data.appearance?data:{...data,appearance},en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,
+    lessonRtcPresence,iconGeneration:Boolean(publicAppearance.iconGeneration),generateIcon,refresh:()=>refreshWorkspace.current()}
   const signOut = useCallback(async (next:Page) => {
     if(!auth)return
     const {endPhone}=await import('./phone')
@@ -432,6 +482,9 @@ function App() {
             <strong className="workspace-section-title">{label}</strong>
           </>:workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
           <div className="topbar-actions">
+            <button className="icon-button refresh-app" type="button" title={t('تحديث التطبيق','Refresh app')}
+              aria-label={refreshing?t('جارٍ جلب التحديث','Fetching update'):t('تحديث التطبيق','Refresh app')}
+              aria-busy={refreshing} disabled={refreshing} onClick={()=>void reloadApplication()}><RefreshCw size={18}/></button>
             {workspaceVisible&&!teacherNavigation&&!focusedWorkspace&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {(workspaceVisible||adminAccess)&&<>

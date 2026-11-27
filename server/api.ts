@@ -1,3 +1,5 @@
+import { iconContentLimit, readablePalette, readPalette } from '../src/appearance'
+import { webpBytes, type IconGenerator } from './appearance'
 import type { AgoraEnvironment } from './agora'
 import { newLessonMediaRoom } from './lesson-media-policy'
 import type { LessonCredentials, LessonRtcStatus } from '../src/lessons'
@@ -149,8 +151,8 @@ export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:st
 }
 function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string,rtcConfigured=false,encrypted=false): View {
   if (!user || user.status !== 'active') {
-    const { operations: _discardEmpty, closedAccounts: _closedAccounts, lessons:_lessons, lessonSeries:_lessonSeries, lessonRestrictions:_lessonRestrictions, lessonHealth:_lessonHealth, ...emptyView } = createState()
-    return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
+    const { operations: _discardEmpty, appearanceIcon: _icon, closedAccounts: _closedAccounts, lessons:_lessons, lessonSeries:_lessonSeries, lessonRestrictions:_lessonRestrictions, lessonHealth:_lessonHealth, ...emptyView } = createState()
+    return { ...emptyView, appearance:state.appearance, user, revision, phoneEnabled, date: dateKey() }
   }
   const students = scope(state, user)
   const ids = new Set(students.map(s => s.id))
@@ -174,7 +176,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
   const participants = new Set(chats.flatMap(chat=>[...(chat.group?state.users.filter(account=>chatAccess(state,chat,account)).map(account=>account.id):chat.members),...groupMessages(chat,user).map(message=>message.from)]))
   const isAdmin = user.role === 'admin'
   return {
-    user, revision, phoneEnabled, lessons:projectLessons(state,user,Date.now(),encrypted),lessonTeacherScheduling:state.lessonTeacherScheduling,
+    user, revision, phoneEnabled, appearance:state.appearance, lessons:projectLessons(state,user,Date.now(),encrypted),lessonTeacherScheduling:state.lessonTeacherScheduling,
     lessonHealth:{rtcConfigured,encryptedMode:encrypted,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
@@ -780,6 +782,22 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (current) Object.assign(current,prize); else state.prizes.push(prize)
       break
     }
+    case 'appearance-save': {
+      admin()
+      const palette=readPalette(p.palette)
+      if(!palette||!readablePalette(palette))throw new ApiError('تحقق من تباين النص واللون الأساسي مع الخلفيات.')
+      let iconVersion=state.appearance?.iconVersion
+      if(p.icon===null){
+        delete state.appearanceIcon
+        iconVersion=undefined
+      }else if(p.icon!==undefined){
+        if(typeof p.icon!=='string'||!webpBytes(p.icon,iconContentLimit))throw new ApiError('صيغة الأيقونة أو حجمها غير مدعوم.')
+        state.appearanceIcon=p.icon
+        iconVersion=crypto.randomUUID()
+      }
+      state.appearance={...palette,iconVersion}
+      break
+    }
     case 'rules': {
       admin()
       const previous=state.rules.communication??defaultCommunication
@@ -825,33 +843,43 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   state.audit.push({ time:new Date().toISOString(),actor:u.name,action,target:clean(p.studentId || p.id || p.circleId) || undefined })
 }
 
-export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials, rtcStatus?:()=>Promise<LessonRtcStatus>, rtcAppId?:string) {
+export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials, rtcStatus?:()=>Promise<LessonRtcStatus>, rtcAppId?:string, generateIcon?:IconGenerator) {
   try {
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
     const pushRoute = url.pathname === '/api/push'
+    const iconRoute = url.pathname === '/api/appearance/generate'
     const rtcRoute = url.pathname === '/api/lesson-rtc'
     const rtcStatusRoute = url.pathname === '/api/lesson-rtc/status'
     const rtcPresenceRoute=url.pathname==='/api/lesson-rtc/presence'
-    const mediaRoute = rtcRoute||rtcStatusRoute||rtcPresenceRoute
+    const specialRoute = rtcRoute||rtcStatusRoute||rtcPresenceRoute||iconRoute
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
+    if (['/api/appearance','/api/appearance/icon'].includes(url.pathname) && request.method==='GET') {
+      const entry=await repo.read('school').catch(()=>null)
+      const state=entry?JSON.parse(entry.data) as State:undefined
+      if(url.pathname==='/api/appearance')return Response.json({appearance:state?.appearance,iconGeneration:Boolean(generateIcon)},{headers})
+      const bytes=webpBytes(state?.appearanceIcon,iconContentLimit)
+      if(!bytes||!state?.appearance?.iconVersion)return new Response(null,{status:302,headers:{...headers,Location:'/assets/icon-192.png'}})
+      return new Response(bytes,{headers:{'Content-Type':'image/webp','X-Content-Type-Options':'nosniff',
+        'Cache-Control':url.searchParams.get('v')===state.appearance.iconVersion?'public, max-age=86400':'no-store'}})
+    }
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && (request.method !== 'GET' || events || pushRoute || mediaRoute)) throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events || pushRoute || specialRoute)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
     const rtcConfigured=Boolean((rtc||rtcAppId)&&identity.workspace==='school')
     const encrypted=Boolean(rtcAppId&&identity.workspace==='school')
-    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !mediaRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !specialRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
-    if (events && !get || mediaRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
+    if (events && !get || specialRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
     if (!get && request.headers.get('sec-fetch-site') === 'cross-site') deny()
     const raw = get ? '' : await request.text()
     if (raw.length > 75000) throw new ApiError('حجم الطلب غير مدعوم',413)
     const payload = get ? {} : JSON.parse(raw) as Payload
-    const action = get||pushRoute||mediaRoute ? '' : required(payload.action,40)
-    const op = get||pushRoute||mediaRoute ? '' : required(payload.op,70)
-    if (!get && !pushRoute && !mediaRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
+    const action = get||pushRoute||specialRoute ? '' : required(payload.action,40)
+    const op = get||pushRoute||specialRoute ? '' : required(payload.op,70)
+    if (!get && !pushRoute && !specialRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
     for (let attempt = 0; attempt < 6; attempt++) {
       const current = await repo.read(identity.workspace)
       if (!current) {
@@ -862,7 +890,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       let user = state.users.find(x => x.id === identity.id) ?? null
       if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
-        if (events || pushRoute || mediaRoute) return deny()
+        if (events || pushRoute || specialRoute) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
       }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
@@ -942,6 +970,14 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return restricted('duplicate')
       }
       const operationKey=identity.id+':'+op
+      if(iconRoute){
+        if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()
+        if(!generateIcon)throw new ApiError('خدمة توليد الأيقونات تحتاج إلى مفتاح OpenAI في إعدادات الخادم.',503)
+        const description=required(payload.description,350)
+        const palette=readPalette(payload.palette)
+        if(!palette||!readablePalette(palette))throw new ApiError('اختر ألوانًا واضحة للأيقونة وطابع التطبيق.')
+        return Response.json({image:await generateIcon(description,palette)},{headers})
+      }
       if(rtcStatusRoute) {
         if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()
         if(!rtcStatus)throw new ApiError('فحص Agora متاح على خادم الاستضافة',503)

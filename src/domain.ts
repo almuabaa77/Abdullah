@@ -1,3 +1,4 @@
+import type { Appearance } from './appearance'
 import type { Lesson, LessonHealth, LessonNotice, LessonRestriction, LessonSeries, LessonView } from './lessons'
 export type Role = 'teacher' | 'student' | 'parent' | 'admin'
 export type Attendance = 'present' | 'absent' | 'leave' | 'excused' | 'pending'
@@ -59,13 +60,14 @@ export const communicationKeys = ['studentDirect','guardianDirect','circleChat',
 export type Communication = Record<typeof communicationKeys[number],boolean>
 export const defaultCommunication:Communication = {studentDirect:true,guardianDirect:true,circleChat:true,audio:true,video:true,staffDirect:true,adminDirect:true}
 export type State = {
+  appearance?:Appearance; appearanceIcon?:string;
   lessons?:Lesson[]; lessonSeries?:LessonSeries[]; lessonRestrictions?:LessonRestriction[]; lessonHealth?:Omit<LessonHealth,'rtcConfigured'>; lessonTeacherScheduling?:boolean;
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]
   rules: { memorization: number; review: number; attendance: number; chat: boolean; communication?:Communication }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'appearanceIcon' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 export function examDateFor(exam:Exam,studentId:string) {
   const request=exam.extensions?.[studentId]

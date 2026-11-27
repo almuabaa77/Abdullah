@@ -49,3 +49,19 @@ export function applyAppUpdate(version: string, automatic = false) {
   url.searchParams.set('v',version)
   location.replace(url)
 }
+
+export async function refreshApp() {
+  if(!navigator.onLine)throw new Error('Offline')
+  if('serviceWorker' in navigator){
+    void navigator.serviceWorker.getRegistration().then(worker=>worker?.update()).catch(()=>{})
+  }
+  const stamp=Date.now().toString()
+  const response=await fetch('/app-version.json?_='+stamp,{cache:'no-store',signal:typeof AbortSignal.timeout==='function'?AbortSignal.timeout(10_000):undefined})
+  if(!response.ok)throw new Error('Could not check the current release')
+  const {version}=await response.json() as {version?:string}
+  if(typeof version!=='string'||!releasePattern.test(version))throw new Error('Invalid app version')
+  const url=new URL(location.href)
+  url.searchParams.set('v',version)
+  url.searchParams.set('reload',stamp)
+  location.replace(url)
+}

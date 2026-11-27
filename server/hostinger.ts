@@ -1,3 +1,5 @@
+import { createIconGenerator } from './appearance'
+import { brandIconUrl } from '../src/appearance'
 import { agoraAppIdOnly, agoraConfig, agoraPresence, createAgoraStatusCheck, issueAgora, revokeAgora } from './agora'
 import { applyPresence, runLessonSchedule } from './lesson-workspace'
 import express, { type ErrorRequestHandler, type Request as HttpRequest, type Response as HttpResponse } from 'express'
@@ -11,6 +13,7 @@ import { publishScheduled } from './announcements'
 import { noticeExpiresAt, type State } from '../src/domain'
 
 const env = process.env
+const generateIcon=env.OPENAI_API_KEY?.trim()?createIconGenerator(env.OPENAI_API_KEY.trim()):undefined
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
 const port = Number(env.PORT || 3000)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT')
@@ -233,12 +236,23 @@ app.get('/api/workspace/events',async (req,res)=>{
   const {revision,recipient} = await response.json() as {revision:number;recipient?:string}
   revisions.connect(res,revision,recipient)
 })
+app.get('/manifest.webmanifest',async (req,res)=>{
+  const original=serveAsset(appRequest(req))
+  const record=await repository.read('school').catch(()=>null)
+  const appearance=record?(JSON.parse(record.data) as State).appearance:undefined
+  if(!appearance||!original.ok||req.method==='HEAD')return forward(res,original)
+  const manifest=await original.json() as Record<string,unknown>
+  manifest.theme_color=appearance.background
+  manifest.background_color=appearance.background
+  if(appearance.iconVersion)manifest.icons=[{src:brandIconUrl(appearance.iconVersion),sizes:'512x512',type:'image/webp',purpose:'any maskable'}]
+  await forward(res,new Response(JSON.stringify(manifest),{headers:original.headers}))
+})
 app.use('/api',express.text({type:'application/json',limit:80000}),async (req,res)=>{
   if (req.method !== 'GET' && req.method !== 'POST') {
     res.status(405).set('Allow','GET, POST').json({error:'Method not allowed'})
     return
   }
-  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined,agoraStatus,encryptedAppId))
+  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined,agoraStatus,encryptedAppId,generateIcon))
 })
 app.use(async (req,res)=>{ await forward(res,serveAsset(appRequest(req))) })
 

@@ -244,7 +244,7 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
           <strong className="message-sender">{message.from===user?t('أنت','You'):accounts.get(message.from)?.name??t('عضو الحلقة','Circle member')}
             {accounts.get(message.from)&&<small className="chat-role" data-role={accounts.get(message.from)?.role}><RoleName role={accounts.get(message.from)!.role}/></small>}</strong>
           {message.reply&&byMessage.has(message.reply)&&<blockquote>{byMessage.get(message.reply)?.text}</blockquote>}
-          <p dir="auto">{message.text}</p><footer><time dateTime={message.time}>{clock.format(new Date(message.time))}</time>{canSend&&<button className="text-button" type="button" aria-label={t('رد','Reply')} onClick={()=>{updateDraft({reply:message.id});composer.current?.focus()}}><Reply size={15}/></button>}{message.from===user&&message.readBy.some(id=>id!==user)&&<Check aria-label={t('مقروءة','Read')} size={14}/>}</footer>
+          <p dir="auto" data-allow-copy>{message.text}</p><footer><time dateTime={message.time}>{clock.format(new Date(message.time))}</time>{canSend&&<button className="text-button" type="button" aria-label={t('رد','Reply')} onClick={()=>{updateDraft({reply:message.id});composer.current?.focus()}}><Reply size={15}/></button>}{message.from===user&&message.readBy.some(id=>id!==user)&&<Check aria-label={t('مقروءة','Read')} size={14}/>}</footer>
         </article>)}
         {!messages.length&&<Empty title={query?t('لا توجد رسائل مطابقة','No matching messages'):t('ابدأ أول رسالة','Start with a message')}/>}
       </div>

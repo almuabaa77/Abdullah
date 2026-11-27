@@ -1,3 +1,4 @@
+import { brandIconUrl, type Palette } from './appearance'
 import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, CircleMinus, CircleX, Clock3, Star, X } from 'lucide-react'
 import type { LessonCredentials, LessonRtcStatus } from './lessons'
@@ -9,15 +10,15 @@ export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' 
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
-  refresh:()=>void; lessonRtc:(id:string)=>Promise<LessonCredentials>; lessonRtcStatus:()=>Promise<LessonRtcStatus>;
+  refresh:()=>void; iconGeneration:boolean; generateIcon:(description:string,palette:Palette)=>Promise<string>; lessonRtc:(id:string)=>Promise<LessonCredentials>; lessonRtcStatus:()=>Promise<LessonRtcStatus>;
   lessonRtcPresence:(id:string,uid:number,version:number)=>Promise<boolean>;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => void
 }
 export const Context = createContext<Workspace | null>(null)
 export function useWorkspace() { const c = useContext(Context); if (!c) throw new Error('Workspace unavailable'); return c }
 export function Brand({ small = false }: { small?:boolean }) {
-  const {t} = useWorkspace()
-  return <div className={'brand' + (small ? ' brand-small' : '')}><img src="/assets/icon-64.png" alt="" width="44" height="44" /><div><strong>{t('حلقات جامع الخير','Al-Khair Quran Circles')}</strong><span>{t('بآل سرحان','Al Sarhan')}</span></div></div>
+  const {t,data} = useWorkspace()
+  return <div className={'brand' + (small ? ' brand-small' : '')}><img src={brandIconUrl(data.appearance?.iconVersion)} alt="" width="44" height="44" /><div><strong>{t('حلقات جامع الخير','Al-Khair Quran Circles')}</strong><span>{t('بآل سرحان','Al Sarhan')}</span></div></div>
 }
 export function Avatar({ student, size = '' }: { student:Student; size?:string }) {
   const {en} = useWorkspace()

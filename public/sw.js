@@ -53,7 +53,7 @@ async function asset(request, path) {
 
 self.addEventListener('fetch', event => {
   const {request} = event, url = new URL(request.url)
-  if (request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/sw.js') return
+  if (request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || ['/sw.js','/manifest.webmanifest','/app-version.json'].includes(url.pathname)) return
   if (request.mode === 'navigate') {
     if (!['/', '/admin', '/admin/'].includes(url.pathname)) return
     event.respondWith(navigation(request))

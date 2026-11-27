@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, Bell, ClipboardList, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
+import { Activity, Bell, ClipboardList, ChevronDown, ChevronUp, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
 import { circleMeets, recordedAssignment, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
 import { Avatar, Badge, dateLabel, Empty, matches, Modal, nameFor, useWorkspace } from './ui'
 import type { RecordStreamStatus } from './live-records'
@@ -16,7 +16,7 @@ type OrientationLock = ScreenOrientation & {lock?:(orientation:'landscape')=>Pro
 export function AdminLive({status,online}:{status:RecordStreamStatus;online:boolean}) {
   const {data,t,en,open,post,tell} = useWorkspace()
   const [selectedDate,setDate] = useState('')
-  const [circleId,setCircleId] = useState('')
+  const [circleId,setCircleId] = useState(()=>new URLSearchParams(location.search).get('circle')??'')
   const [query,setQuery] = useState('')
   const [limit,setLimit] = useState(pageSize)
   const [panel,setPanel] = useState<'records'|'reminders'|'activity'>('records')
@@ -31,8 +31,25 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
   const orientationLocked = useRef(false)
   const expandButton = useRef<HTMLButtonElement>(null)
   const exitButton = useRef<HTMLButtonElement>(null)
+  const tableScroll = useRef<HTMLDivElement>(null)
+  const [scrollEnds,setScrollEnds] = useState({top:true,bottom:false})
+  const updateScrollEnds = () => {
+    const box=tableScroll.current
+    if(!box)return
+    const top=box.scrollTop<2,bottom=box.scrollTop+box.clientHeight>=box.scrollHeight-2
+    setScrollEnds(previous=>previous.top===top&&previous.bottom===bottom?previous:{top,bottom})
+  }
   const date=selectedDate||data.date
-  const records = new Map(data.daily.filter(record=>record.date===date).map(record=>[record.studentId,record]))
+  const records = new Map<string,Daily>()
+  const incoming = new Map<string,Daily[]>()
+  for(const record of data.daily){
+    if(record.date===date)records.set(record.studentId,record)
+    else if(record.nextDate===date&&record.date<date){
+      const previous=incoming.get(record.studentId)
+      if(previous)previous.push(record)
+      else incoming.set(record.studentId,[record])
+    }
+  }
   const students = data.students.filter(student=>(student.active||records.has(student.id)) && (!circleId||student.circleId===circleId) && matches(student,query))
   const accounts = new Map(data.users.map(user=>[user.id,user]))
   const circles = new Map(data.circles.map(circle=>[circle.id,circle]))
@@ -47,6 +64,32 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
     ['absent',rows.filter(row=>row.record?.attendance==='absent').length,t('غياب','Absent')],
   ] as const
   const visibleRows=rows.filter(row=>filter==='all'||filter==='recorded'&&row.record||filter==='pending'&&!row.record||filter==='absent'&&row.record?.attendance==='absent')
+  const firstRows=visibleRows.slice(0,4).map(row=>row.student.id).join(',')
+  useEffect(()=>{
+    const box=tableScroll.current
+    if(!box||expanded||panel!=='records'||visibleRows.length<=4)return
+    const head=box.querySelector('thead')
+    const rows=[...box.querySelectorAll('tbody tr')].slice(0,4)
+    const measure=()=>{
+      if(!head)return
+      const scrollbar=box.offsetHeight-box.clientHeight
+      const height=head.getBoundingClientRect().height+rows.reduce((sum,row)=>sum+row.getBoundingClientRect().height,0)
+      box.style.setProperty('--visible-register-height',`${Math.ceil(height)+scrollbar}px`)
+      updateScrollEnds()
+    }
+    const observer=new ResizeObserver(measure)
+    if(head)observer.observe(head)
+    rows.forEach(row=>observer.observe(row))
+    measure()
+    return ()=>{observer.disconnect();box.style.removeProperty('--visible-register-height')}
+  },[expanded,panel,firstRows,visibleRows.length])
+  useEffect(()=>{if(tableScroll.current)tableScroll.current.scrollTop=0},[date,circleId,query,filter])
+  function stepTable(direction:number) {
+    const box=tableScroll.current
+    if(!box)return
+    const row=box.querySelector('tbody tr')
+    box.scrollBy({top:direction*(row?.getBoundingClientRect().height??44),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})
+  }
   const timeFormat = new Intl.DateTimeFormat(en?'en-GB':'ar-SA-u-nu-latn',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Riyadh'})
   const label = (kind:RecordSection) => kind==='memorization'?t('الحفظ الجديد','New memorization'):t(...sectionNames[kind])
   const connectionLabel = !online?t('دون اتصال','Offline')
@@ -199,8 +242,8 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
         <button ref={exitButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
           <Minimize size={17}/>{t('خروج من ملء الشاشة','Exit full screen')}
         </button>
-      </div>:<p className="live-scroll-hint">{t('مرّر الجدول أفقيًا أو أدر هاتفك لعرض المزيد من الأعمدة.','Swipe across the table or rotate your phone to see more columns.')}</p>}
-      <div className="live-table-scroll" tabIndex={0} role="region" aria-label={t('جدول المتابعة قابل للتمرير','Scrollable monitoring table')}>
+      </div>:<p className="live-scroll-hint">{t('مرّر عموديًا لعرض بقية الطلاب وأفقيًا لعرض المزيد من الأعمدة.','Scroll down for more students and across for more columns.')}</p>}
+      <div className="live-table-window"><div ref={tableScroll} className={'live-table-scroll'+(!expanded&&visibleRows.length>4?' live-table-four':'')} onScroll={updateScrollEnds} tabIndex={0} role="region" aria-label={t('جدول المتابعة قابل للتمرير','Scrollable monitoring table')}>
         <table className="live-table">
           <thead><tr>
             <th scope="col">{t('الطالب','Student')}</th><th scope="col">{t('التاريخ','Date')}</th>
@@ -208,11 +251,11 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
             <th scope="col">{t('موعد الجدولة','Assignment date')}</th><th scope="col">{label('attendance')}</th>
             <th scope="col">{label('points')}</th><th scope="col">{t('الإنجاز','Progress')}</th>
           </tr></thead>
-          <tbody>{visibleRows.slice(0,limit).map(({student,record})=>{
+          <tbody>{visibleRows.map(({student,record})=>{
             const attendance=record?.attendance ?? 'pending'
             const progress=statusFor(record)
             const attendanceTarget=availableReminder(student,record,'attendance')
-            const plan=recordedAssignment(data.daily,student.id,date,record)
+            const plan=recordedAssignment(incoming.get(student.id)??[],student.id,date,record)
             const scheduled=plan.nextDate
             const circle=circles.get(student.circleId)
             return <tr key={student.id}>
@@ -239,7 +282,12 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
         </table>
         {!visibleRows.length&&<Empty title={t('لا توجد سجلات مطابقة','No matching records')}/>}
       </div>
-      {visibleRows.length>limit&&<div className="live-more"><button className="btn btn-outline compact" type="button" onClick={()=>setLimit(limit+pageSize)}>{t('عرض طلاب إضافيين','Show more students')}</button></div>}
+      {!expanded&&visibleRows.length>4&&<div className="live-table-rail" aria-label={t('تمرير الطلاب','Scroll through students')}>
+        <button type="button" disabled={scrollEnds.top} aria-label={t('تمرير لأعلى','Scroll up')} onClick={()=>stepTable(-1)}><ChevronUp size={17}/></button>
+        <span aria-hidden="true">{visibleRows.length}</span>
+        <button type="button" disabled={scrollEnds.bottom} aria-label={t('تمرير لأسفل','Scroll down')} onClick={()=>stepTable(1)}><ChevronDown size={17}/></button>
+      </div>}
+      </div>
     </section>}
 
     {!expanded&&panel==='reminders'&&<section className="live-pane live-list-pane" aria-label={t('الخانات التي تحتاج متابعة','Fields requiring follow-up')}>
