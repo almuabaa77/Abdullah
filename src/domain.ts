@@ -3,9 +3,11 @@ export type Attendance = 'present' | 'absent' | 'leave' | 'excused' | 'pending'
 export type Result = 'complete' | 'partial' | 'none'
 export type DateKey = string
 export type Segment = { surah: number; from: number; to: number }
-export type User = { id: string; name: string; phone?: string; role: Role; status: 'active' | 'pending' | 'disabled'; studentId?: string; duplicateOf?: string }
+export type StudentDetails = { age?:number; schoolStage?:string; guardianPhone?:string; address?:string }
+export type ChildRequest = { name:string; phone:string }
+export type User = { id: string; name: string; phone?: string; role: Role; status: 'active' | 'pending' | 'disabled'; studentId?: string; duplicateOf?: string; address?:string; enrollmentCircleId?:string; studentDetails?:StudentDetails; childRequest?:ChildRequest }
 export type Circle = { id: string; name: string; teacherId: string; days: number[]; holidays: string[] }
-export type Student = { id: string; name: string; latin?: string; circleId: string; phone?: string; color: number; startingPoints: number; active: boolean }
+export type Student = StudentDetails & { id: string; name: string; latin?: string; circleId: string; phone?: string; color: number; startingPoints: number; active: boolean }
 export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
   memorizationStatus: Result; reviewStatus: Result; nextMemorization: Segment[]; nextReview: Segment[]
@@ -47,7 +49,7 @@ export type State = {
   rules: { memorization: number; review: number; attendance: number; chat: boolean }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 export const reminderCooldown = 5 * 60_000
 export function needsRecordReminder(record:Daily|undefined,field:ReminderField) {

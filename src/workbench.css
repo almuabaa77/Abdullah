@@ -544,3 +544,7 @@ body {background:var(--bg)}
 @media print {
   .teacher-bottom-nav {display:none!important}
 }
+
+.teacher-enrollments ul {margin:0;padding:0;list-style:none}
+.teacher-enrollments li {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px;padding:8px 0;border-block-start:1px solid var(--border)}
+.signup-card input[readonly] {background:var(--surface);color:var(--green)}

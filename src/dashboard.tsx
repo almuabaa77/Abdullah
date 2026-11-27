@@ -17,6 +17,7 @@ export function Dashboard() {
   const circle = data.circles.find(c=>c.id===circleId) || data.circles[0]
   const meeting = Boolean(circle && circleMeets(data.date,circle))
   const records = useMemo(()=>new Map(data.daily.filter(record=>record.date===data.date).map(record=>[record.studentId,record])),[data.daily,data.date])
+  const requests=data.circleEnrollments?.filter(request=>request.circleId===circle?.id) ?? []
   const students = data.students.filter(student=>student.active && student.circleId===circle?.id)
   const roster = students.map(student=>({student,record:records.get(student.id),status:recitationStatus(records.get(student.id))}))
   const complete = roster.filter(({record})=>statusFor(record)==='complete').length
@@ -46,9 +47,9 @@ export function Dashboard() {
           <h1>{t('حلقة اليوم','Today’s circle')}</h1>
           {name&&<p className="muted">{name}</p>}
         </div>
-        <label className="circle-picker"><BookOpen size={16}/><select aria-label={t('الحلقة','Circle')} value={circle?.id||''} onChange={event=>{setCircle(event.target.value);changeFilter('all')}}>
+        <label className="circle-picker"><BookOpen size={16}/><select aria-label={t('الحلقة','Circle')} value={circle?.id||''} onChange={event=>{setCircle(event.target.value);setQuery('');changeFilter('all')}}>
           {!data.circles.length&&<option value="">{t('لا توجد حلقات','No circles')}</option>}
-          {data.circles.map(item=><option key={item.id} value={item.id}>{data.sample && en ? 'Imam Asim Circle' : item.name}</option>)}
+          {data.circles.map(item=><option key={item.id} value={item.id}>{data.sample && en ? 'Imam Asim Circle' : item.name} · {data.students.filter(student=>student.active&&student.circleId===item.id).length}</option>)}
         </select><ChevronDown size={15}/></label>
       </div>
       <div className="teacher-actions">
@@ -67,6 +68,10 @@ export function Dashboard() {
       <progress value={progress} max={100} aria-label={t('إنجاز اليوم','Daily completion')}/>
       <span className="count-pill"><bdi>{progress}%</bdi></span>
       {absent>0&&<button className="text-button" onClick={()=>changeFilter('absent')}>{t(`${absent} غائب`,`${absent} absent`)}</button>}
+    </section>}
+    {requests.length>0&&<section className="panel section-panel teacher-enrollments">
+      <div className="section-title"><h2>{t('طلبات تسجيل الحلقة','Circle enrollment requests')} <span className="count-pill">{requests.length}</span></h2></div>
+      <ul>{requests.map(request=><li key={request.id}><strong>{request.name}</strong><Badge status="pending" label={t('بانتظار اعتماد الإدارة','Awaiting administration approval')}/></li>)}</ul>
     </section>}
     <section className="panel roster">
       <div className="section-title">

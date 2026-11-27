@@ -268,3 +268,8 @@ body:has(.live-register-expanded) {overflow:hidden}
 @media(min-width:1050px) {
   .live-register-expanded .live-scroll-hint {display:none}
 }
+
+.enrollment-details {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr));gap:10px}
+.enrollment-details div {padding:8px 10px;border-radius:8px;background:var(--surface);overflow-wrap:anywhere}
+.enrollment-details dt {font-size:.78rem;color:var(--muted)}
+.enrollment-details dd {margin:0}

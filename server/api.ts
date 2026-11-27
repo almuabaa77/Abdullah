@@ -1,5 +1,6 @@
-import { groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
-import { balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, pointsFor, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type Daily, type Exam, type Notice, type Role, type State, type Student, type User, type View } from '../src/domain'
+import { asciiDigits, groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
+import { enrollmentNameKey, threePartName } from '../src/enrollment'
+import { balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, pointsFor, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type ChildRequest, type Daily, type Exam, type Notice, type Role, type State, type Student, type StudentDetails, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
@@ -34,6 +35,52 @@ function phoneFor(x:unknown) {
   const phone=normalizeMobile(clean(x,30))
   if(!phone)throw new ApiError('أدخل رقم جوال صحيحًا مع رمز الدولة')
   return phone
+}
+function enrollmentName(value:unknown) {
+  const name=threePartName(value)
+  if(!name)throw new ApiError('أدخل اسمًا من ثلاث كلمات فقط، بالحروف ومن دون أرقام أو رموز')
+  return name
+}
+function learnerDetails(p:Payload,existing?:Student):StudentDetails {
+  const age=asciiDigits(String(p.age ?? existing?.age ?? '')).trim()
+  if((age||!existing||existing.age!==undefined)&&(!/^\d{1,3}$/.test(age)||Number(age)<1||Number(age)>120))throw new ApiError('أدخل عمرًا صحيحًا من 1 إلى 120 سنة')
+  return {
+    age:age?Number(age):undefined,
+    schoolStage:!existing||existing.schoolStage?required(p.schoolStage ?? existing?.schoolStage,80):clean(p.schoolStage,80)||undefined,
+    address:!existing||existing.address?required(p.address ?? existing?.address,240):clean(p.address,240)||undefined,
+    guardianPhone:p.guardianPhone===undefined?existing?.guardianPhone:clean(p.guardianPhone)?phoneFor(p.guardianPhone):undefined,
+  }
+}
+function childByIdentity(state:State,child:ChildRequest) {
+  const matches=state.students.filter(student=>student.active&&normalizeMobile(student.phone ?? '')===child.phone
+    &&enrollmentNameKey(student.name)===enrollmentNameKey(child.name))
+  return matches.length===1?matches[0]:undefined
+}
+function attachChild(state:State,parent:User,student:Student,status:'pending'|'accepted') {
+  const existing=state.links.find(link=>link.studentId===student.id&&link.parentId===parent.id&&link.status!=='declined')
+  if(existing){if(status==='accepted')existing.status='accepted';return false}
+  state.links.unshift({id:idFor(),parentId:parent.id,studentId:student.id,status})
+  return true
+}
+function syncCircleStudents(state:State) {
+  for(const chat of state.chats)if(chat.circleId)chat.students=state.students.filter(s=>s.active&&s.circleId===chat.circleId).map(s=>s.id)
+}
+function enrollStudent(state:State,account:User,circleId:string,details?:StudentDetails) {
+  if(!state.circles.some(circle=>circle.id===circleId))throw new ApiError('اختر حلقة الطالب')
+  const phone=normalizeMobile(account.phone ?? '')
+  if(!phone)throw new ApiError('رقم جوال الطالب غير صالح')
+  const matches=state.students.filter(s=>normalizeMobile(s.phone ?? '')===phone)
+  if(matches.length>1)throw new ApiError('يوجد أكثر من سجل للطالب بهذا الرقم. راجع سجلات الطلاب أولًا.',409)
+  const existing=matches[0]
+  if(existing&&!existing.active)throw new ApiError('سجل الطالب موقوف. فعّله من قسم الطلاب أولًا.',409)
+  if(existing&&state.users.some(user=>user.id!==account.id&&user.studentId===existing.id))throw duplicatePhoneError()
+  if(existing)Object.assign(existing,details,{circleId})
+  else if(details)state.students.push({...details,id:idFor(),name:account.name,phone,circleId,color:state.students.length%5,startingPoints:0,active:true})
+  else throw new ApiError('هذا الطلب قديم. أضف سجل الطالب وبياناته باستخدام رقم جوال الحساب أولًا.',409)
+  account.studentId=existing?.id ?? state.students.at(-1)!.id
+  delete account.studentDetails
+  delete account.enrollmentCircleId
+  syncCircleStudents(state)
 }
 type FirebaseConfig = { apiKey:string; authDomain:string; projectId:string; appId:string }
 function firebaseConfig(env:Env):FirebaseConfig|null {
@@ -85,7 +132,12 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
   }
   const students = scope(state, user)
   const ids = new Set(students.map(s => s.id))
-  const publicStudent = (s: Student) => ({ ...s, phone: user.role === 'admin' || user.studentId === s.id ? s.phone : undefined })
+  const publicStudent = (s: Student) => {
+    if(user.role==='admin'||user.studentId===s.id)return s
+    const {phone,address,guardianPhone,age,schoolStage,...roster}=s
+    return roster
+  }
+  const assignedCircles=new Set(state.circles.filter(circle=>circle.teacherId===user.id).map(circle=>circle.id))
   const chats = state.chats.filter(c => chatVisible(c, user, ids, state.rules.chat))
   const participants = new Set(chats.flatMap(c => [ ...c.members, ...c.messages.map(m => m.from) ]))
   const isAdmin = user.role === 'admin'
@@ -94,6 +146,9 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
+    circleEnrollments:user.role==='teacher'?state.users.flatMap(account=>account.role==='student'&&account.status==='pending'
+      &&!account.duplicateOf&&account.enrollmentCircleId&&assignedCircles.has(account.enrollmentCircleId)
+      ?[{id:account.id,name:account.name,circleId:account.enrollmentCircleId}]:[]):undefined,
     recordEvents: isAdmin ? state.recordEvents?.slice(0,100) : undefined,
     recordReminders:isAdmin?state.notices.filter(notice=>notice.recordReminder&&notice.users?.[0]).slice(0,300)
       .map(notice=>({...notice.recordReminder!,teacherId:notice.users![0],time:notice.time})):undefined,
@@ -146,10 +201,20 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     const phone = identity.phone
     if (user || !phone) return deny()
     if (groupAccountsByPhone(state.users).has(phone)) throw duplicatePhoneError()
-    const name = required(p.name, 90)
     const role = choice(p.role, ['teacher','parent','student'] as const)
-    const target = state.students.find(s => normalizeMobile(s.phone ?? '') === phone)
-    state.users.push({ id: identity.id, name, phone, role, status: 'pending', studentId: role === 'student' ? target?.id : undefined })
+    if(role!=='student'&&state.students.some(student=>normalizeMobile(student.phone ?? '')===phone))throw duplicatePhoneError()
+    const account:User={id:identity.id,name:role==='teacher'?required(p.name,90):enrollmentName(p.name),phone,role,status:'pending'}
+    if(role==='student') {
+      const circleId=required(p.circleId)
+      if(!state.circles.some(circle=>circle.id===circleId))throw new ApiError('اختر حلقة الطالب')
+      account.enrollmentCircleId=circleId
+      account.studentDetails=learnerDetails(p)
+    } else if(role==='parent') {
+      account.childRequest={name:required(p.childName,90),phone:phoneFor(p.childPhone)}
+      const child=childByIdentity(state,account.childRequest)
+      if(child)attachChild(state,account,child,'pending')
+    } else account.address=required(p.address,240)
+    state.users.push(account)
     return
   }
   if (!user || user.status !== 'active') throw new ApiError('الحساب بانتظار التفعيل', 403)
@@ -284,10 +349,8 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     }
     case 'link': {
       if (u.role !== 'parent') deny()
-      const phone = phoneFor(p.phone)
-      const s = state.students.find(s => s.active && normalizeMobile(s.phone ?? '') === phone)
-      if (s && !state.links.some(l => l.studentId === s.id && l.parentId === u.id && l.status !== 'declined')) {
-        state.links.unshift({ id: op, parentId: u.id, studentId: s.id, status: 'pending' })
+      const s = childByIdentity(state,{name:required(p.childName,90),phone:phoneFor(p.phone)})
+      if (s && attachChild(state,u,s,'pending')) {
         notify(state,'link','طلب ربط طالب', u.name, {users:state.users.filter(x => x.role === 'admin').map(x=>x.id)})
       }
       return
@@ -297,6 +360,8 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const link = state.links.find(x => x.id === p.id)
       if (!link || link.status !== 'pending') throw new ApiError('الطلب غير متاح')
       link.status = choice(p.status, ['accepted','declined'] as const)
+      const guardian=state.users.find(user=>user.id===link.parentId)
+      if(link.status==='accepted'&&guardian?.childRequest&&childByIdentity(state,guardian.childRequest)?.id===link.studentId) delete guardian.childRequest
       notify(state,'link','تمت مراجعة طلب ربط الطالب',link.status === 'accepted' ? 'يمكن الآن متابعة الطالب.' : 'تعذر اعتماد الطلب.',{users:[link.parentId]})
       break
     }
@@ -443,9 +508,16 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const role = choice(p.role,['teacher','student','parent'] as const)
       const phone = phoneFor(p.phone)
       if(groupAccountsByPhone(state.users).has(phone)) throw duplicatePhoneError()
-      const target = state.students.find(x=>x.active && normalizeMobile(x.phone ?? '')===phone)
-      if(role==='student'&&!target)throw new ApiError('أضف الطالب ورقم جواله إلى الحلقة أولًا')
-      state.users.push({id:'invite:'+op,role,phone,name:required(p.name,90),status:'active',studentId:role==='student'?target?.id:undefined})
+      if(role!=='student'&&state.students.some(student=>normalizeMobile(student.phone ?? '')===phone))throw duplicatePhoneError()
+      const account:User={id:'invite:'+op,role,phone,name:role==='teacher'?required(p.name,90):enrollmentName(p.name),status:'active'}
+      if(role==='student')enrollStudent(state,account,required(p.circleId),learnerDetails(p))
+      if(role==='parent') {
+        const child=state.students.find(student=>student.id===p.childId&&student.active)
+        if(!child)throw new ApiError('اختر الابن من قائمة الطلاب النشطين')
+        attachChild(state,account,child,'accepted')
+      }
+      if(role==='teacher')account.address=required(p.address,240)
+      state.users.push(account)
       break
     }
     case 'account': {
@@ -455,10 +527,25 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const status = choice(p.status,['active','disabled','pending'] as const)
       if (status === 'active' && (target!.duplicateOf || state.users.some(other=>hasSharedPhone(target!,other)&&other.duplicateOf!==target!.id))) throw duplicatePhoneError()
       if (status === 'active' && target!.role === 'student') {
-        const phone = normalizeMobile(target!.phone ?? '')
-        const s = phone && state.students.find(x => x.active && normalizeMobile(x.phone ?? '') === phone)
-        if (!s) throw new ApiError('أضف الطالب ورقم جواله إلى الحلقة قبل اعتماد الحساب')
-        target!.studentId = s.id
+        const linked=state.students.find(student=>student.id===target!.studentId&&student.active)
+        const phone=normalizeMobile(target!.phone ?? '')
+        const existing=linked ?? state.students.find(student=>phone&&normalizeMobile(student.phone ?? '')===phone)
+        if(!linked||p.circleId) {
+          const details=target!.studentDetails??(!existing&&p.age!==undefined?learnerDetails(p):undefined)
+          enrollStudent(state,target!,clean(p.circleId)||target!.enrollmentCircleId||existing?.circleId||'',details)
+        }
+      }
+      if(status==='active'&&target!.role==='parent'&&target!.childRequest) {
+        const claim=target!.childRequest
+        if(p.childId) {
+          const child=state.students.find(student=>student.active&&student.id===p.childId)
+          if(!child)throw new ApiError('اختر الابن من قائمة الطلاب النشطين')
+          attachChild(state,target!,child,'accepted')
+          delete target!.childRequest
+        } else {
+          const child=childByIdentity(state,claim)
+          if(child)attachChild(state,target!,child,'pending')
+        }
       }
       target!.status = status
       break
@@ -504,12 +591,17 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (!state.circles.some(c => c.id === circleId)) throw new ApiError('اختر حلقة الطالب')
       const id = clean(p.id) || op
       const old = state.students.find(x => x.id === id)
-      const phone = clean(p.phone) ? phoneFor(p.phone) : undefined
+      const phone = p.phone===undefined ? old?.phone : clean(p.phone) ? phoneFor(p.phone) : undefined
       if (phone && state.students.some(x => x.id !== id && normalizeMobile(x.phone ?? '') === phone)) throw new ApiError('رقم الجوال مسجل لطالب آخر')
-      const next: Student = { id, name:required(p.name,90), latin:clean(p.latin,90) || undefined, phone,circleId,
+      const account=phone?state.users.find(x=>normalizeMobile(x.phone ?? '')===phone&&!x.duplicateOf):undefined
+      if(account&&(account.role!=='student'||account.studentId&&account.studentId!==id))throw duplicatePhoneError()
+      if(old&&(phone??null)!==normalizeMobile(old.phone ?? '')&&state.users.some(user=>user.studentId===id))throw new ApiError('رقم الطالب مرتبط بحساب. يُحدّث بعد التحقق من الرقم الجديد.')
+      const next: Student = { ...learnerDetails(p,old),id, name:old&&p.name===old.name?old.name:enrollmentName(p.name), latin:clean(p.latin ?? old?.latin,90) || undefined, phone,circleId,
         color:old?.color ?? state.students.length % 5, startingPoints:old?.startingPoints ?? 0,active:p.active !== false }
       if (old) Object.assign(old,next); else state.students.push(next)
-      for (const c of state.chats) if(c.circleId) c.students=state.students.filter(s=>s.active&&s.circleId===c.circleId).map(s=>s.id)
+      if(account?.status==='active')account.studentId=id
+      if(account?.status==='pending')account.enrollmentCircleId=circleId
+      syncCircleStudents(state)
       break
     }
     case 'prize': {
@@ -577,12 +669,14 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       }
       const phoneAccounts = identity.phone ? groupAccountsByPhone(state.users).get(identity.phone) ?? [] : []
       if (user && identity.phone && normalizeMobile(user.phone ?? '')!==identity.phone) {
-        if (phoneAccounts.length) {
+        if (phoneAccounts.length || state.students.some(student=>student.id!==user!.studentId&&normalizeMobile(student.phone ?? '')===identity.phone)) {
           if (!get) throw duplicatePhoneError()
           return restricted('duplicate')
         }
         const userId = user.id
         user.phone = identity.phone
+        const linked=state.students.find(student=>student.id===user!.studentId)
+        if(user.role==='student'&&linked)linked.phone=identity.phone
         delete user.duplicateOf
         for (const account of state.users) if (account.duplicateOf===userId) delete account.duplicateOf
         await repo.write(identity.workspace,current.revision,state)
@@ -611,6 +705,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
           for (const account of state.users) if (account.duplicateOf===oldId) account.duplicateOf = identity.id
           for (const circle of state.circles) if (circle.teacherId===oldId) circle.teacherId = identity.id
           for (const chat of state.chats) chat.members = chat.members.map(id=>id===oldId ? identity.id : id)
+          for (const link of state.links) if(link.parentId===oldId)link.parentId=identity.id
           await repo.write(identity.workspace,current.revision,state)
           continue
         }
@@ -623,6 +718,9 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
           user.status = identity.bootstrap.status
           user.phone = identity.bootstrap.phone
           delete user.studentId
+          delete user.enrollmentCircleId
+          delete user.studentDetails
+          delete user.childRequest
           state.audit.push({ time:new Date().toISOString(),actor:user.name,action:'تفعيل المدير الأول',target:user.id })
         } else {
           state.users.push(identity.bootstrap)
@@ -651,7 +749,14 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         && url.searchParams.get('since')===String(current.revision) && url.searchParams.get('date')===dateKey()) {
         return new Response(null,{status:204,headers})
       }
-      if (get || state.operations.includes(operationKey)) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
+      if (get || state.operations.includes(operationKey)) {
+        const view=project(state,user,current.revision,phoneEnabled)
+        if(!user&&identity.phone) {
+          view.verifiedPhone=identity.phone
+          view.enrollmentCircles=state.circles.map(({id,name})=>({id,name}))
+        }
+        return Response.json(view,{headers})
+      }
       const previousNotices=state.notices.length
       if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
       state.operations.push(operationKey)
