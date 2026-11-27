@@ -1,4 +1,4 @@
-import { assignmentFor, emptyDaily, type Circle, type Daily } from './domain'
+import { emptyDaily, recitationAssignment, suggestNext, type Circle, type Daily } from './domain'
 import type { WizardMode } from './ui'
 
 export const recitationKinds = ['memorization','review'] as const
@@ -10,8 +10,8 @@ export function prepareRecitation(records: Daily[], studentId: string, date: str
   const base = saved ?? emptyDaily(studentId,date,circle)
   const draft = {...base,...preset,studentId,date}
   const suggested:RecitationKind[] = []
+  const plan = recitationAssignment(records,studentId,date,circle)
   if (mode==='recite'||mode==='review') {
-    const plan = assignmentFor(records,studentId,date)
     for (const kind of recitationKinds) {
       if (base[kind].length) {
         draft[kind] = base[kind]
@@ -26,5 +26,16 @@ export function prepareRecitation(records: Daily[], studentId: string, date: str
       suggested.push(kind)
     }
   }
-  return {base,draft,suggested}
+  return {base,draft,suggested,planDate:plan?.date}
+}
+
+export function suggestAssignment(records:Daily[],current:Daily) {
+  const latest=(kind:RecitationKind)=>{
+    if(current[kind].length&&current[outcome[kind]]!=='none')return current[kind]
+    return records.reduce<Daily|undefined>((best,record)=>{
+      if(record.studentId!==current.studentId||record.date>=current.date||!record[kind].length||record[outcome[kind]]==='none')return best
+      return !best||record.date>best.date?record:best
+    },undefined)?.[kind] ?? []
+  }
+  return {nextMemorization:suggestNext(latest('memorization')),nextReview:latest('review')}
 }

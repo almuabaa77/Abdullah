@@ -574,3 +574,27 @@ body {background:var(--bg)}
   .app-announcement .announcement-close {min-width:34px;min-height:34px}
   .assessment-student {align-items:start;flex-wrap:wrap}
 }
+
+.fast-entry {display:grid;gap:6px;justify-items:start;padding:11px;border:1px solid #c5ded1;border-radius:12px;background:#edf7ef}
+.fast-entry-heading {display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:#205341}
+.fast-entry-heading small,.fast-entry p {font-size:.82rem}
+.fast-entry-heading small {color:var(--muted)}
+.fast-entry p {overflow-wrap:anywhere}
+.recitation-done-card {display:grid;grid-template-columns:auto minmax(0,1fr);border-inline-start:3px solid #5ba184}
+.recitation-progress {display:grid;grid-column:1/-1;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:100%}
+.recitation-progress-cell {display:grid;place-items:center;min-width:0;min-height:45px;padding:3px 1px;border-radius:7px;background:#f0f2ef;color:#52645b}
+.recitation-progress-cell small {font-size:.66rem;white-space:nowrap;color:inherit}
+.recitation-progress-cell strong {display:grid;place-items:center;min-height:18px}
+.recitation-progress-cell[data-state=complete] {background:#e3f4e8;color:#166045}
+.recitation-progress-cell[data-state=partial] {background:#fff0d8;color:#81541c}
+.workbench-totals .workbench-done {background:#e6f5eb;color:#175940}
+.workbench-totals .workbench-done:hover {background:#daeee1}
+.notice-timer {display:inline-flex;align-items:center;gap:4px;margin-block-start:4px;padding:2px 6px;border-radius:20px;background:#e9f2ed;color:#17573f;font-size:.71rem;font-variant-numeric:tabular-nums}
+.notice-timer[data-urgency=soon] {background:#fff0d8;color:#78501f}
+.notice-timer[data-urgency=urgent] {background:#fce7e3;color:#8c302b}
+.notice-timer svg {animation:notice-pulse 2.4s ease-in-out infinite}
+.notice-timer[data-urgency=urgent] svg {animation-duration:1.5s}
+@keyframes notice-pulse {50%{transform:scale(1.14);opacity:.65}}
+@media(prefers-reduced-motion:reduce) {.notice-timer svg {animation:none}}
+.notifications .notice-more {display:flex;width:100%;margin-block:6px}
+.notice-copy {overflow-wrap:anywhere}

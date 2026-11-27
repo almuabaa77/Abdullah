@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Check, CircleCheck, CircleMinus, Clock3, ListFilter, Search, UserRoundX } from 'lucide-react'
-import { recitationStatus, isRecitationDue, type Daily, type RecitationStatus, type Student } from './domain'
-import { Avatar, Empty, matches, nameFor, useWorkspace, type Tr } from './ui'
+import { hasCompletedRecitation, recitationStatus, isRecitationDue, type Daily, type RecitationStatus, type Student } from './domain'
+import { Avatar, Empty, matches, nameFor, statusText, useWorkspace, type Tr } from './ui'
 
 export const recitationLabel = (status:RecitationStatus,t:Tr) => ({
   complete:t('أتمّ التسميع','Recited'),
@@ -18,6 +18,23 @@ export function RecitationBadge({record}:{record?:Daily}) {
   return <span className={'recitation-badge recitation-'+status}><Icon size={14}/>{recitationLabel(status,t)}</span>
 }
 
+export function RecitationProgress({record}:{record:Daily}) {
+  const {t}=useWorkspace()
+  const flags=[
+    {label:t('حفظ','Mem.'),name:t('الحفظ','Memorization'),state:record.memorization.length?record.memorizationStatus:'none'},
+    {label:t('مراجعة','Rev.'),name:t('المراجعة','Revision'),state:record.review.length?record.reviewStatus:'none'},
+    {label:t('حفظ/ج','Mem./S'),name:t('الحفظ المجدول','Scheduled memorization'),state:record.nextMemorization.length?'complete':'none'},
+    {label:t('مراجعة/ج','Rev./S'),name:t('المراجعة المجدولة','Scheduled revision'),state:record.nextReview.length?'complete':'none'},
+    {label:t('نقاط','Points'),name:t('النقاط','Points'),state:'complete',value:record.points},
+  ]
+  return <span className="recitation-progress" aria-label={t('المهام المسجّلة','Recorded tasks')}>{flags.map(({label,name,state,value})=>{
+    const status=value!==undefined?String(value):statusText(state,t)
+    return <span key={name} className="recitation-progress-cell" data-state={state} title={name+' · '+status} aria-label={name+' · '+status}>
+      <small>{label}</small><strong>{value!==undefined?value:state==='complete'?<Check size={16}/>:state==='partial'?<CircleMinus size={15}/>:'—'}</strong>
+    </span>
+  })}</span>
+}
+
 type Filter = 'due' | 'done' | 'all'
 export function StudentPicker({select,students,date,defaultFilter='due',compact=false,autoFocus=false}:{
   select:(student:Student)=>void; students?:Student[]; date?:string; defaultFilter?:Filter; compact?:boolean; autoFocus?:boolean
@@ -29,21 +46,21 @@ export function StudentPicker({select,students,date,defaultFilter='due',compact=
   const pool = (students || data.students).filter(s=>s.active)
   const today = new Map(data.daily.filter(d=>d.date===(date||data.date)).map(d=>[d.studentId,d]))
   const due = pool.filter(s=>isRecitationDue(today.get(s.id))).length
-  const done = pool.filter(s=>recitationStatus(today.get(s.id))==='complete').length
+  const done = pool.filter(s=>hasCompletedRecitation(today.get(s.id))).length
   const filters = [
     ['due',t('بانتظار التسميع','To recite'),due], ['done',t('أتمّوا التسميع','Recited'),done], ['all',t('الجميع','All'),pool.length],
   ] as const
-  const results = pool.filter(s=>matches(s,query) && (filter==='all'||filter==='due'&&isRecitationDue(today.get(s.id))||filter==='done'&&recitationStatus(today.get(s.id))==='complete'))
+  const results = pool.filter(s=>matches(s,query) && (filter==='all'||filter==='due'&&isRecitationDue(today.get(s.id))||filter==='done'&&hasCompletedRecitation(today.get(s.id))))
   return <div className={'student-picker recitation-picker'+(compact?' compact-picker':'')}>
-    <label className="search"><Search size={18}/><input autoFocus={autoFocus} value={query} onChange={e=>{setQuery(e.target.value);setLimit(6);if(e.target.value.trim())setFilter('all')}} placeholder={t('ابحث عن طالب بالاسم','Search by student name')} aria-label={t('ابحث عن طالب بالاسم','Search by student name')}/></label>
+    <label className="search"><Search size={18}/><input autoFocus={autoFocus} value={query} onChange={e=>{setQuery(e.target.value);setLimit(6);if(filter==='due'&&e.target.value.trim())setFilter('all')}} placeholder={t('ابحث عن طالب بالاسم','Search by student name')} aria-label={t('ابحث عن طالب بالاسم','Search by student name')}/></label>
     <div className="picker-filters" aria-label={t('تصفية حالة التسميع','Filter by recitation status')}>{filters.map(([key,label,count])=><button key={key} type="button" aria-pressed={key===filter} className={key===filter?'selected':''} onClick={()=>{setFilter(key);setLimit(6)}}>{label}<span>{count}</span></button>)}</div>
     <div className="picker-results">
       {results.slice(0,limit).map(s=>{
         const record=today.get(s.id)
         const completed=recitationStatus(record)==='complete'
-        return <button className={'picker-row recitation-row recitation-row-'+recitationStatus(record)} type="button" key={s.id} onClick={()=>select(s)}>
+        return <button className={'picker-row recitation-row recitation-row-'+recitationStatus(record)+(filter==='done'?' recitation-done-card':'')} type="button" key={s.id} onClick={()=>select(s)}>
           <Avatar student={s}/><span className="picker-student"><strong>{nameFor(s,en)}</strong>{!compact&&<small>{data.sample&&en?'Imam Asim Circle':data.circles.find(c=>c.id===s.circleId)?.name}</small>}</span>
-          <RecitationBadge record={record}/>{completed&&<Check size={17} className="picker-check"/>}
+          {filter==='done'&&record?<RecitationProgress record={record}/>:<><RecitationBadge record={record}/>{completed&&<Check size={17} className="picker-check"/>}</>}
         </button>
       })}
       {!results.length&&<Empty title={query?t('لا توجد أسماء مطابقة','No matching students'):filter==='due'?t('لا يوجد طلاب بانتظار التسميع','No students waiting to recite'):t('لا توجد نتائج','No results')}/>}

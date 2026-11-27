@@ -12,7 +12,7 @@ export type Student = StudentDetails & { id: string; name: string; latin?: strin
 export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
   memorizationStatus: Result; reviewStatus: Result; nextMemorization: Segment[]; nextReview: Segment[]
-  nextDate: string; attendance: Attendance; points: number; bonus: number; note: string
+  nextDate: string; attendance: Attendance; attendanceSource?:'automatic'|'manual'; points: number; bonus: number; note: string
   version?: number; updatedAt?: string
 }
 export type RecordSection = 'memorization' | 'review' | 'nextMemorization' | 'nextReview' | 'attendance' | 'points' | 'note'
@@ -25,6 +25,9 @@ export const announcementAudiences = ['all','circle','student','parent'] as cons
 export const announcementSources = ['administration','circles','student-affairs'] as const
 export type Announcement = { audience:typeof announcementAudiences[number]; source:typeof announcementSources[number]; targetId?:string; publishAt:string; publishedAt?:string; withdrawn?:boolean; dismissedBy?:string[] }
 export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; announcement?:Announcement; readBy: string[] }
+export const noticeLifetime=24*60*60_000
+export const noticeExpiresAt=(notice:Notice)=>Date.parse(notice.announcement?.publishedAt??notice.time)+noticeLifetime
+
 export type Leave = { id: string; studentId: string; date: string; reason: string; status: 'pending' | 'accepted' | 'declined' }
 export type Link = { id: string; parentId: string; studentId: string; status: 'pending' | 'accepted' | 'declined' | 'cancelled'; claim?:ChildRequest; createdAt?:string; reviewedAt?:string }
 export type Prize = { id: string; name: string; description: string; price: number; stock: number; image?: string; active: boolean }
@@ -162,6 +165,34 @@ export function assignmentFor(records: Daily[], studentId: string, date: string)
     return !latest || record.date>latest.date ? record : latest
   },undefined)
 }
+export function recitationAssignment(records:Daily[],studentId:string,date:string,circle?:Circle) {
+  const scheduled=assignmentFor(records,studentId,date)
+  if(scheduled)return scheduled
+  let previous=dayOffset(date,-1)
+  for(let skipped=0;skipped<365&&!circleMeets(previous,circle);skipped++)previous=dayOffset(previous,-1)
+  return records.find(record=>record.studentId===studentId&&record.date===previous&&(!record.nextDate||record.nextDate<=date)
+    &&(record.nextMemorization.length||record.nextReview.length))
+}
+export function hasCompletedRecitation(record?:Daily) {
+  return Boolean(record&&(record.memorization.length&&record.memorizationStatus==='complete'||record.review.length&&record.reviewStatus==='complete'))
+}
+export function hasRecitation(record:Daily) {
+  return Boolean(record.memorization.length&&record.memorizationStatus!=='none'||record.review.length&&record.reviewStatus!=='none')
+}
+export function resolveAttendance(previous:Daily,next:Daily,explicit:Attendance|undefined,closed:boolean,confirmDefault=false) {
+  if(explicit&&explicit!=='pending')return {attendance:explicit,attendanceSource:'manual' as const}
+  const manual=previous.attendanceSource==='manual'||!previous.attendanceSource&&
+    (previous.attendance==='leave'||previous.attendance==='excused'||previous.attendance==='present'&&!hasRecitation(previous)||previous.attendance==='absent'&&hasRecitation(previous))
+  if(!explicit&&manual)return {attendance:previous.attendance,attendanceSource:previous.attendanceSource}
+  const recited=hasRecitation(next)
+  if(!explicit&&!closed&&!confirmDefault&&!recited&&!hasRecitation(previous)&&previous.attendance==='absent') {
+    return {attendance:previous.attendance,attendanceSource:previous.attendanceSource}
+  }
+  const finalized=closed||confirmDefault
+  return {attendance:recited?'present' as const:finalized?'absent' as const:'pending' as const,
+    attendanceSource:recited||finalized?'automatic' as const:undefined}
+}
+
 export function sameSegments(a: Segment[], b: Segment[]) {
   return a.length===b.length && a.every((segment,index)=>segment.surah===b[index].surah && segment.from===b[index].from && segment.to===b[index].to)
 }

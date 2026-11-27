@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, ListChecks, Plus, Sparkles, Trash2, UserCheck } from 'lucide-react'
-import { circleMeets, dayOffset, expandRange, idFor, isRecitationDue, pointsFor, sameSegments, segmentLabel, suggestNext, surahs, validateSegments, type Attendance, type Daily, type ReminderField, type Result, type Segment, type Student } from './domain'
+import { circleMeets, dayOffset, expandRange, idFor, isRecitationDue, nextCircleDate, pointsFor, resolveAttendance, sameSegments, segmentLabel, suggestNext, surahs, validateSegments, type Attendance, type Daily, type ReminderField, type Result, type Segment, type Student } from './domain'
 import { Avatar, Modal, dateLabel, nameFor, statusText, useWorkspace, type WizardMode } from './ui'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
-import { outcome, prepareRecitation, recitationKinds } from './recitation-draft'
+import { outcome, prepareRecitation, recitationKinds, suggestAssignment } from './recitation-draft'
 
 function Segments({ value, change, label }: {value:Segment[];change:(next:Segment[])=>void;label:string}) {
   const {en,t} = useWorkspace()
@@ -70,7 +70,7 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
     <div className="modal-body"><div className="entry-picker-title"><span className="stat-icon tint-green"><BookOpen size={21}/></span><div><h3>{t('اختر الطالب','Select a student')}</h3><p>{dateLabel(date,en,true)}</p></div></div>
     <StudentPicker date={date} students={circleId?data.students.filter(item=>item.circleId===circleId):undefined} defaultFilter={mode==='recite'?'due':'all'} select={select}/></div>
   </Modal>
-  const {base,draft,suggested} = entry
+  const {base,draft,suggested,planDate} = entry
   const update = (part:Partial<Daily>) => {setEntry({...entry,draft:{...draft,...part}});setError('');setDirty(true);setOp(idFor())}
   const existing = data.daily.find(d=>d.studentId===selected.id&&d.date===date)
   const circle = data.circles.find(c=>c.id===selected.circleId)
@@ -82,9 +82,9 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
   }
   const changedRecitation = recitationKinds.filter(kind=>(!focusedRecitation||kind===focusedRecitation)
     &&(!sameSegments(base[kind],confirmed[kind])||base[outcome[kind]]!==confirmed[outcome[kind]]))
-  const automatic = isRecite&&(!editing||!existing)&&changedRecitation.some(kind=>confirmed[kind].length>0)?'present':draft.attendance
-  const recorded = attendanceEdited||mode==='attendance'?draft.attendance:automatic
-  const recordedAttendance = recorded==='pending'&&data.closed.includes(selected.circleId+'/'+date)?'absent':recorded
+  const closed=data.closed.includes(selected.circleId+'/'+date)
+  const explicitAttendance=attendanceEdited?draft.attendance:undefined
+  const recordedAttendance=resolveAttendance(base,confirmed,explicitAttendance,closed,mode==='attendance').attendance
   const computed = pointsFor({...confirmed,memorizationStatus:confirmed.memorization.length?confirmed.memorizationStatus:'none',reviewStatus:confirmed.review.length?confirmed.reviewStatus:'none',attendance:recordedAttendance},data.rules)
   const nextStudent = mode==='recite'&&!editing&&data.students.find(s=>s.active&&s.id!==selected.id&&s.circleId===selected.circleId&&isRecitationDue(data.daily.find(d=>d.studentId===s.id&&d.date===date)))
   const assignmentChanged = draft.nextDate!==base.nextDate || !sameSegments(draft.nextMemorization,base.nextMemorization) || !sameSegments(draft.nextReview,base.nextReview)
@@ -100,7 +100,8 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
         throw new Error(t('أضف مقطعًا وأكّد حالة الإنجاز قبل الحفظ.','Add a passage and confirm the outcome before saving.'))
       }
       const values:Record<string,unknown> = {studentId:selected.id,date:draft.date,entry:editing?'edit':'record',baseVersion:base.version ?? 0}
-      if (mode==='attendance'||attendanceEdited) values.attendance = draft.attendance
+      if (explicitAttendance!==undefined) values.attendance=explicitAttendance
+      if (mode==='attendance') values.confirmDefaultAttendance=true
       if (mode==='points'||isRecite) {
         if(draft.bonus!==base.bonus)values.bonus=draft.bonus
         if(draft.note!==base.note)values.note=draft.note
@@ -134,9 +135,21 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
       navigate(step+1)
     } catch(e) {setError((e as Error).message)}
   }
-  const previous = data.daily.filter(d=>d.studentId===selected.id && d.date<date && (d.nextMemorization.length || d.nextReview.length)).sort((a,b)=>b.date.localeCompare(a.date))[0]
+  const suggestedPlan=suggestAssignment(data.daily,confirmed)
+  const acceptAssigned=()=>{
+    const next={...draft}
+    for(const field of suggested)next[outcome[field]]='complete'
+    if(!draft.nextMemorization.length&&!draft.nextReview.length&&!preset?.nextMemorization&&!preset?.nextReview) {
+      Object.assign(next,suggestAssignment(data.daily,next))
+      if(next.nextDate<=date||!circleMeets(next.nextDate,circle))next.nextDate=nextCircleDate(date,circle)
+    }
+    setEntry({...entry,draft:next,suggested:[]})
+    setDirty(true)
+    setOp(idFor())
+    navigate(3)
+  }
   const pointFields = <div className="field-pair"><label>{t('صافي المكافأة أو الخصم لليوم','Net bonus or deduction for the day')}<input type="number" min={-100} max={100} value={draft.bonus} onChange={e=>update({bonus:Number(e.target.value)})}/></label><label>{t('ملاحظة','Note')}<input value={draft.note} onChange={e=>update({note:e.target.value})} maxLength={400}/></label></div>
-  const attendanceField = <label>{t('حالة الحضور','Attendance status')}<select value={recordedAttendance} onChange={e=>{setAttendanceEdited(true);update({attendance:e.target.value as Attendance})}}>{attendance.map(s=><option key={s} value={s}>{statusText(s,t)}</option>)}</select></label>
+  const attendanceField = <label>{t('حالة الحضور','Attendance status')}<select value={explicitAttendance??recordedAttendance} onChange={e=>{setAttendanceEdited(true);update({attendance:e.target.value as Attendance})}}>{attendance.map(s=><option key={s} value={s}>{s==='pending'?t('احتساب تلقائي','Automatic'):statusText(s,t)}</option>)}</select></label>
   const kind = step===0?'memorization':'review'
   const resultKey = outcome[kind]
   const locked = !editing&&base[kind].length>0
@@ -146,6 +159,11 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
       {changedElsewhere&&<div className="error-box" role="status">{t('حُدّث هذا السجل في جلسة أخرى. حمّل آخر نسخة قبل الحفظ.','This record changed in another session. Load the latest version before saving.')} <button className="text-button" type="button" onClick={()=>{if(!dirty||window.confirm(t('استبدال المسودة بالتغييرات المحفوظة؟','Replace the draft with the saved changes?')))select(selected,init(selected,data.daily,{date}))}}>{t('تحميل آخر نسخة','Load latest version')}</button></div>}
       {isRecite&&!focusedRecitation&&<div className="stepper">{stages.map(([Icon,ar,enLabel],index)=><button type="button" key={ar} className={index===step?'current':index<step?'done':''} disabled={!editing&&index>step} aria-current={index===step?'step':undefined} onClick={()=>navigate(index)}><span>{index<step&&!editing?<Check size={16}/>:<Icon size={16}/>}</span><small>{t(ar,enLabel)}</small></button>)}</div>}
       {isRecite&&!focusedRecitation&&<div className="entry-stage-title"><span>{t(`المرحلة ${step+1} من ${stages.length}`,`Step ${step+1} of ${stages.length}`)}</span><h3>{t(stages[step][1],stages[step][2])}</h3></div>}
+      {isRecite&&!editing&&!focusedRecitation&&step<2&&suggested.length>0&&<section className="fast-entry" aria-label={t('الجدولة السابقة','Previous assignment')}>
+        <div className="fast-entry-heading"><CalendarDays size={17}/><strong>{t('مقاطع جاهزة من الجدولة','Passages from the assignment')}</strong>{planDate&&<small>{dateLabel(planDate,en)}</small>}</div>
+        {suggested.map(field=><p key={field}><b>{field==='memorization'?t('الحفظ','Memorization'):t('المراجعة','Revision')}</b> · {segmentLabel(draft[field],en)}</p>)}
+        <button className="btn btn-primary compact" type="button" onClick={acceptAssigned}><Check size={17}/>{t('اعتبار المجدول مكتملًا ومراجعة الحفظ','Mark assigned passages complete and review')}</button>
+      </section>}
       {isRecite&&step<2&&(locked ? <div className="entry-saved-section">
         <strong><CircleCheck size={18}/>{t('مسجّل في سجل اليوم','Already recorded today')}</strong>
         <p>{segmentLabel(base[kind],en)} · {statusText(base[resultKey],t)}</p>
@@ -159,16 +177,18 @@ export function EntryWizard({ student, mode, preset, circleId, focus, close }: {
         })}</fieldset>}
       </>)}
       {(mode==='schedule'||isRecite&&step===2)&&<>
-        <div className="field-pair"><label>{t('موعد الحلقة القادمة','Next circle date')}<input type="date" min={dayOffset(date,1)} value={draft.nextDate} onChange={e=>update({nextDate:e.target.value})}/></label><button className="btn btn-outline align-end" type="button" onClick={()=>{const last=draft.memorization.length?draft.memorization:previous?.memorization||[];const review=draft.review.length?draft.review:previous?.review||[];const next=suggestNext(last);if(!next.length&&!review.length){setError(t('أضف مقطع حفظ أو مراجعة لاقتراح الجدولة.','Add a recitation or revision segment first.'));return}update({nextMemorization:next,nextReview:review})}}><Sparkles size={16}/>{t('اقتراح الجدولة','Suggest assignment')}</button></div>
+        <div className="field-pair"><label>{t('موعد الحلقة القادمة','Next circle date')}<input type="date" min={dayOffset(date,1)} value={draft.nextDate} onChange={e=>update({nextDate:e.target.value})}/></label><button className="btn btn-outline align-end" type="button" onClick={()=>{if(!suggestedPlan.nextMemorization.length&&!suggestedPlan.nextReview.length){setError(t('أكّد مقطع حفظ أو مراجعة لاقتراح الجدولة.','Confirm a memorization or revision passage to suggest an assignment.'));return}update(suggestedPlan)}}><Sparkles size={16}/>{t('اقتراح الجدولة','Suggest assignment')}</button></div>
         <Segments value={draft.nextMemorization} change={v=>update({nextMemorization:v})} label={t('الحفظ المطلوب','Assigned memorization')}/>
         <Segments value={draft.nextReview} change={v=>update({nextReview:v})} label={t('المراجعة المطلوبة','Assigned revision')}/>
       </>}
-      {mode==='attendance'&&<div className="field-pair"><div className="hint-line"><UserCheck size={18}/>{t('تُحدث نقاط الحضور تلقائيًا.','Attendance points update automatically.')}</div>{attendanceField}</div>}
+      {mode==='attendance'&&<div className="field-pair"><div className="hint-line"><UserCheck size={18}/>{t('يُحتسب التسميع الفعلي حضورًا. الافتراضي عند التحضير بدون تسميع هو الغياب، ويمكن تغيير الحالة.','Actual recitation counts as attendance. With no recitation, the attendance form defaults to absent and can be changed.')}</div>{attendanceField}</div>}
       {(mode==='points'||isRecite&&step===3)&&<>
         {isRecite&&<div className="entry-review">
           <div><span>{t('الحفظ','Memorization')}</span><strong>{segmentLabel(confirmed.memorization,en)||'—'}</strong></div>
           <div><span>{t('المراجعة','Revision')}</span><strong>{segmentLabel(confirmed.review,en)||'—'}</strong></div>
-          <div><span>{t('الجدولة القادمة','Next assignment')}</span><strong>{segmentLabel([...draft.nextMemorization,...draft.nextReview],en)||'—'}</strong></div>
+          <div><span>{t('الحفظ المجدول','Scheduled memorization')}</span><strong>{segmentLabel(draft.nextMemorization,en)||'—'}</strong></div>
+          <div><span>{t('المراجعة المجدولة','Scheduled revision')}</span><strong>{segmentLabel(draft.nextReview,en)||'—'}</strong></div>
+          <div><span>{t('موعد الجدولة','Assignment date')}</span><strong>{draft.nextMemorization.length||draft.nextReview.length?dateLabel(draft.nextDate,en,true):'—'}</strong></div>
           <div><span>{t('الحضور','Attendance')}</span><strong>{statusText(recordedAttendance,t)}</strong></div>
         </div>}
         {isRecite&&attendanceField}

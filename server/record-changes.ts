@@ -10,7 +10,7 @@ export function recordChanges(previous: Daily, next: Daily) {
   if (reviewChanged(previous,next)) changes.push('review')
   if (!sameSegments(previous.nextMemorization,next.nextMemorization) || moved && next.nextMemorization.length) changes.push('nextMemorization')
   if (!sameSegments(previous.nextReview,next.nextReview) || moved && next.nextReview.length) changes.push('nextReview')
-  if (previous.attendance!==next.attendance) changes.push('attendance')
+  if (previous.attendance!==next.attendance || previous.attendanceSource!==next.attendanceSource) changes.push('attendance')
   if (previous.points!==next.points || previous.bonus!==next.bonus) changes.push('points')
   if (previous.note!==next.note) changes.push('note')
   return changes

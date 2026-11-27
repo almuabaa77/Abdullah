@@ -6,7 +6,7 @@ import { mysqlConfig, mysqlFailureIssue } from './hostinger-db'
 import { revisionStream } from './revision-stream'
 import { backgroundPush } from './push'
 import { publishScheduled } from './announcements'
-import type { State } from '../src/domain'
+import { noticeExpiresAt, type State } from '../src/domain'
 
 const env = process.env
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
@@ -120,10 +120,14 @@ const scheduleTimer=setInterval(async()=>{
       if(!current)break
       const state=JSON.parse(current.data) as State
       const due=publishScheduled(state)
-      if(!due.length||await repository.write('school',current.revision,state,due))break
+      const now=Date.now()
+      const notices=state.notices.filter(notice=>notice.kind==='announcement'||noticeExpiresAt(notice)>now)
+      if(!due.length&&notices.length===state.notices.length)break
+      state.notices=notices
+      if(await repository.write('school',current.revision,state,due))break
     }
   } catch(error) {
-    console.error('Scheduled announcement check failed',error instanceof Error?error.name:'UnknownError')
+    console.error('Scheduled workspace maintenance failed',error instanceof Error?error.name:'UnknownError')
   } finally {publishing=false}
 },10_000)
 scheduleTimer.unref()

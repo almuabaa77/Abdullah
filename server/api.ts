@@ -2,7 +2,7 @@ import { announcementVisible } from './announcements'
 import { scheduleAssessment } from './assessment'
 import { asciiDigits, groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
 import { enrollmentNameKey, threePartName } from '../src/enrollment'
-import { announcementAudiences, announcementSources, communicationKeys, defaultCommunication, examDateFor, balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, pointsFor, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type ChildRequest, type Daily, type Communication, type Exam, type Notice, type Role, type State, type Student, type StudentDetails, type User, type View } from '../src/domain'
+import { announcementAudiences, announcementSources, communicationKeys, defaultCommunication, examDateFor, balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, noticeExpiresAt, pointsFor, resolveAttendance, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type ChildRequest, type Daily, type Communication, type Exam, type Notice, type Role, type State, type Student, type StudentDetails, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
@@ -149,7 +149,7 @@ function matchesReminderCircle(notice:Notice,state:State) {
 }
 export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:string) {
   if(user.status!=='active'||user.duplicateOf||user.role==='admin'&&user.id!==adminUid)return false
-  if(notice.announcement&&user.role==='admin')return false
+  if(notice.announcement&&user.role==='admin'||noticeExpiresAt(notice)<=Date.now())return false
   const students=notice.announcement||notice.recordReminder||notice.studentId&&!notice.users?scope(state,user):[]
   const ids=new Set(students.map(student=>student.id))
   return announcementVisible(notice,state,user,students)&&!notice.announcement?.withdrawn&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
@@ -182,7 +182,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     recordReminders:isAdmin?state.notices.filter(notice=>notice.recordReminder&&notice.users?.[0]).slice(0,300)
       .map(notice=>({...notice.recordReminder!,teacherId:notice.users![0],time:notice.time})):undefined,
     calls:state.calls?.filter(call=>call.from===user.id||call.to===user.id).slice(0,50).map(call=>currentCall(state,call)),
-    notices: state.notices.filter(notice => announcementVisible(notice,state,user,students)&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state))
+    notices: state.notices.filter(notice => (notice.kind==='announcement'||noticeExpiresAt(notice)>Date.now()) && announcementVisible(notice,state,user,students)&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state))
       .map(notice=>{
         if(isAdmin||notice.kind!=='announcement')return notice
         const meta=notice.announcement
@@ -315,9 +315,8 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (scheduleChanged && (d.nextMemorization.length || d.nextReview.length) && (d.nextDate <= date || !circleMeets(d.nextDate, circle))) throw new ApiError('اختر موعدًا قادمًا يصادف يوم انعقاد الحلقة')
       if (p.note !== undefined) d.note = clean(p.note, 400)
       if (p.bonus !== undefined) d.bonus = integer(p.bonus, -100, 100)
-      if (p.attendance !== undefined) d.attendance = choice(p.attendance, ['present','absent','excused','leave','pending'] as const)
-      else if ((entry==='record'||!old) && (changedMemorization && d.memorization.length || changedReview && d.review.length)) d.attendance = 'present'
-      if (d.attendance === 'pending' && state.closed.includes(s.circleId + '/' + date)) d.attendance = 'absent'
+      const explicit=p.attendance===undefined?undefined:choice(p.attendance,['present','absent','excused','leave','pending'] as const)
+      Object.assign(d,resolveAttendance(previous,d,explicit,state.closed.includes(s.circleId+'/'+date),p.confirmDefaultAttendance===true))
       if (!writeRecord(d,s)) return false
       notify(state, 'daily', `تحديث سجل ${s.name}`, `${date} · ${d.points} نقاط`, { studentId: s.id })
       return
@@ -334,8 +333,9 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       for (const s of visible.filter(s => s.active && s.circleId === circle.id)) {
         const d = state.daily.find(d => d.date === date && d.studentId === s.id) ?? emptyDaily(s.id,date,circle)
         if (d.attendance !== 'pending') continue
-        writeRecord({ ...d, attendance: 'absent' },s)
-        notify(state, 'attendance', `غياب ${s.name}`, date, {studentId:s.id})
+        const result=resolveAttendance(d,d,undefined,true)
+        writeRecord({...d,...result},s)
+        if(result.attendance==='absent')notify(state,'attendance',`غياب ${s.name}`,date,{studentId:s.id})
       }
       state.closed.push(key)
       break
@@ -361,7 +361,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       return
     }
     case 'notice-read': {
-      for (const notice of state.notices) if ((!p.id || p.id === notice.id) && (!notice.announcement||notice.announcement.publishedAt&&!notice.announcement.withdrawn)
+      for (const notice of state.notices) if ((!p.id || p.id === notice.id) && noticeExpiresAt(notice)>Date.now() && (!notice.announcement||notice.announcement.publishedAt&&!notice.announcement.withdrawn)
         && announcementVisible(notice,state,u,visible) && noticeVisible(notice,u,ids)
         && (!notice.studentId||ids.has(notice.studentId)) && matchesReminderCircle(notice,state) && !notice.readBy.includes(u.id)) notice.readBy.push(u.id)
       return
@@ -383,7 +383,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (l.status === 'accepted') {
         const s = visible.find(x => x.id === l.studentId)!
         const d = state.daily.find(x => x.date === l.date && x.studentId === l.studentId) ?? emptyDaily(l.studentId, l.date, circleOf(s))
-        if (d.attendance === 'pending' || d.attendance === 'absent') writeRecord({ ...d, attendance: 'leave' },s)
+        if (d.attendance === 'pending' || d.attendance === 'absent') writeRecord({ ...d, attendance: 'leave', attendanceSource:'manual' },s)
       }
       notify(state,'leave','تمت مراجعة طلب الاستئذان', l.date, {studentId:l.studentId})
       break

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpen, CalendarDays, CircleCheck, Clock3, FileText, ListChecks, MessageSquare, Plus, RotateCcw, Send, Sparkles, Star, UserCheck, Users } from 'lucide-react'
-import { assignmentFor, circleMeets, isRecitationDue, recitationStatus, segmentLabel, type Daily, type Student } from './domain'
+import { hasCompletedRecitation, recitationAssignment, circleMeets, isRecitationDue, segmentLabel, type Daily, type Student } from './domain'
 import { Avatar, dateLabel, nameFor, statusText, useWorkspace } from './ui'
 import { parseCommand, type Intent } from './assistant-command'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
@@ -11,6 +11,7 @@ export function Assistant() {
   const {t,data,en,open,go} = useWorkspace()
   const [text,setText] = useState('')
   const [exchanges,setExchanges] = useState<Exchange[]>([])
+  const [doneTab,setDoneTab] = useState<{id:number;filter:'done'|'due'}>({id:0,filter:'due'})
   const [view,setView] = useState<'assistant'|'students'>('assistant')
   const [circleId,setCircleId] = useState(()=>{
     const selected=sessionStorage.getItem('halaqat-assistant-circle')
@@ -23,7 +24,7 @@ export function Assistant() {
   const meetingCircles = new Set(data.circles.filter(circle=>circleMeets(data.date,circle)).map(circle=>circle.id))
   const todayStudents = students.filter(student=>meetingCircles.has(student.circleId))
   const today = new Map(data.daily.filter(d=>d.date===data.date).map(d=>[d.studentId,d]))
-  const completed = todayStudents.filter(s=>recitationStatus(today.get(s.id))==='complete').length
+  const completed = todayStudents.filter(s=>hasCompletedRecitation(today.get(s.id))).length
   const remaining = todayStudents.filter(s=>isRecitationDue(today.get(s.id)))
   const progress = todayStudents.length ? Math.round(completed/todayStudents.length*100) : 0
   const shortcuts = [
@@ -92,7 +93,7 @@ export function Assistant() {
           </div>}
           {exchanges.map(exchange=>{
             const student=exchange.student
-            const assignment=student&&assignmentFor(data.daily,student.id,data.date)
+            const assignment=student&&recitationAssignment(data.daily,student.id,data.date,data.circles.find(circle=>circle.id===student.circleId))
             const segments=[
               [t('الحفظ المذكور','Requested memorization'),exchange.preset?.memorization],
               [t('المراجعة المذكورة','Requested revision'),exchange.preset?.review],
@@ -128,13 +129,13 @@ export function Assistant() {
       </section>
       <aside className="workbench-side">
         <section className="panel workbench-progress">
-          <div className="section-title"><div><h2>{t('تسميع اليوم','Today’s recitations')}</h2><p>{t('الحفظ الجديد في الحلقة','Memorization in your circle')}</p></div><span className="stat-icon tint-green"><ListChecks size={20}/></span></div>
+          <div className="section-title"><div><h2>{t('تسميع اليوم','Today’s recitations')}</h2><p>{t('إتمام الحفظ أو المراجعة','Completed memorization or revision')}</p></div><span className="stat-icon tint-green"><ListChecks size={20}/></span></div>
           <div className="workbench-progress-value"><strong>{progress}%</strong><span>{t(`${completed} من ${todayStudents.length} أتمّوا التسميع`,`${completed} of ${todayStudents.length} recited`)}</span></div>
           <div className="bar-track" role="progressbar" aria-valuenow={progress} aria-label={t('نسبة التسميع','Recitation progress')}><i style={{width:progress+'%'}}/></div>
-          <div className="workbench-totals"><div><CircleCheck size={16}/><strong>{completed}</strong><span>{t('أتمّوا التسميع','Recited')}</span></div><button type="button" onClick={()=>append(t('عرض الطلاب المتبقين','Show remaining students'),{intent:'remaining'})}><Clock3 size={16}/><strong>{remaining.length}</strong><span>{t('بانتظار التسميع','To recite')}</span></button></div>
+          <div className="workbench-totals"><button className="workbench-done" type="button" onClick={()=>{setDoneTab(tab=>({id:tab.id+1,filter:'done'}));setView('students')}}><CircleCheck size={16}/><strong>{completed}</strong><span>{t('أتمّوا التسميع','Recited')}</span></button><button type="button" onClick={()=>append(t('عرض الطلاب المتبقين','Show remaining students'),{intent:'remaining'})}><Clock3 size={16}/><strong>{remaining.length}</strong><span>{t('بانتظار التسميع','To recite')}</span></button></div>
         </section>
         <section className="panel workbench-roster"><div className="section-title"><div><h2>{t('طلاب الحلقة','Circle students')}</h2><p>{t('اختر طالبًا لتسجيل تسميعه','Select a student to record recitation')}</p></div><span className="stat-icon tint-gold"><Users size={19}/></span></div>
-          <StudentPicker key={circleId} compact students={todayStudents} select={s=>open(s)}/>
+          <StudentPicker key={circleId+':'+doneTab.id} compact students={todayStudents} defaultFilter={doneTab.filter} select={s=>open(s,hasCompletedRecitation(today.get(s.id))?'edit':'recite')}/>
         </section>
       </aside>
     </div>

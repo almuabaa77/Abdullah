@@ -1,3 +1,4 @@
+import { activeNotices, NotificationList, useNoticeTime } from './notifications'
 import { AnnouncementFeed } from './announcements'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -246,7 +247,8 @@ function App() {
   const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => setWizard({student,mode,preset,circleId,focus})
   const teacher = data.user?.role==='teacher'||data.user?.role==='admin'
   const student=data.user?.role==='student'
-  const availableNotices=data.notices.filter(n=>!n.announcement||n.announcement.publishedAt&&!n.announcement.withdrawn)
+  const noticeTime=useNoticeTime(data.notices,openPanel==='notices')
+  const availableNotices=activeNotices(data.notices,noticeTime)
   const notices=availableNotices.filter(n=>!n.readBy.includes(data.user?.id||''))
   const loadingView = loading||!authReady||loadedUid!==uid
   useEffect(()=>{
@@ -286,7 +288,7 @@ function App() {
       history.replaceState(history.state,'',url)
     }
     setReminderId(null)
-    const notice=data.notices.find(item=>item.id===reminderId&&item.recordReminder)
+    const notice=availableNotices.find(item=>item.id===reminderId&&item.recordReminder)
     if(notice)openNotice(notice)
     else tell(t('هذا التنبيه غير متاح لهذا الحساب.','This reminder is unavailable to this account.'),true)
   },[reminderId,workspaceVisible,data.user,data.notices,openNotice,tell,t])
@@ -389,11 +391,8 @@ function App() {
               {!token&&<button type="button" className="phone-topbar" onClick={openPhone} aria-label={t('الدخول أو التسجيل بالجوال','Sign in or register by phone')}><Smartphone size={17}/><span>{t('الدخول بالجوال','Mobile sign-in')}</span></button>}
               <div className="topbar-rule" />
               <div className="relative"><button className="icon-button notification-trigger" onClick={()=>setOpenPanel(openPanel==='notices'?'':'notices')} aria-label={t('الإشعارات','Notifications')} aria-expanded={openPanel==='notices'}><Bell size={21}/>{notices.length>0&&<i/>}</button>
-              {openPanel==='notices'&&<div className="popover notifications"><div className="section-title"><h2>{t('الإشعارات','Notifications')}</h2><button className="text-button" onClick={()=>void post('notice-read').catch(e=>tell(e.message,true))}>{t('تحديد الكل كمقروء','Mark all read')}</button></div>
-                {availableNotices.slice(0,30).map(n=><button key={n.id} className={'notice-row '+(!n.readBy.includes(data.user?.id||'')?'unread':'')} onClick={()=>openNotice(n)}><span className="stat-icon tint-green"><Bell size={16}/></span><span><strong>{en&&n.en?n.en:n.title}</strong><small>{en&&n.bodyEn?n.bodyEn:n.body}</small>{n.recordReminder&&<small className="notice-record-action">{t('فتح سجل الطالب','Open student record')}</small>}</span></button>)}
-                {!availableNotices.length&&<Empty title={t('لا توجد إشعارات','No notifications')}/>}
-                {token&&<button className="text-button notification-permissions" type="button" onClick={()=>{setOpenPanel('');setPermissions(true)}}>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>}
-              </div>}</div>
+              {openPanel==='notices'&&<NotificationList items={availableNotices} now={noticeTime} open={openNotice}
+                permissions={token?()=>{setOpenPanel('');setPermissions(true)}:undefined}/>}</div>
               <div className="relative"><button className="profile-trigger" onClick={()=>setOpenPanel(openPanel==='profile'?'':'profile')} aria-expanded={openPanel==='profile'} aria-label={t('الحساب','Account')}><span className="profile-avatar">{en?'A':'ع'}</span><ChevronDown size={15}/></button>
               {openPanel==='profile'&&<div className="popover profile-pop"><strong>{userName}</strong><small><RoleName role={data.user?.role||''}/></small>{adminAccess&&!adminPage&&<button onClick={()=>go('admin')}><ShieldCheck size={16}/>{t('لوحة الإدارة','Administration')}</button>}{adminPage?<button onClick={()=>{setOpenPanel('');setPermissions(true)}}><Bell size={16}/>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>
                 :<button onClick={()=>go('more')}>{t('إعدادات الحساب','Account settings')}</button>}{token?<button onClick={()=>void exit()}><LogOut size={16}/>{t('تسجيل الخروج','Sign out')}</button>:<button onClick={()=>{setOpenPanel('');openPhone()}}><LogIn size={16}/>{t('الدخول بالجوال','Mobile sign-in')}</button>}</div>}
