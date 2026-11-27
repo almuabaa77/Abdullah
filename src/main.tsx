@@ -49,8 +49,12 @@ async function request(token:string,role:string,body?:Record<string,unknown>,sig
   return readView(response)
 }
 async function readView(response:Response):Promise<View> {
+  const measuredAt=Date.now()
+  const timeHeader=response.headers.get('X-Halaqat-Now')
+  const serverTime=timeHeader?Number(timeHeader):Date.parse(response.headers.get('Date')??'')
   const value = await response.json() as View & {error?:string}
   if(!response.ok || value.error) throw new WorkspaceError(value.error || 'Unable to load the workspace',response.status)
+  if(Number.isFinite(serverTime))value.clockOffsetMs=serverTime-measuredAt
   return value
 }
 async function refreshView(token:string,role:string,signal:AbortSignal,known?:Pick<View,'revision'|'date'>) {
@@ -375,7 +379,11 @@ function App() {
     if(!response.ok)throw new Error(value.error||t('تعذر فحص Agora','Could not check Agora'))
     return value
   }
-  const workspace = {data,en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,refresh:()=>refreshWorkspace.current()}
+  async function lessonRtcPresence(id:string,uid:number,version:number) {
+    const result=await fetch('/api/lesson-rtc/presence',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({id,uid,version})})
+    return result.ok
+  }
+  const workspace = {data,en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,lessonRtcPresence,refresh:()=>refreshWorkspace.current()}
   const signOut = useCallback(async (next:Page) => {
     if(!auth)return
     const {endPhone}=await import('./phone')

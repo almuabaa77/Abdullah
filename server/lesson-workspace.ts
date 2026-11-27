@@ -2,7 +2,7 @@ import { Temporal } from '@js-temporal/polyfill'
 import { circleMeets, dayOffset, idFor, type Notice, type State, type User } from '../src/domain'
 import { lessonCapacity, type Lesson, type LessonDraft, type LessonKind, type LessonMedia, type LessonSeat, type LessonSeries, type LessonView } from '../src/lessons'
 import { activeAccount } from './chat-access'
-import { lessonUid, tokenLifetime } from './lesson-media-policy'
+import { lessonUid, mediaPresenceTimeout, newLessonMediaRoom, tokenLifetime } from './lesson-media-policy'
 import { ApiError } from './errors'
 
 const minute=60_000
@@ -40,6 +40,9 @@ function isManager(state:State,lesson:Pick<Lesson,'circleId'|'teacherId'|'substi
   if(user.role!=='teacher'||!activeAccount(user))return false
   return lesson.teacherId===user.id||lesson.substituteId===user.id||Boolean(lesson.circleId&&state.circles.some(circle=>circle.id===lesson.circleId&&circle.teacherId===user.id))
 }
+function canPublish(state:State,lesson:Lesson,user:User) {
+  return isManager(state,lesson,user)||user.role==='teacher'&&(lesson.kind==='meeting'||lesson.kind==='urgent')||lesson.currentStudent===user.id
+}
 export function allowedInLesson(state:State,lesson:Pick<Lesson,'kind'|'circleId'|'studentId'|'invitees'|'teacherId'|'substituteId'>,user:User) {
   if(!activeAccount(user))return false
   if(isManager(state,lesson,user))return true
@@ -70,12 +73,12 @@ function audit(state:State,user:User,lesson:Lesson,action:string,now:number) {
 function restrictionsPending(state:State,lesson:Lesson) {
   return Boolean(state.lessonRestrictions?.some(rule=>rule.lessonId===lesson.id))
 }
-export function projectLessons(state:State,user:User,now=Date.now()):LessonView[] {
+export function projectLessons(state:State,user:User,now=Date.now(),encrypted=false):LessonView[] {
   const historical=45*24*60*minute
   return (state.lessons??[]).filter(lesson=>allowedInLesson(state,lesson,user)&&Date.parse(lesson.endsAt)>=now-historical).sort((a,b)=>a.startsAt.localeCompare(b.startsAt))
     .slice(0,450).map(lesson=>{
       const manager=isManager(state,lesson,user)
-      const {seats,invitees:_invites,delivered:_sent,...visible}=lesson
+      const {seats,invitees:_invites,delivered:_sent,mediaRoom,...visible}=lesson
       const eligible=state.users.filter(account=>allowedInLesson(state,lesson,account))
       const people=eligible.flatMap(account=>{
         const seat=seats[account.id]
@@ -83,14 +86,16 @@ export function projectLessons(state:State,user:User,now=Date.now()):LessonView[
         const role=account.role==='parent'?'student':account.role
         return [{id:account.id,name:account.name,role,studentId:manager?account.studentId:undefined,
           seat:manager||account.id===user.id?seat:seat?.status==='admitted'?{status:seat.status,at:seat.at,generation:0,rtcIndex:0,periods:[],lastSeen:seat.lastSeen}:undefined,
-          mediaUid:seat?.status==='admitted'&&(manager||seats[user.id]?.status==='admitted')?lessonUid(seat):undefined}]
+          mediaUid:seat?.status==='admitted'&&(manager||seats[user.id]?.status==='admitted')?lessonUid(seat):undefined,
+          canPublish:seat?.status==='admitted'&&canPublish(state,lesson,account)}]
       })
       const order=visible.order.filter(id=>manager||id===user.id||seats[id]?.status==='admitted')
       return {...visible,messages:manager||seats[user.id]?.status==='admitted'?visible.messages?.slice(-100):undefined,notes:manager?visible.notes:'',order,
         finishedTurns:visible.finishedTurns?.filter(id=>order.includes(id)),inviteCount:eligible.filter(account=>account.role!=='admin').length,
         manager,self:seats[user.id],people,waiting:manager?Object.values(seats).filter(seat=>seat.status==='waiting').length:0,
-        connected:people.filter(person=>person.seat?.lastSeen&&Date.parse(person.seat.lastSeen)>now-55_000).length,
-        mediaChanging:restrictionsPending(state,lesson)}
+        connected:people.filter(person=>person.seat?.lastSeen&&Date.parse(person.seat.lastSeen)>now-mediaPresenceTimeout).length,
+        mediaVersion:mediaRoom?.version??(encrypted&&lesson.status==='live'?1:undefined),
+        mediaChanging:!encrypted&&restrictionsPending(state,lesson)}
     })
 }
 
@@ -171,11 +176,20 @@ function attendanceEnd(seat:LessonSeat,when:string) {
   if(period&&!period.to)period.to=when
   delete seat.lastSeen
 }
+export function prepareLessonMediaRoom(state:State,lesson:Lesson) {
+  if(lesson.mediaRoom)return lesson.mediaRoom
+  if(state.lessonRestrictions)state.lessonRestrictions=state.lessonRestrictions.filter(rule=>rule.lessonId!==lesson.id)
+  return lesson.mediaRoom=newLessonMediaRoom(1)
+}
 function restrict(state:State,lesson:Lesson,id:string,reason:string,now:number) {
   const seat=lesson.seats[id]
   if(!seat||seat.status!=='admitted')return
   const uid=lessonUid(seat)
   seat.generation++
+  if(lesson.mediaRoom){
+    if(reason==='leave'||reason==='remove'||reason==='membership')lesson.mediaRoom=newLessonMediaRoom(lesson.mediaRoom.version+1)
+    return
+  }
   state.lessonRestrictions??=[]
   state.lessonRestrictions.push({id:idFor(),lessonId:lesson.id,uid,attempts:0,nextAttempt:now,reason,expiresAt:now+(tokenLifetime+60)*1000})
 }
@@ -186,6 +200,7 @@ function complete(state:State,lesson:Lesson,now:number,status:'completed'|'cance
   lesson.actualEnd=lesson.actualStart?at:undefined
   lesson.currentStudent=undefined
   lesson.turnStartedAt=undefined
+  delete lesson.mediaRoom
   lesson.status=status
   lesson.revision++
 }
@@ -388,7 +403,10 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
     if(user.role!=='admin')throw forbidden()
     const media=selection(p.media,['audio','video'] as const)
     if(media===lesson.media)return false
-    if(media==='audio')for(const [uid] of liveSeats(lesson))restrict(state,lesson,uid,'audio-only',now)
+    if(media==='audio'){
+      if(lesson.mediaRoom)lesson.mediaRoom=newLessonMediaRoom(lesson.mediaRoom.version+1)
+      else for(const [uid] of liveSeats(lesson))restrict(state,lesson,uid,'audio-only',now)
+    }
     lesson.media=media
     audit(state,user,lesson,'تعديل سياسة الوسائط',now)
     return
@@ -407,15 +425,27 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
   throw new ApiError('إجراء الجلسة غير معروف',404)
 }
 
-export function lessonRtcGrant(state:State,user:User,id:string,now=Date.now()) {
+export function lessonRtcGrant(state:State,user:User,id:string,now=Date.now(),encrypted=false) {
   const lesson=state.lessons?.find(item=>item.id===id)
   if(!lesson||!allowedInLesson(state,lesson,user)||lesson.seats[user.id]?.status!=='admitted')throw forbidden()
   if(lesson.status!=='live'||now>=Date.parse(lesson.endsAt))throw new ApiError('الجلسة غير متاحة للاتصال',409)
-  if(restrictionsPending(state,lesson))throw new ApiError('جارٍ تطبيق إعدادات الوسائط، حاول بعد قليل',409)
-  const publisher=isManager(state,lesson,user)||user.role==='teacher'&&(lesson.kind==='meeting'||lesson.kind==='urgent')||lesson.currentStudent===user.id
+  if(!encrypted&&restrictionsPending(state,lesson))throw new ApiError('جارٍ تطبيق إعدادات الوسائط، حاول بعد قليل',409)
+  const publisher=canPublish(state,lesson,user)
   const ttl=Math.min(tokenLifetime,Math.floor((Date.parse(lesson.endsAt)-now)/1000))
   if(ttl<1)throw new ApiError('انتهت الجلسة',409)
   return {lessonId:lesson.id,uid:lessonUid(lesson.seats[user.id]),audio:publisher,video:publisher&&lesson.media==='video',ttl}
+}
+export function recordLessonMediaPresence(state:State,user:User,id:string,uid:number,version:number,now=Date.now()) {
+  const grant=lessonRtcGrant(state,user,id,now,true)
+  const lesson=state.lessons!.find(item=>item.id===id)!
+  if(grant.uid!==uid||lesson.mediaRoom?.version!==version)throw new ApiError('تغيّرت بيانات غرفة الاتصال',409)
+  const seat=lesson.seats[user.id]
+  if(seat.lastSeen&&now-Date.parse(seat.lastSeen)<12_000)return false
+  if(seat.lastSeen&&now-Date.parse(seat.lastSeen)>=mediaPresenceTimeout)attendanceEnd(seat,seat.lastSeen)
+  const at=new Date(now).toISOString()
+  if(!seat.lastSeen||seat.periods.at(-1)?.to)seat.periods.push({from:at})
+  seat.lastSeen=at
+  return true
 }
 export function runLessonSchedule(state:State,now=Date.now()) {
   let changed=false
@@ -442,7 +472,10 @@ export function runLessonSchedule(state:State,now=Date.now()) {
     }
     for(const [id,seat] of liveSeats(lesson)){
       const account=state.users.find(user=>user.id===id)
-      if(account&&allowedInLesson(state,lesson,account))continue
+      if(account&&allowedInLesson(state,lesson,account)){
+        if(lesson.mediaRoom&&seat.lastSeen&&now-Date.parse(seat.lastSeen)>=mediaPresenceTimeout){attendanceEnd(seat,seat.lastSeen);changed=true}
+        continue
+      }
       restrict(state,lesson,id,'membership',now)
       attendanceEnd(seat,time)
       seat.status='removed'
@@ -473,7 +506,7 @@ export function applyPresence(lesson:Lesson,ids:Set<number>,now:number) {
       if(!seat.lastSeen||seat.periods.at(-1)?.to)seat.periods.push({from:time})
       seat.lastSeen=time
       changed=true
-    } else if(seat.lastSeen&&now-Date.parse(seat.lastSeen)>55_000){
+    } else if(seat.lastSeen&&now-Date.parse(seat.lastSeen)>mediaPresenceTimeout){
       attendanceEnd(seat,seat.lastSeen)
       changed=true
     }

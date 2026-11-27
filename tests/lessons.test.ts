@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import AgoraToken from 'agora-token/src/AccessToken2.js'
-import { agoraConfig, createAgoraStatusCheck, issueAgora } from '../server/agora'
-import { applyLessonAction, applyPresence, lessonNoticeAllowed, lessonRtcGrant, projectLessons, runLessonSchedule } from '../server/lesson-workspace'
+import { agoraAppIdOnly, agoraConfig, createAgoraStatusCheck, issueAgora } from '../server/agora'
+import { applyLessonAction, applyPresence, lessonNoticeAllowed, lessonRtcGrant, prepareLessonMediaRoom, projectLessons, recordLessonMediaPresence, runLessonSchedule } from '../server/lesson-workspace'
 import { createState } from '../server/seed'
 import type { User } from '../src/domain'
 import { lessonAgendaGraceMs, lessonClosed, lessonInAgenda } from '../src/lessons'
@@ -26,6 +26,48 @@ function fixture(count=2) {
 test('rejects a Google API key and requires provider-enforced permissions before enabling RTC',()=>{
   assert.equal(agoraConfig({AGORA_APP_ID:'AIza-example'}),undefined)
   assert.equal(agoraConfig({AGORA_APP_ID:'a'.repeat(32),AGORA_APP_CERTIFICATE:'b'.repeat(32)}),undefined)
+})
+test('App ID-only media is selected only for a valid explicitly configured App ID',()=>{
+  const appId='a'.repeat(32)
+  assert.equal(agoraAppIdOnly({}),undefined)
+  assert.equal(agoraAppIdOnly({AGORA_APP_ID:'AIza-Example'}),undefined)
+  assert.equal(agoraAppIdOnly({AGORA_APP_ID:appId,AGORA_APP_CERTIFICATE:'partial'}),undefined)
+  assert.equal(agoraAppIdOnly({AGORA_APP_ID:appId}),appId)
+})
+test('encrypted room access stays scoped, and removal rotates the channel and its keys',()=>{
+  const {state,admin,teacher,outsider,learners,action,create}=fixture()
+  const entry=create(),{id}=entry
+  action(teacher,'lesson-join',{id})
+  const room=prepareLessonMediaRoom(state,entry)
+  assert.equal(prepareLessonMediaRoom(state,entry).channel,room.channel)
+  assert.ok(room.secret.length<=62)
+  assert.equal(atob(room.salt).length,32)
+  assert.throws(()=>lessonRtcGrant(state,outsider,id,at,true),{status:403})
+  action(learners[0],'lesson-join',{id})
+  assert.throws(()=>lessonRtcGrant(state,learners[0],id,at,true),{status:403})
+  action(teacher,'lesson-admit',{id,userId:learners[0].id})
+  const learner=learners[0]
+  const grant=lessonRtcGrant(state,learner,id,at,true)
+  assert.equal(grant.audio,false)
+  for(const who of [learner,teacher,admin]){
+    const view=projectLessons(state,who,at,true)[0]
+    assert.equal(view.mediaVersion,1)
+    assert.ok(!JSON.stringify(view).includes(room.secret)&&!JSON.stringify(view).includes(room.salt)&&!JSON.stringify(view).includes(room.channel))
+  }
+  assert.equal(recordLessonMediaPresence(state,learner,id,grant.uid,room.version,at),true)
+  assert.equal(recordLessonMediaPresence(state,learner,id,grant.uid,room.version,at+1000),false)
+  assert.equal(projectLessons(state,teacher,at,true)[0].connected,1)
+  runLessonSchedule(state,at+60_000)
+  assert.equal(projectLessons(state,teacher,at+60_000,true)[0].connected,0)
+  action(teacher,'lesson-remove',{id,userId:learner.id},at+65_000)
+  assert.notEqual(entry.mediaRoom?.channel,room.channel)
+  assert.notEqual(entry.mediaRoom?.secret,room.secret)
+  assert.equal(entry.mediaRoom?.version,2)
+  assert.throws(()=>recordLessonMediaPresence(state,learner,id,grant.uid,room.version,at+66_000),{status:403})
+  const teacherGrant=lessonRtcGrant(state,teacher,id,at+66_000,true)
+  assert.throws(()=>recordLessonMediaPresence(state,teacher,id,teacherGrant.uid,room.version,at+66_000),{status:409})
+  action(teacher,'lesson-end',{id},at+70_000)
+  assert.equal(entry.mediaRoom,undefined)
 })
 test('Agora diagnostics probe REST once without disclosing authentication values',async t=>{
   const env={AGORA_APP_ID:'a'.repeat(32),AGORA_APP_CERTIFICATE:'b'.repeat(32),AGORA_CUSTOMER_ID:'example-client',AGORA_CUSTOMER_SECRET:'example-secret'}

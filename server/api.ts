@@ -1,7 +1,7 @@
 import type { AgoraEnvironment } from './agora'
 import type { LessonCredentials, LessonRtcStatus } from '../src/lessons'
 import { ApiError } from './errors'
-import { applyLessonAction, lessonActions, lessonRtcGrant, lessonNoticeAllowed, projectLessons } from './lesson-workspace'
+import { applyLessonAction, lessonActions, lessonRtcGrant, lessonNoticeAllowed, prepareLessonMediaRoom, projectLessons, recordLessonMediaPresence } from './lesson-workspace'
 import { activeAccount, chatAccess, chatCanSend, directContext, groupEligible, groupMessages } from './chat-access'
 import { announcementVisible } from './announcements'
 import { scheduleAssessment } from './assessment'
@@ -146,7 +146,7 @@ export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:st
   }
   return announcementVisible(notice,state,user,students)&&!notice.announcement?.withdrawn&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
 }
-function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string,rtcConfigured=false): View {
+function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string,rtcConfigured=false,encrypted=false): View {
   if (!user || user.status !== 'active') {
     const { operations: _discardEmpty, closedAccounts: _closedAccounts, lessons:_lessons, lessonSeries:_lessonSeries, lessonRestrictions:_lessonRestrictions, lessonHealth:_lessonHealth, ...emptyView } = createState()
     return { ...emptyView, user, revision, phoneEnabled, date: dateKey() }
@@ -173,8 +173,8 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
   const participants = new Set(chats.flatMap(chat=>[...(chat.group?state.users.filter(account=>chatAccess(state,chat,account)).map(account=>account.id):chat.members),...groupMessages(chat,user).map(message=>message.from)]))
   const isAdmin = user.role === 'admin'
   return {
-    user, revision, phoneEnabled, lessons:projectLessons(state,user),lessonTeacherScheduling:state.lessonTeacherScheduling,
-    lessonHealth:{rtcConfigured,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
+    user, revision, phoneEnabled, lessons:projectLessons(state,user,Date.now(),encrypted),lessonTeacherScheduling:state.lessonTeacherScheduling,
+    lessonHealth:{rtcConfigured,encryptedMode:encrypted,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
@@ -824,19 +824,22 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   state.audit.push({ time:new Date().toISOString(),actor:u.name,action,target:clean(p.studentId || p.id || p.circleId) || undefined })
 }
 
-export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials, rtcStatus?:()=>Promise<LessonRtcStatus>) {
+export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway, rtc?:(grant:ReturnType<typeof lessonRtcGrant>)=>LessonCredentials, rtcStatus?:()=>Promise<LessonRtcStatus>, rtcAppId?:string) {
   try {
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
     const pushRoute = url.pathname === '/api/push'
     const rtcRoute = url.pathname === '/api/lesson-rtc'
     const rtcStatusRoute = url.pathname === '/api/lesson-rtc/status'
-    const mediaRoute = rtcRoute||rtcStatusRoute
+    const rtcPresenceRoute=url.pathname==='/api/lesson-rtc/presence'
+    const mediaRoute = rtcRoute||rtcStatusRoute||rtcPresenceRoute
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
     if (!identity && (request.method !== 'GET' || events || pushRoute || mediaRoute)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
+    const rtcConfigured=Boolean((rtc||rtcAppId)&&identity.workspace==='school')
+    const encrypted=Boolean(rtcAppId&&identity.workspace==='school')
     if (url.pathname !== '/api/workspace' && !events && !pushRoute && !mediaRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
     if (events && !get || mediaRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
@@ -945,9 +948,31 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       }
       if(rtcRoute) {
         if(!user||user.status!=='active'||identity.workspace!=='school')return deny()
-        if(!rtc)throw new ApiError('إعدادات Agora غير مكتملة',503)
+        if(!rtc&&!rtcAppId)throw new ApiError('إعدادات Agora غير مكتملة',503)
         if(typeof payload.id!=='string'||payload.id.length>100)throw new ApiError('تحقق من معرّف الجلسة')
-        return Response.json(rtc(lessonRtcGrant(state,user,payload.id)),{headers})
+        const grant=lessonRtcGrant(state,user,payload.id,Date.now(),encrypted)
+        const lesson=state.lessons!.find(item=>item.id===grant.lessonId)!
+        if(rtcAppId){
+          const saved=Boolean(lesson.mediaRoom)
+          const room=prepareLessonMediaRoom(state,lesson)
+          if(!saved&&!(await repo.write(identity.workspace,current.revision,state)))continue
+          const reply:LessonCredentials={appId:rtcAppId,channel:room.channel,uid:grant.uid,token:null,audio:grant.audio,video:grant.video,
+            version:room.version,encryption:{secret:room.secret,salt:room.salt}}
+          return Response.json(reply,{headers})
+        }
+        if(lesson.mediaRoom){
+          delete lesson.mediaRoom
+          if(!(await repo.write(identity.workspace,current.revision,state)))continue
+        }
+        return Response.json(rtc!(grant),{headers})
+      }
+      if(rtcPresenceRoute){
+        if(!user||user.status!=='active'||identity.workspace!=='school'||!rtcAppId)return deny()
+        if(typeof payload.id!=='string'||payload.id.length>100||typeof payload.uid!=='number'||!Number.isInteger(payload.uid)
+          ||typeof payload.version!=='number'||!Number.isInteger(payload.version))throw new ApiError('تحقق من بيانات اتصال الجلسة')
+        if(recordLessonMediaPresence(state,user,payload.id,payload.uid,payload.version)
+          &&!(await repo.write(identity.workspace,current.revision,state)))continue
+        return new Response(null,{status:204,headers})
       }
       if (pushRoute) {
         if(!user||user.status!=='active')return deny()
@@ -966,7 +991,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return new Response(null,{status:204,headers})
       }
       if (get || state.operations.includes(operationKey)) {
-        const view=project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,Boolean(rtc&&identity.workspace==='school'))
+        const view=project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted)
         if(!user&&identity.phone) {
           view.verifiedPhone=identity.phone
           view.enrollmentCircles=state.circles.map(({id,name})=>({id,name}))
@@ -974,11 +999,11 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return Response.json(view,{headers})
       }
       const previousNotices=state.notices.length
-      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,Boolean(rtc&&identity.workspace==='school')),{headers})
+      if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})
       state.operations.push(operationKey)
       if (!(await repo.write(identity.workspace,current.revision,state,state.notices.slice(0,state.notices.length-previousNotices).filter(notice=>!notice.announcement||notice.announcement.publishedAt)))) continue
       user = state.users.find(x => x.id === identity.id) ?? null
-      return Response.json(project(state,user,current.revision + 1,phoneEnabled,env.BOOTSTRAP_UID,Boolean(rtc&&identity.workspace==='school')),{headers})
+      return Response.json(project(state,user,current.revision + 1,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})
     }
     throw new ApiError('حدث تحديث متزامن، أعد المحاولة',409)
   } catch (error) {

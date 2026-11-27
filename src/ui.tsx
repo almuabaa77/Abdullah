@@ -10,6 +10,7 @@ export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'poin
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
   refresh:()=>void; lessonRtc:(id:string)=>Promise<LessonCredentials>; lessonRtcStatus:()=>Promise<LessonRtcStatus>;
+  lessonRtcPresence:(id:string,uid:number,version:number)=>Promise<boolean>;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => void
 }
 export const Context = createContext<Workspace | null>(null)

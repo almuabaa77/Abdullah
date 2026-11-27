@@ -6,7 +6,7 @@ import { useWorkspace } from './ui'
 const AgoraAppIdTest=lazy(()=>import('./lesson-agora-test').then(module=>({default:module.AgoraAppIdTest})))
 
 export function LessonAgoraStatus() {
-  const {t,lessonRtcStatus}=useWorkspace()
+  const {data,t,lessonRtcStatus}=useWorkspace()
   const [status,setStatus]=useState<LessonRtcStatus>()
   const [loading,setLoading]=useState(false)
   const [failure,setFailure]=useState('')
@@ -25,7 +25,8 @@ export function LessonAgoraStatus() {
     {key:'AGORA_COHOST_AUTH_ENABLED',present:status.coHostConfirmed},
   ]
   return <section className="lesson-agora" aria-label={t('فحص Agora','Agora diagnostics')}>
-    <div className="lesson-agora-top"><div><RadioTower size={18}/><strong>{t('اتصال Agora','Agora connection')}</strong></div>
+    <div className="lesson-agora-top"><div><RadioTower size={18}/><strong>{t('اتصال Agora','Agora connection')}</strong>
+      {data.lessonHealth?.encryptedMode&&<span className="badge status-active">{t('غرف الجلسات مشفّرة','Encrypted session rooms')}</span>}</div>
       <div className="chip-row">
         <button className="btn btn-primary compact" type="button" onClick={()=>setTesting(true)}>{t('تجربة Agora بمعرّف التطبيق','Test Agora with App ID')}</button>
         <button className="btn btn-outline compact" type="button" disabled={loading} onClick={()=>void run()}>

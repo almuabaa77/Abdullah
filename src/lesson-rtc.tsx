@@ -1,29 +1,51 @@
 import { useEffect, useRef, useState } from 'react'
-import type { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, ILocalVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng'
+import type { IAgoraRTCClient, IAgoraRTCRemoteUser, ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, ILocalVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng'
 import type { LessonCredentials, LessonMedia, LessonView } from './lessons'
 import { callDeviceError, useCallDevicePermissions } from './lesson-permissions'
 import { useWorkspace, type Tr } from './ui'
 
-type SessionCredentials = Omit<LessonCredentials,'token'> & {token:string|null}
+type SessionCredentials = LessonCredentials|{appId:string;channel:string;uid:number;audio:boolean;video:boolean;token:null;encryption?:undefined;version?:undefined}
 type Connection = {client:IAgoraRTCClient; credentials:SessionCredentials; scope:string; resumeAudio:()=>void}
 export type CallDevices = {micId:string;cameraId:string;speakerId:string}
 type Remote = {uid:number|string; track:IRemoteVideoTrack}
 type RtcOptions = {
   scope:string; enabled:boolean; changing?:boolean; speak:boolean; media:LessonMedia
-  test?:boolean; getCredentials:()=>Promise<SessionCredentials>
+  test?:boolean; publisherUids?:number[]; getCredentials:()=>Promise<SessionCredentials>
 }
 
 export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
-  const {data,lessonRtc}=useWorkspace()
-  const speak=Boolean(lesson.manager||data.user?.role==='teacher'&&['meeting','urgent'].includes(lesson.kind)||lesson.currentStudent===data.user?.id)
-  return useAgoraRtc({
-    scope:[lesson.id,lesson.self?.generation,speak,lesson.media].join(':'),
+  const {data,lessonRtc,lessonRtcPresence,refresh}=useWorkspace()
+  const speak=Boolean(lesson.people.find(person=>person.id===data.user?.id)?.canPublish)
+  const encrypted=Boolean(data.lessonHealth?.encryptedMode)
+  const rtc=useAgoraRtc({
+    scope:[lesson.id,lesson.self?.generation,speak,lesson.media,encrypted?lesson.mediaVersion:0].join(':'),
     enabled:Boolean(data.lessonHealth?.rtcConfigured&&lesson.status==='live'&&lesson.self?.status==='admitted'),
     changing:lesson.mediaChanging,speak,media:lesson.media,getCredentials:()=>lessonRtc(lesson.id),
+    publisherUids:encrypted?lesson.people.flatMap(person=>person.canPublish&&person.mediaUid!==undefined?[person.mediaUid]:[]):undefined,
   },devices)
+  const presence=useRef({report:lessonRtcPresence,refresh});presence.current={report:lessonRtcPresence,refresh}
+  const grant=rtc.connection?.credentials
+  const connected=rtc.network==='CONNECTED'
+  useEffect(()=>{
+    if(!connected||!grant?.encryption)return
+    let closed=false,running=false
+    const report=async()=>{
+      if(closed||running)return
+      running=true
+      try {
+        if(!await presence.current.report(lesson.id,grant.uid,grant.version!)&&!closed)presence.current.refresh()
+      }catch{}finally{running=false}
+    }
+    void report()
+    const timer=window.setInterval(()=>void report(),19_000)
+    window.addEventListener('online',report)
+    window.addEventListener('focus',report)
+    return ()=>{closed=true;window.clearInterval(timer);window.removeEventListener('online',report);window.removeEventListener('focus',report)}
+  },[connected,grant,lesson.id])
+  return rtc
 }
 
-export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCredentials}:RtcOptions,devices:CallDevices) {
+export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,publisherUids,getCredentials}:RtcOptions,devices:CallDevices) {
   const {t}=useWorkspace()
   const [requested,setRequested]=useState(true)
   const {permissions,report}=useCallDevicePermissions(media==='video')
@@ -39,6 +61,11 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
   const [playbackBlocked,setPlaybackBlocked]=useState(false)
   const [audioOnly,setAudioOnly]=useState(false)
   const audioOnlyRef=useRef(audioOnly);audioOnlyRef.current=audioOnly
+  const publisherPolicy=useRef(new Set<number>())
+  publisherPolicy.current=new Set(publisherUids)
+  const filterPublishers=publisherUids!==undefined
+  const publisherPolicyKey=publisherUids?.join(',')
+  const reconcileStreams=useRef<()=>void>(()=>{})
   const speakerRef=useRef(devices.speakerId);speakerRef.current=devices.speakerId
   const devicesRef=useRef(devices);devicesRef.current=devices
   const [localVideo,setLocalVideo]=useState<ICameraVideoTrack>()
@@ -46,6 +73,9 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
   const mic=useRef<IMicrophoneAudioTrack|undefined>(undefined),camera=useRef<ICameraVideoTrack|undefined>(undefined)
   const generation=useRef(0)
   const localAction=useRef(false)
+  const publishingIntent=useRef({audio:false,video:false})
+  if(!speak)publishingIntent.current={audio:false,video:false}
+  else if(media!=='video')publishingIntent.current.video=false
   const credentials=useRef(getCredentials)
   credentials.current=getCredentials
   const allowed=Boolean(enabled&&(!changing||connection?.scope===scope)&&isSecureContext&&navigator.mediaDevices)
@@ -62,7 +92,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
       try{
         const parameters=await credentials.current()
         if(!active())return
-        if(!test&&!parameters.token)throw new Error(t('تعذر التحقق من إذن دخول الجلسة.','Could not verify the session grant.'))
+        if(!test&&!parameters.token&&!parameters.encryption)throw new Error(t('تعذر التحقق من إذن دخول الجلسة.','Could not verify the session grant.'))
         const {default:sdk}=await import('agora-rtc-sdk-ng')
         if(!active())return
         sdk.setLogLevel(4)
@@ -72,6 +102,11 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
         const codec=codecs?.video.includes('H264')&&!codecs.video.includes('VP8')?'h264':'vp8'
         client=sdk.createClient({mode:test?'rtc':'live',codec})
         const target=client
+        if(parameters.encryption){
+          const salt=Uint8Array.from(atob(parameters.encryption.salt),character=>character.charCodeAt(0))
+          target.setEncryptionConfig('aes-256-gcm2',parameters.encryption.secret,salt)
+          target.on('crypt-error',()=>{if(active())setError(t('تعذر فك تشفير الوسائط. أعد الاتصال بالغرفة.','Could not decrypt the media. Reconnect to the room.'))})
+        }
         target.on('connection-state-change',(next,previous)=>{
           if(!active())return
           setNetwork(next)
@@ -98,23 +133,45 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
           sdk.off('audio-context-state-changed',audioContextChanged)
         }
         target.on('user-joined',refreshPeers)
-        target.on('user-published',async(peer,kind)=>{
-          if(kind!=='audio'&&kind!=='video')return
+        const permitted=(uid:number|string,kind:'audio'|'video')=>
+          (!filterPublishers||typeof uid==='number'&&publisherPolicy.current.has(uid))
+          &&(kind==='audio'||media==='video'&&!audioOnlyRef.current)
+        const pending=new Set<string>()
+        const subscribe=async(peer:IAgoraRTCRemoteUser,kind:'audio'|'video')=>{
+          const key=peer.uid+':'+kind
+          if(!permitted(peer.uid,kind)||pending.has(key))return
+          pending.add(key)
           try{
-            if(kind==='video'&&audioOnlyRef.current)return
             await target.subscribe(peer,kind)
             if(!active())return
+            if(!permitted(peer.uid,kind)){void target.unsubscribe(peer,kind).catch(()=>{});return}
             if(kind==='audio'&&peer.audioTrack){
               setAudioPeers(items=>[...new Set([...items,peer.uid])])
               await routeAudio(peer.audioTrack,speakerRef.current)
-              if(active())peer.audioTrack?.play()
+              if(active()&&permitted(peer.uid,kind))peer.audioTrack?.play()
             }
             if(kind==='video'&&peer.videoTrack&&!audioOnlyRef.current){
               const track=peer.videoTrack
               setRemote(items=>[...items.filter(item=>item.uid!==peer.uid),{uid:peer.uid,track}])
             }
           }catch{if(active())setError(t('تعذر تشغيل وسائط من أحد المشاركين.','One participant’s media could not be played.'))}
-          finally{refreshPeers()}
+          finally{pending.delete(key);refreshPeers()}
+        }
+        reconcileStreams.current=()=>{
+          for(const peer of target.remoteUsers){
+            for(const kind of ['audio','video'] as const){
+              const track=kind==='audio'?peer.audioTrack:peer.videoTrack
+              if(!permitted(peer.uid,kind)&&track){
+                track.stop()
+                void target.unsubscribe(peer,kind).catch(()=>{})
+                if(kind==='audio')setAudioPeers(items=>items.filter(id=>id!==peer.uid))
+                else setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+              }else if(permitted(peer.uid,kind)&&!track&&(kind==='audio'?peer.hasAudio:peer.hasVideo))void subscribe(peer,kind)
+            }
+          }
+        }
+        target.on('user-published',(peer,kind)=>{
+          if(kind==='audio'||kind==='video')void subscribe(peer,kind)
         })
         target.on('user-unpublished',(peer,kind)=>{
           if(!active())return
@@ -127,7 +184,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
           setRemote(items=>items.filter(item=>item.uid!==peer.uid))
           setAudioPeers(items=>items.filter(id=>id!==peer.uid))
         })
-        if(!test){
+        if(parameters.token){
           const renew=async()=>{
             if(renewing||!active())return
             renewing=true
@@ -141,8 +198,8 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
           }
           target.on('token-privilege-will-expire',()=>void renew())
           target.on('token-privilege-did-expire',()=>{if(active()){setRequested(false);setError(t('انتهت صلاحية الاتصال. أعد محاولة الاتصال.','The connection grant expired. Connect again.'))}})
-          await target.setClientRole(parameters.audio?'host':'audience')
         }
+        if(!test)await target.setClientRole(parameters.audio?'host':'audience')
         if(!active())return
         const uid=await target.join(parameters.appId,parameters.channel,parameters.token,test?null:parameters.uid)
         if(!active()){void target.leave().catch(()=>{});return}
@@ -159,39 +216,30 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
     void start()
     return ()=>{
       generation.current++
+      reconcileStreams.current=()=>{}
       cleanup()
       unbindPlayback?.()
       setConnection(undefined);setRemote([]);setAudioPeers([]);setPeerIds([]);setLevels({})
       setLocalVideo(undefined);setMicOn(false);setCameraOn(false);setLoading(false);setQuality(0);setNetwork('');setPlaybackBlocked(false)
       if(client)void client.leave().catch(()=>{})
     }
-  },[scope,requested,allowed,test])
+  },[scope,requested,allowed,test,filterPublishers,media])
 
   useEffect(()=>{
     if(!connection)return
     for(const peer of connection.client.remoteUsers)if(peer.audioTrack)void routeAudio(peer.audioTrack,devices.speakerId)
   },[connection,devices.speakerId])
 
-  useEffect(()=>{
-    if(!connection)return
-    let current=true
-    if(audioOnly)setRemote([])
-    for(const peer of connection.client.remoteUsers){
-      if(audioOnly&&peer.videoTrack)void connection.client.unsubscribe(peer,'video').catch(()=>{})
-      if(!audioOnly&&peer.hasVideo&&!peer.videoTrack)void connection.client.subscribe(peer,'video').then(track=>{
-        if(current)setRemote(items=>[...items.filter(item=>item.uid!==peer.uid),{uid:peer.uid,track}])
-      }).catch(()=>{})
-    }
-    return ()=>{current=false}
-  },[connection,audioOnly])
+  useEffect(()=>{if(connection)reconcileStreams.current()},[connection,audioOnly,publisherPolicyKey])
 
-  async function toggle(kind:'audio'|'video') {
-    if(!connection||localAction.current||!connection.credentials[kind])return false
-    setError('')
-    localAction.current=true
+  async function toggle(kind:'audio'|'video',wanted?:boolean) {
+    if(!connection||connection.scope!==scope||network!=='CONNECTED'||!speak||localAction.current||!connection.credentials[kind])return false
     const attempt=generation.current
     const ref=kind==='audio'?mic:camera
     const current=ref.current
+    if(wanted===Boolean(current))return true
+    setError('')
+    localAction.current=true
     try{
       if(current){
         await connection.client.unpublish(current)
@@ -211,6 +259,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
         track.on('track-ended',()=>{
           if(attempt!==generation.current||ref.current!==track)return
           ref.current=undefined
+          publishingIntent.current[kind]=false
           void connection.client.unpublish(track).catch(()=>{}).finally(()=>track.close())
           if(kind==='audio')setMicOn(false)
           else {setCameraOn(false);setLocalVideo(undefined)}
@@ -220,6 +269,7 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
         })
       }
       if(attempt!==generation.current)return false
+      publishingIntent.current[kind]=!current
       if(kind==='audio')setMicOn(!current)
       else {setCameraOn(!current);setLocalVideo(camera.current)}
       return true
@@ -230,13 +280,26 @@ export function useAgoraRtc({scope,enabled,changing,speak,media,test=false,getCr
   }
   const canPublish=Boolean(connection&&network==='CONNECTED'&&connection.scope===scope&&speak&&connection.credentials.audio)
   const canVideo=Boolean(canPublish&&connection?.credentials.video&&media==='video'&&!audioOnly)
+  const applyIntent=useRef(toggle);applyIntent.current=toggle
+  useEffect(()=>{
+    if(!canPublish||!connection?.credentials.encryption)return
+    let current=true
+    const restore=async()=>{
+      if(publishingIntent.current.audio&&!mic.current)await applyIntent.current('audio',true)
+      if(current&&canVideo&&publishingIntent.current.video&&!camera.current)await applyIntent.current('video',true)
+    }
+    void restore()
+    return ()=>{current=false}
+  },[connection,canPublish,canVideo])
   async function switchAudioOnly() {
     if(!audioOnly&&camera.current&&!(await toggle('video')))return
     setAudioOnly(value=>!value)
   }
   function resumeAudio(){
     connection?.resumeAudio()
-    for(const peer of connection?.client.remoteUsers??[])peer.audioTrack?.play()
+    for(const peer of connection?.client.remoteUsers??[]){
+      if(!filterPublishers||typeof peer.uid==='number'&&publisherPolicy.current.has(peer.uid))peer.audioTrack?.play()
+    }
     setPlaybackBlocked(false)
   }
   return {connection,loading,error,quality,network,remote,levels,audioPeers,peerIds,micOn,cameraOn,localVideo,permissions,

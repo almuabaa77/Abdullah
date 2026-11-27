@@ -23,16 +23,17 @@ export function CallRole({role}:{role:LessonPerson['role']}) {
   return <span className={'call-role call-role-'+role}><Icon size={13} aria-hidden="true"/>{role==='admin'?t('المدير','Administrator'):role==='teacher'?t('المحفّظ','Teacher'):t('طالب','Student')}</span>
 }
 export function useCallClock(step=1000,enabled=true) {
-  const [now,setNow]=useState(Date.now)
+  const offset=useWorkspace().data.clockOffsetMs??0
+  const [now,setNow]=useState(()=>Date.now()+offset)
   useEffect(()=>{
     if(!enabled)return
-    setNow(Date.now())
-    const timer=window.setInterval(()=>setNow(Date.now()),step)
-    const resume=()=>setNow(Date.now())
+    const resume=()=>setNow(Date.now()+offset)
+    resume()
+    const timer=window.setInterval(resume,step)
     window.addEventListener('focus',resume)
     document.addEventListener('visibilitychange',resume)
     return ()=>{window.clearInterval(timer);window.removeEventListener('focus',resume);document.removeEventListener('visibilitychange',resume)}
-  },[step,enabled])
+  },[step,enabled,offset])
   return now
 }
 function LessonAssignments({lesson,studentId,showEmpty=false}:{lesson:LessonView;studentId?:string;showEmpty?:boolean}) {
@@ -132,7 +133,16 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
   const pages=Math.max(1,Math.ceil(collection.length/pageSize))
   const shownPage=Math.min(page,pages-1)
   const mediaActive=rtc.network==='CONNECTED'
-  const connected=mediaActive?Math.max(lesson.connected,rtc.peerIds.length+1):lesson.connected
+  const knownPeers=new Set(admitted.map(person=>person.mediaUid))
+  const connected=mediaActive?Math.max(lesson.connected,rtc.peerIds.filter(uid=>typeof uid==='number'&&knownPeers.has(uid)).length+1):lesson.connected
+  const remaining=Math.max(0,Math.ceil((Date.parse(lesson.endsAt)-now)/1000))
+  const endingSoon=remaining<=300
+  const [lastAnnouncement,setLastAnnouncement]=useState('')
+  useEffect(()=>{
+    if(remaining>300){setLastAnnouncement('');return}
+    if(remaining<=60)setLastAnnouncement(t('تبقّت دقيقة أو أقل على انتهاء الجلسة.','One minute or less remains in the session.'))
+    else setLastAnnouncement(t('اقترب موعد انتهاء الجلسة.','The session is ending soon.'))
+  },[endingSoon,remaining<=60,t])
   const offlineHost=Boolean(lesson.teacherId&&lesson.actualStart&&(now-Date.parse(lesson.actualStart)>55_000)&&!admitted.some(person=>
     (person.id===lesson.teacherId||person.id===lesson.substituteId)&&
     (mediaActive&&(person.id===data.user?.id||rtc.peerIds.includes(person.mediaUid??-1))||person.seat?.lastSeen&&now-Date.parse(person.seat.lastSeen)<55_000)))
@@ -205,7 +215,9 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
         <span className="call-live"><i/>{t('مباشر','Live')}</span>
         <button type="button" className="call-small-button call-mobile-people" aria-label={t('المشاركون','Participants')} onClick={()=>showPanel('people')}><Users size={21}/></button>
         <div className="call-meta">
-          <span><Clock3 size={16}/><bdi>{clock(secondsSince(lesson.actualStart,now))}</bdi></span>
+          <span title={t('الوقت المنقضي','Elapsed time')}><Clock3 size={16}/><bdi>{clock(secondsSince(lesson.actualStart,now))}</bdi></span>
+          <span className={endingSoon?'call-weak':''} title={t('الوقت المتبقي','Time remaining')} role="timer">
+            {t('المتبقي','Remaining')} <bdi>{clock(remaining)}</bdi></span>
           <span>{lesson.media==='video'&&!rtc.audioOnly?<Video size={17}/>:<Mic size={16}/>} {lesson.media==='video'&&!rtc.audioOnly?t('صوت وفيديو','Audio and video'):t('صوت فقط','Audio only')}</span>
           <span className={(rtc.quality>=4||rtc.network==='RECONNECTING')?'call-weak':''}><Signal size={17}/>
             {rtc.network==='RECONNECTING'?t('جارٍ إعادة الاتصال','Reconnecting'):!mediaActive?t('الوسائط غير متصلة','Media offline'):rtc.quality>=4?t('اتصال ضعيف','Weak connection'):rtc.quality===1?t('اتصال ممتاز','Excellent connection'):rtc.quality?t('اتصال مستقر','Stable connection'):t('متصل','Connected')}</span>
@@ -214,6 +226,11 @@ export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{le
         </div>
       </header>
       <main className="call-stage" aria-label={t('مساحة التسميع','Recitation stage')} inert={modalSheet}>
+        <span className="sr-only" role="status">{lastAnnouncement}</span>
+        {endingSoon&&lesson.manager&&<div className="call-feedback">
+          <p>{t('اقترب موعد انتهاء الجلسة.','The session is ending soon.')}</p>
+          <button type="button" disabled={busy} onClick={()=>void actor('lesson-extend',{minutes:15})}>{t('تمديد 15 دقيقة','Extend by 15 minutes')}</button>
+        </div>}
         {(!rtc.allowed||rtc.loading||rtc.error||error||rtc.playbackBlocked||offlineHost&&Boolean(data.lessonHealth?.rtcConfigured))&&<div className="call-feedback" aria-live="polite">
           {!data.lessonHealth?.rtcConfigured&&<p>{t('الصوت والفيديو في انتظار تفعيل Agora.','Audio and video require Agora activation.')}</p>}
           {lesson.mediaChanging&&data.lessonHealth?.rtcConfigured&&<p>{t('جارٍ تطبيق أذونات الوسائط.','Updating media permissions.')}</p>}

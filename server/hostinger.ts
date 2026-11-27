@@ -1,4 +1,4 @@
-import { agoraConfig, agoraPresence, createAgoraStatusCheck, issueAgora, revokeAgora } from './agora'
+import { agoraAppIdOnly, agoraConfig, agoraPresence, createAgoraStatusCheck, issueAgora, revokeAgora } from './agora'
 import { applyPresence, runLessonSchedule } from './lesson-workspace'
 import express, { type ErrorRequestHandler, type Request as HttpRequest, type Response as HttpResponse } from 'express'
 import { createPool, type Pool, type PoolOptions, type QueryResult, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise'
@@ -113,6 +113,7 @@ const repository:Repository = {
 }
 
 const agora=agoraConfig(env)
+const encryptedAppId=agoraAppIdOnly(env)
 const agoraStatus=createAgoraStatusCheck(env)
 let publishing=false
 const scheduleTimer=setInterval(async()=>{
@@ -151,7 +152,7 @@ const rtcTimer=setInterval(async()=>{
     const now=Date.now()
     const restrictions=state.lessonRestrictions??[]
     const next=restrictions.filter(rule=>rule.nextAttempt<=now&&rule.expiresAt>now).slice(0,12)
-    const live=(state.lessons??[]).filter(lesson=>lesson.status==='live')
+    const live=(state.lessons??[]).filter(lesson=>lesson.status==='live'&&!lesson.mediaRoom)
     const window=live.slice(presenceCursor,presenceCursor+8)
     presenceCursor=presenceCursor+8>=live.length?0:presenceCursor+8
     const results=agora?await Promise.all(next.map(async rule=>{
@@ -208,6 +209,7 @@ app.disable('x-powered-by')
 app.use((_req,res,next)=>{
   res.setHeader('X-Halaqat-App','hostinger')
   res.setHeader('Permissions-Policy','camera=(self), microphone=(self)')
+  res.setHeader('X-Halaqat-Now',String(Date.now()))
   next()
 })
 app.get('/api/health',(_req,res)=>{
@@ -220,7 +222,8 @@ app.get('/api/health',(_req,res)=>{
     databaseIssue,
     phoneAuthConfigured:Boolean(env.FIREBASE_WEB_CONFIG),
     pushReady:push.ready(),
-    lessonRtcConfigured:Boolean(agora),
+    lessonRtcConfigured:Boolean(agora||encryptedAppId),
+    lessonRtcMode:agora?'signed':encryptedAppId?'encrypted':'disabled',
   })
 })
 app.get('/api/workspace/events',async (req,res)=>{
@@ -235,7 +238,7 @@ app.use('/api',express.text({type:'application/json',limit:80000}),async (req,re
     res.status(405).set('Allow','GET, POST').json({error:'Method not allowed'})
     return
   }
-  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined,agoraStatus))
+  await forward(res,await api(appRequest(req),repository,env,push.handle,agora?grant=>issueAgora(agora,grant.lessonId,grant.uid,grant.audio,grant.video,grant.ttl):undefined,agoraStatus,encryptedAppId))
 })
 app.use(async (req,res)=>{ await forward(res,serveAsset(appRequest(req))) })
 

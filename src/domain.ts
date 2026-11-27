@@ -65,7 +65,7 @@ export type State = {
   rules: { memorization: number; review: number; attendance: number; chat: boolean; communication?:Communication }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 export function examDateFor(exam:Exam,studentId:string) {
   const request=exam.extensions?.[studentId]
