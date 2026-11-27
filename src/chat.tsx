@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, Flag, LockKeyhole, MessageCircle, Phone, Pin, Plus, Reply, Search, Send, Settings, Users, Video, X } from 'lucide-react'
-import { callPeer, idFor, type Chat } from './domain'
+import { callPeer, defaultCommunication, idFor, type Chat } from './domain'
 import { Avatar, Empty, matches, Modal, nameFor, normal, useWorkspace } from './ui'
 
 import { ChatCallList, useChatCalls } from './chat-calls'
@@ -43,7 +43,9 @@ export function ChatPage({showPermissions}:{showPermissions?:()=>void}={}) {
   const contacts=data.students.filter(student=>student.active&&matches(student,contactQuery))
   const circleNames=new Map(data.circles.map(circle=>[circle.id,circle.name]))
   const contact=chat&&data.users.find(account=>account.id===callPeer(chat,user))
-  const canCall=Boolean(contact?.status==='active'&&contact.role!=='admin'&&data.rules.chat&&calling.supported)
+  const communication=data.rules.communication??defaultCommunication
+  const canUseContacts=data.rules.chat&&(data.user?.role==='parent'?communication.guardianDirect:communication.studentDirect)
+  const canCall=Boolean(contact?.status==='active'&&contact.role!=='admin'&&data.rules.chat&&calling.supported&&(communication.audio||communication.video))
   const tabs = [
     ['messages',MessageCircle,t('المحادثات','Chats')],
     ['calls',Phone,t('المكالمات','Calls')],
@@ -89,7 +91,7 @@ export function ChatPage({showPermissions}:{showPermissions?:()=>void}={}) {
     await locateContact(target)
   }
   async function locateContact(studentId:string) {
-    if(!studentId||opening||!data.rules.chat)return
+    if(!studentId||opening||!canUseContacts)return
     setOpening(true)
     try {
       const op=idFor()
@@ -116,7 +118,7 @@ export function ChatPage({showPermissions}:{showPermissions?:()=>void}={}) {
         placeholder={t('ابحث باسم الطالب','Search by student name')} value={contactQuery} onChange={event=>{setContactQuery(event.target.value);setContactLimit(24)}}/></label>
       {contacts.slice(0,contactLimit).map(student=><div className="messenger-contact" key={student.id}>
         <Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><p>{circleNames.get(student.circleId)}</p></div>
-        <button className="btn btn-outline compact" type="button" disabled={opening||!data.rules.chat} onClick={()=>void locateContact(student.id)}>
+        <button className="btn btn-outline compact" type="button" disabled={opening||!canUseContacts} onClick={()=>void locateContact(student.id)}>
           <MessageCircle size={16}/>{t('محادثة','Chat')}
         </button>
       </div>)}
@@ -136,7 +138,7 @@ export function ChatPage({showPermissions}:{showPermissions?:()=>void}={}) {
     </section>}
     {tab==='messages'&&<section className="messenger"  data-thread={chat?'open':'closed'} aria-label={t('المحادثات','Conversations')}>
     <aside className="messenger-directory">
-      <header><div><h1>{t('المحادثات','Conversations')}</h1><p>{t('رسائل الحلقات','Circle messages')}</p></div><button className="btn btn-primary icon-button" type="button" disabled={!data.students.length||!data.rules.chat} aria-label={t('محادثة جديدة','New conversation')} onClick={()=>setChoose(true)}><Plus size={21}/></button></header>
+      <header><div><h1>{t('المحادثات','Conversations')}</h1><p>{t('رسائل الحلقات','Circle messages')}</p></div><button className="btn btn-primary icon-button" type="button" disabled={!data.students.length||!canUseContacts} aria-label={t('محادثة جديدة','New conversation')} onClick={()=>setChoose(true)}><Plus size={21}/></button></header>
       <label className="search"><Search size={17}/><input type="search" value={threadQuery} onChange={event=>setThreadQuery(event.target.value)} placeholder={t('ابحث عن محادثة','Find a conversation')} aria-label={t('ابحث عن محادثة','Find a conversation')}/></label>
       <div className="messenger-threads">{visible.map(item=>{
         const count=unread(item)
@@ -152,8 +154,8 @@ export function ChatPage({showPermissions}:{showPermissions?:()=>void}={}) {
         <span className="stat-icon tint-green"><MessageCircle size={20}/></span>
         <div><h2>{title(chat)}</h2><p>{chat.circleId?t('محادثة الحلقة','Circle conversation'):t('محادثة فردية','Direct conversation')}</p></div>
         {canCall&&<span className="messenger-call-actions">
-          <button type="button" className="icon-button" disabled={calling.busy} aria-label={t('مكالمة صوتية','Voice call')} onClick={()=>calling.start(chat,'audio')}><Phone size={18}/></button>
-          <button type="button" className="icon-button" disabled={calling.busy} aria-label={t('مكالمة مرئية','Video call')} onClick={()=>calling.start(chat,'video')}><Video size={18}/></button>
+          <button type="button" className="icon-button" disabled={calling.busy||!communication.audio} aria-label={t('مكالمة صوتية','Voice call')} onClick={()=>calling.start(chat,'audio')}><Phone size={18}/></button>
+          <button type="button" className="icon-button" disabled={calling.busy||!communication.video} aria-label={t('مكالمة مرئية','Video call')} onClick={()=>calling.start(chat,'video')}><Video size={18}/></button>
         </span>}
         <button type="button" className="icon-button" aria-pressed={searching} aria-label={t('بحث داخل المحادثة','Search conversation')} onClick={()=>{setSearching(!searching);setQuery('')}}><Search size={19}/></button>
         <details className="messenger-menu"><summary className="icon-button" aria-label={t('خيارات المحادثة','Conversation options')}>⋯</summary><div>

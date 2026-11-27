@@ -273,3 +273,10 @@ body:has(.live-register-expanded) {overflow:hidden}
 .enrollment-details div {padding:8px 10px;border-radius:8px;background:var(--surface);overflow-wrap:anywhere}
 .enrollment-details dt {font-size:.78rem;color:var(--muted)}
 .enrollment-details dd {margin:0}
+
+.policy-panel {display:grid;gap:11px}
+.policy-panel h3 {display:flex;align-items:center;gap:7px;color:var(--green)}
+.policy-options {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,225px),1fr));gap:8px 13px}
+.announcement-admin-row,.family-review-row {display:grid;gap:7px}
+.announcement-admin-row .btn,.family-review-row .btn {justify-self:start}
+.announcement-admin-row small {display:inline-flex;align-items:center;gap:4px;color:var(--muted)}

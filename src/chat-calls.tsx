@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff, Phone, PhoneOff, Video } from 'lucide-react'
-import { callPeer, callState, idFor, type Chat, type ChatCall } from './domain'
+import { callPeer, callState, defaultCommunication, idFor, type Chat, type ChatCall } from './domain'
 import { Empty, Modal, useWorkspace } from './ui'
 
 type Mode = ChatCall['mode']
@@ -166,7 +166,7 @@ export function useChatCalls() {
   }
 
   function start(chat:Chat,mode:Mode) {
-    if(!data.rules.chat||!callPeer(chat,userId)||incoming)return
+    if(!data.rules.chat||!(data.rules.communication??defaultCommunication)[mode]||!callPeer(chat,userId)||incoming)return
     const id=idFor()
     void withPeer(id,mode,async peer=>{
       const offer=await description(peer.pc,'offer')

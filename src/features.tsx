@@ -1,7 +1,7 @@
-import { ChildIdentityFields } from './enrollment-form'
+import { ParentLinks } from './family-links'
 import { useState, type FormEvent } from 'react'
-import { Award, Bell, BookOpen, CalendarDays, ChevronLeft, Download, Gift, Globe, Link2, Plus, Send, Smartphone, Star, UserCheck, Users } from 'lucide-react'
-import { balanceFor, dateKey, idFor, type Exam, type Student } from './domain'
+import { Award, Bell, BookOpen, CalendarDays, ChevronLeft, Download, Gift, Globe, Plus, Smartphone, Star, UserCheck } from 'lucide-react'
+import { balanceFor, dateKey, dayOffset, examDateFor, idFor, type Exam, type Student } from './domain'
 import { Avatar, Badge, Brand, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
 
 export function Store() {
@@ -45,10 +45,68 @@ export function Exams({embedded=false}:{embedded?:boolean}={}) {
   const [open,setOpen] = useState(false)
   const [result,setResult] = useState<{exam:Exam; student:Student}>()
   const [certificate,setCertificate] = useState<{exam:Exam; student:Student}>()
+  const [extension,setExtension] = useState<{exam:Exam;student:Student}>()
   const [busy,setBusy] = useState(false)
   const submit = async (e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);setBusy(true);try{if(result){await post('exam-result',{...Object.fromEntries(f),id:result.exam.id,studentId:result.student.id});setResult(undefined)}else{await post('exam',{...Object.fromEntries(f),studentIds:f.getAll('studentIds')});setOpen(false)}tell(t('تم الحفظ','Saved'))}catch(e){tell((e as Error).message,true)}finally{setBusy(false)}}
+  async function submitExtension(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if(busy||!extension)return
+    setBusy(true)
+    try {
+      await post('exam-extension',{id:extension.exam.id,studentId:extension.student.id,...Object.fromEntries(new FormData(event.currentTarget))})
+      setExtension(undefined)
+      tell(t('أُرسل طلب المهلة','Extension request submitted'))
+    } catch(error){tell((error as Error).message,true)}
+    finally{setBusy(false)}
+  }
+  async function reviewExtension(exam:Exam,student:Student,status:'accepted'|'declined') {
+    if(busy)return
+    setBusy(true)
+    try {
+      await post('exam-extension-review',{id:exam.id,studentId:student.id,status})
+      tell(t('تمت مراجعة طلب المهلة','Extension request reviewed'))
+    } catch(error){tell((error as Error).message,true)}
+    finally{setBusy(false)}
+  }
   return <section className={embedded?'admin-embedded':'panel section-panel'}><div className="section-title">{!embedded&&<div><h1>{t('الاختبارات','Assessments')}</h1><p>{t('المواعيد والنتائج وشهادات الإنجاز','Schedules, results and certificates')}</p></div>}{staff&&<button className="btn btn-primary" onClick={()=>setOpen(true)} disabled={!data.students.length}><Plus size={16}/>{t('اختبار جديد','New assessment')}</button>}</div>
-    {data.exams.map(exam=><article className="record-tile exam-card" key={exam.id}><div className="split-line"><div><h2>{exam.name}</h2><p>{dateLabel(exam.date,en,true)} · {exam.place}</p></div><span className="stat-icon tint-gold"><Award size={20}/></span></div><p>{exam.scope}</p>{data.students.filter(s=>exam.studentIds.includes(s.id)).map(s=><div className="entity-row" key={s.id}><div><strong>{nameFor(s,en)}</strong><p>{exam.results[s.id]?exam.results[s.id].score+'/100 · '+exam.results[s.id].feedback:t('بانتظار النتيجة','Awaiting result')}</p></div><div className="chip-row">{staff&&<button className="btn btn-outline compact" onClick={()=>setResult({exam,student:s})}>{t('تسجيل النتيجة','Record result')}</button>}{exam.results[s.id]&&<button className="btn btn-subtle compact" onClick={()=>setCertificate({exam,student:s})}><Award size={16}/>{t('شهادة','Certificate')}</button>}</div></div>)}</article>)}
+    <div className="assessment-list">{data.exams.map(exam=><article className="record-tile exam-card" key={exam.id}>
+      <div className="split-line"><div><h2>{exam.name}</h2><p>{dateLabel(exam.studentIds.length===1?examDateFor(exam,exam.studentIds[0]):exam.date,en,true)}{exam.time&&<> · <bdi>{exam.time}</bdi> {t('بتوقيت الرياض','Riyadh time')}</>} · {exam.place}</p></div>
+        <span className="stat-icon tint-gold"><Award size={20}/></span>
+      </div>
+      {exam.autoThreshold!==undefined&&<span className="count-pill">{t('جدولة آلية','Automatically scheduled')} · {exam.autoThreshold} {t('آية','verses')}</span>}
+      <p>{exam.scope}</p>
+      {data.students.filter(student=>exam.studentIds.includes(student.id)).map(student=>{
+        const outcome=exam.results[student.id]
+        const request=exam.extensions?.[student.id]
+        const date=examDateFor(exam,student.id)
+        const canRequest=data.user?.role==='student'&&data.user.studentId===student.id&&!outcome&&date>=data.date&&(!request||request.status==='declined')
+        return <div className="entity-row assessment-student" key={student.id}>
+          <div><strong>{nameFor(student,en)}</strong>
+            <p>{outcome?outcome.score+'/100 · '+outcome.feedback:t('بانتظار النتيجة','Awaiting result')}{date!==exam.date&&' · '+dateLabel(date,en)}</p>
+            {request&&<p className="assessment-extension"><Badge status={request.status} label={request.status==='pending'?t('طلب مهلة قيد المراجعة','Extension under review'):request.status==='accepted'?t('تم اعتماد المهلة','Extension approved'):t('لم تُعتمد المهلة','Extension declined')}/>
+              <span>{dateLabel(request.date,en)}{staff&&' · '+request.reason}</span></p>}
+          </div>
+          <div className="chip-row">
+            {canRequest&&<button className="btn btn-outline compact" onClick={()=>setExtension({exam,student})}>{t('طلب مهلة','Request extension')}</button>}
+            {staff&&request?.status==='pending'&&<>
+              <button className="btn btn-subtle compact" disabled={busy} onClick={()=>void reviewExtension(exam,student,'accepted')}>{t('اعتماد المهلة','Approve extension')}</button>
+              <button className="btn btn-outline compact" disabled={busy} onClick={()=>void reviewExtension(exam,student,'declined')}>{t('رفض المهلة','Decline extension')}</button>
+            </>}
+            {staff&&<button className="btn btn-outline compact" onClick={()=>setResult({exam,student})}>{t('تسجيل النتيجة','Record result')}</button>}
+            {outcome&&<button className="btn btn-subtle compact" onClick={()=>setCertificate({exam,student})}><Award size={16}/>{t('شهادة','Certificate')}</button>}
+          </div>
+        </div>
+      })}
+    </article>)}</div>
+    {extension&&<Modal title={t('طلب مهلة للاختبار','Request assessment extension')} close={()=>{if(!busy)setExtension(undefined)}}>
+      <form onSubmit={submitExtension}>
+        <div className="modal-body"><strong>{extension.exam.name}</strong><p>{t('الموعد الحالي','Current date')} · {dateLabel(examDateFor(extension.exam,extension.student.id),en,true)}</p>
+          <label>{t('الموعد المقترح','Proposed date')}<input name="date" type="date" min={dayOffset(examDateFor(extension.exam,extension.student.id),1)} required/></label>
+          <label>{t('سبب طلب المهلة','Reason for extension')}<textarea name="reason" required maxLength={400}/></label>
+        </div>
+        <div className="modal-foot"><button className="btn btn-primary" disabled={busy}>{t('إرسال طلب المهلة','Submit extension request')}</button></div>
+      </form>
+    </Modal>}
     {!data.exams.length&&<Empty title={t('لا توجد اختبارات مجدولة','No assessments scheduled')}/>}
     {(open||result)&&<Modal title={result?t('تسجيل النتيجة','Record result'):t('اختبار جديد','New assessment')} close={()=>{setOpen(false);setResult(undefined)}}><form onSubmit={submit}><div className="modal-body">{result?<><strong>{nameFor(result.student,en)}</strong><label>{t('الدرجة من 100','Score out of 100')}<input name="score" type="number" min="0" max="100" required defaultValue={result.exam.results[result.student.id]?.score}/></label><label>{t('التقييم','Feedback')}<textarea name="feedback" defaultValue={result.exam.results[result.student.id]?.feedback}/></label></>:<>
       <label>{t('اسم الاختبار','Assessment name')}<input name="name" required/></label><div className="field-pair"><label>{t('الموعد','Date')}<input name="date" type="date" min={data.date} defaultValue={data.date} required/></label><label>{t('المكان','Location')}<input name="place" required/></label></div><label>{t('السور والأجزاء','Surahs and sections')}<textarea name="scope" required/></label><fieldset className="select-list"><legend>{t('المشاركون','Participants')}</legend>{data.students.map(s=><label className="check-line" key={s.id}><input name="studentIds" type="checkbox" value={s.id}/>{nameFor(s,en)}</label>)}</fieldset>
@@ -59,13 +117,11 @@ export function Exams({embedded=false}:{embedded?:boolean}={}) {
 
 type InstallEvent = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
 export function More({ changeLanguage, switchRole, currentRole, install,showPermissions }: {changeLanguage:()=>void; switchRole:(role:string)=>void; currentRole:string;install:InstallEvent|null;showPermissions:()=>void}) {
-  const {data,t,go,post,tell,en} = useWorkspace()
-  const [modal,setModal] = useState<'link'|'install'|''>('')
-  const [busy,setBusy] = useState(false)
+  const {data,t,go} = useWorkspace()
+  const [modal,setModal] = useState<'install'|''>('')
   const parent = data.user?.role === 'parent'
   const staff = data.user?.role==='admin'||data.user?.role==='teacher'
   const opts = [
-    ...(parent?[[Users,t('إضافة طالب','Add a student'),()=>setModal('link')]] as const:[]),
     [CalendarDays,t('الاختبارات','Assessments'),()=>go('exams')],
     [UserCheck,t('الاستئذانات','Leave requests'),()=>go('leaves')],
     ...(staff?[[BookOpen,t('السجل والتقارير','Records and reports'),()=>go('records')]] as const:[]),
@@ -76,9 +132,8 @@ export function More({ changeLanguage, switchRole, currentRole, install,showPerm
   return <section className="panel section-panel">
     <div className="section-title"><div><h1>{t('المزيد','More')}</h1><p>{data.user?.name} · <RoleName role={data.user?.role||''}/></p></div></div>
     <div className="more-list">{opts.map(([Icon,label,fn])=><button className="more-row" key={label} onClick={fn}><span className="stat-icon tint-green"><Icon size={18}/></span><strong>{label}</strong><ChevronLeft size={17}/></button>)}</div>
-    {parent&&data.links.length>0&&<div className="section-panel"><h2>{t('طلبات الربط','Link requests')}</h2>{data.links.map(l=><div className="entity-row" key={l.id}>{data.students.find(s=>s.id===l.studentId)?.name||t('طلب ربط طالب','Student link request')}<Badge status={l.status} label={l.status==='pending'?t('قيد المراجعة','Under review'):undefined}/></div>)}</div>}
+    {parent&&<ParentLinks/>}
     {data.sample&&<div className="demo-settings"><div><strong>{t('مساحة المعاينة','Preview workspace')}</strong><p>{t('بيانات توضيحية خاصة بك. يمكنك تجربة الواجهات بالأدوار المختلفة.','Private sample data. Explore the interface from each role.')}</p></div><label>{t('عرض الحساب','Account view')}<select value={currentRole} onChange={e=>switchRole(e.target.value)}><option value="admin">{t('لوحة المحفّظ والإدارة','Teacher dashboard & administration')}</option><option value="teacher">{t('المحفّظ','Teacher')}</option><option value="student">{t('الطالب','Student')}</option><option value="parent">{t('ولي الأمر','Guardian')}</option></select></label></div>}
-    {modal==='link'&&<Modal title={t('إضافة طالب','Add a student')} close={()=>setModal('')}><form onSubmit={async e=>{e.preventDefault();const form=new FormData(e.currentTarget);setBusy(true);try{await post('link',{phone:form.get('phone'),childName:form.get('childName')});tell(t('إذا طابقت البيانات سجل الطالب فسيصل الطلب للإدارة.','If the details match the student record, the request will be sent to administration.'));setModal('')}catch(err){tell((err as Error).message,true)}finally{setBusy(false)}}}><div className="modal-body"><p>{t('أدخل اسم الطالب ورقم جواله المسجّلين. تراجع الإدارة الطلب قبل إتاحة البيانات.','Enter the student’s registered name and mobile number. Administration reviews access requests.')}</p><ChildIdentityFields phoneField="phone"/></div><div className="modal-foot"><button className="btn btn-primary" disabled={busy}><Link2 size={16}/>{t('إرسال طلب الربط','Send link request')}</button></div></form></Modal>}
     {modal==='install'&&<Modal title={t('تثبيت التطبيق','Install application')} close={()=>setModal('')}><div className="modal-body"><div className="hint-line"><Smartphone size={18}/>{t('على iPhone أو iPad من Safari، اضغط مشاركة ثم إضافة إلى الشاشة الرئيسية.','On iPhone or iPad in Safari, tap Share and then Add to Home Screen.')}</div><p>{t('على Android أو الكمبيوتر، افتح قائمة المتصفح واختر تثبيت التطبيق إذا ظهر الخيار.','On Android or desktop, open the browser menu and select Install app when offered.')}</p></div></Modal>}
   </section>
 }

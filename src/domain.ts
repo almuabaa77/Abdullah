@@ -6,7 +6,8 @@ export type Segment = { surah: number; from: number; to: number }
 export type StudentDetails = { age?:number; schoolStage?:string; guardianPhone?:string; address?:string }
 export type ChildRequest = { name:string; phone:string }
 export type User = { id: string; name: string; phone?: string; role: Role; status: 'active' | 'pending' | 'disabled'; studentId?: string; duplicateOf?: string; address?:string; enrollmentCircleId?:string; studentDetails?:StudentDetails; childRequest?:ChildRequest }
-export type Circle = { id: string; name: string; teacherId: string; days: number[]; holidays: string[] }
+export type AutoExam = { threshold:number; leadDays:number; time:string; place:string }
+export type Circle = { id: string; name: string; teacherId: string; days: number[]; holidays: string[]; autoExam?:AutoExam }
 export type Student = StudentDetails & { id: string; name: string; latin?: string; circleId: string; phone?: string; color: number; startingPoints: number; active: boolean }
 export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
@@ -20,12 +21,16 @@ export const reminderFields = ['memorization','review','attendance'] as const
 export type ReminderField = typeof reminderFields[number]
 export type RecordReminder = { studentId:string; circleId:string; date:string; field:ReminderField }
 export type SentReminder = RecordReminder & { teacherId:string; time:string }
-export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; readBy: string[] }
+export const announcementAudiences = ['all','circle','student','parent'] as const
+export const announcementSources = ['administration','circles','student-affairs'] as const
+export type Announcement = { audience:typeof announcementAudiences[number]; source:typeof announcementSources[number]; targetId?:string; publishAt:string; publishedAt?:string; withdrawn?:boolean; dismissedBy?:string[] }
+export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; announcement?:Announcement; readBy: string[] }
 export type Leave = { id: string; studentId: string; date: string; reason: string; status: 'pending' | 'accepted' | 'declined' }
-export type Link = { id: string; parentId: string; studentId: string; status: 'pending' | 'accepted' | 'declined' }
+export type Link = { id: string; parentId: string; studentId: string; status: 'pending' | 'accepted' | 'declined' | 'cancelled'; claim?:ChildRequest; createdAt?:string; reviewedAt?:string }
 export type Prize = { id: string; name: string; description: string; price: number; stock: number; image?: string; active: boolean }
 export type Order = { id: string; studentId: string; prizeId: string; name: string; price: number; status: 'pending' | 'approved' | 'ready' | 'delivered' | 'cancelled'; date: string }
-export type Exam = { id: string; name: string; date: string; place: string; scope: string; studentIds: string[]; results: Record<string, { score: number; feedback: string }> }
+export type ExamExtension = { date:string; reason:string; status:'pending'|'accepted'|'declined' }
+export type Exam = { id: string; name: string; date: string; place: string; scope: string; studentIds: string[]; results: Record<string, { score: number; feedback: string }>; time?:string; autoThreshold?:number; circleId?:string; extensions?:Record<string,ExamExtension> }
 export type Audit = { time: string; actor: string; action: string; target?: string; before?: number; after?: number }
 export type Chat = { id: string; circleId?: string; students: string[]; members: string[]; title: string; reports: string[]; pinnedBy: string[]; blockedBy: string[]; messages: Message[]; locked?: boolean; blocked?: boolean }
 export type Message = { id: string; from: string; text: string; time: string; reply?: string; readBy: string[]; hiddenAt?: string }
@@ -43,13 +48,29 @@ export function callPeer(chat:Chat,userId:string) {
   if(chat.circleId||chat.locked||chat.blocked||chat.blockedBy.length||chat.members.length!==2||!chat.members.includes(userId))return undefined
   return chat.members.find(id=>id!==userId)
 }
+export const communicationKeys = ['studentDirect','guardianDirect','circleChat','audio','video'] as const
+export type Communication = Record<typeof communicationKeys[number],boolean>
+export const defaultCommunication:Communication = {studentDirect:true,guardianDirect:true,circleChat:true,audio:true,video:true}
 export type State = {
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]
-  rules: { memorization: number; review: number; attendance: number; chat: boolean }; chats: Chat[]; audit: Audit[]
+  rules: { memorization: number; review: number; attendance: number; chat: boolean; communication?:Communication }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
 export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+
+export function examDateFor(exam:Exam,studentId:string) {
+  const request=exam.extensions?.[studentId]
+  return request?.status==='accepted'?request.date:exam.date
+}
+
+export function completedVerses(records:Daily[]) {
+  const verses=new Set<number>()
+  for(const record of records)if(record.memorizationStatus==='complete') {
+    for(const segment of record.memorization)for(let verse=segment.from;verse<=segment.to;verse++)verses.add(segment.surah*1000+verse)
+  }
+  return verses.size
+}
 
 export const reminderCooldown = 5 * 60_000
 export function needsRecordReminder(record:Daily|undefined,field:ReminderField) {

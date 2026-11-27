@@ -1,3 +1,4 @@
+import { AnnouncementFeed } from './announcements'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, Menu, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
@@ -245,7 +246,8 @@ function App() {
   const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => setWizard({student,mode,preset,circleId,focus})
   const teacher = data.user?.role==='teacher'||data.user?.role==='admin'
   const student=data.user?.role==='student'
-  const notices=data.notices.filter(n=>!n.readBy.includes(data.user?.id||''))
+  const availableNotices=data.notices.filter(n=>!n.announcement||n.announcement.publishedAt&&!n.announcement.withdrawn)
+  const notices=availableNotices.filter(n=>!n.readBy.includes(data.user?.id||''))
   const loadingView = loading||!authReady||loadedUid!==uid
   useEffect(()=>{
     if(availableUpdate&&page==='home'&&!loadingView&&!loadError&&!token&&!data.user&&!data.accountAccess&&!phone) applyAppUpdate(availableUpdate,true)
@@ -272,6 +274,8 @@ function App() {
       go('records')
       open(target,mode,{date},circleId,field)
     }
+    if(notice.kind==='exam'&&workspaceVisible)go('exams')
+    if(notice.kind==='link'&&data.user?.role==='parent')go('more')
     if(!notice.readBy.includes(data.user?.id||''))void post('notice-read',{id:notice.id}).catch(e=>tell(e.message,true))
   }
   useEffect(()=>{
@@ -386,8 +390,8 @@ function App() {
               <div className="topbar-rule" />
               <div className="relative"><button className="icon-button notification-trigger" onClick={()=>setOpenPanel(openPanel==='notices'?'':'notices')} aria-label={t('الإشعارات','Notifications')} aria-expanded={openPanel==='notices'}><Bell size={21}/>{notices.length>0&&<i/>}</button>
               {openPanel==='notices'&&<div className="popover notifications"><div className="section-title"><h2>{t('الإشعارات','Notifications')}</h2><button className="text-button" onClick={()=>void post('notice-read').catch(e=>tell(e.message,true))}>{t('تحديد الكل كمقروء','Mark all read')}</button></div>
-                {data.notices.slice(0,30).map(n=><button key={n.id} className={'notice-row '+(!n.readBy.includes(data.user?.id||'')?'unread':'')} onClick={()=>openNotice(n)}><span className="stat-icon tint-green"><Bell size={16}/></span><span><strong>{en&&n.en?n.en:n.title}</strong><small>{en&&n.bodyEn?n.bodyEn:n.body}</small>{n.recordReminder&&<small className="notice-record-action">{t('فتح سجل الطالب','Open student record')}</small>}</span></button>)}
-                {!data.notices.length&&<Empty title={t('لا توجد إشعارات','No notifications')}/>}
+                {availableNotices.slice(0,30).map(n=><button key={n.id} className={'notice-row '+(!n.readBy.includes(data.user?.id||'')?'unread':'')} onClick={()=>openNotice(n)}><span className="stat-icon tint-green"><Bell size={16}/></span><span><strong>{en&&n.en?n.en:n.title}</strong><small>{en&&n.bodyEn?n.bodyEn:n.body}</small>{n.recordReminder&&<small className="notice-record-action">{t('فتح سجل الطالب','Open student record')}</small>}</span></button>)}
+                {!availableNotices.length&&<Empty title={t('لا توجد إشعارات','No notifications')}/>}
                 {token&&<button className="text-button notification-permissions" type="button" onClick={()=>{setOpenPanel('');setPermissions(true)}}>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>}
               </div>}</div>
               <div className="relative"><button className="profile-trigger" onClick={()=>setOpenPanel(openPanel==='profile'?'':'profile')} aria-expanded={openPanel==='profile'} aria-label={t('الحساب','Account')}><span className="profile-avatar">{en?'A':'ع'}</span><ChevronDown size={15}/></button>
@@ -401,6 +405,7 @@ function App() {
           {availableUpdate&&!phone&&(!adminPage||token)&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
           {incomingCall&&<div className="update-banner" role="status"><span>{t('لديك مكالمة واردة','You have an incoming call')}</span>
             <button className="btn btn-outline compact" type="button" onClick={()=>go('chat')}>{t('فتح الدردشة','Open chat')}</button></div>}
+          {workspaceVisible&&!chatOpen&&page!=='assistant'&&<AnnouncementFeed key={data.user?.id}/>}
           {incomingReminder&&<div className="update-banner record-reminder-banner" role="status">
             <span>{en&&incomingReminder.bodyEn?incomingReminder.bodyEn:incomingReminder.body}</span>
             <button className="btn btn-outline compact" type="button" onClick={()=>openNotice(incomingReminder)}>{t('فتح سجل الطالب','Open student record')}</button>

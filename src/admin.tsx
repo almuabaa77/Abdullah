@@ -1,3 +1,6 @@
+import { AnnouncementFields, AnnouncementRow } from './announcements'
+import { AssessmentPolicyFields, PolicySettings } from './admin-policies'
+import { ManageFamilyLinks } from './family-links'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Plus, Search, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import type { Circle, Prize, Student, User } from './domain'
@@ -12,7 +15,7 @@ import { normalizeMobile } from './phone-number'
 import { Avatar, Badge, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
 import './admin.css'
 
-type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}|{kind:'enrollment';item:User}
+type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}|{kind:'enrollment';item:User}|{kind:'assessment';item:Circle}
 
 const sections = [
   {id:'live',group:'monitor',icon:Activity,label:['المتابعة المباشرة','Live monitoring'],short:['المتابعة','Live']},
@@ -35,7 +38,7 @@ const sections = [
 type Tab = typeof sections[number]['id']
 type Section = {
   id:Tab; group:'monitor'|'school'|'services'; icon:typeof Activity
-  label:readonly [string,string]; short?:readonly [string,string]; add?:readonly [string,string]; edit?:Exclude<Edit['kind'],'enrollment'>; search?:boolean
+  label:readonly [string,string]; short?:readonly [string,string]; add?:readonly [string,string]; edit?:Exclude<Edit['kind'],'enrollment'|'assessment'>; search?:boolean
 }
 const groups = [
   ['monitor','السجلات والمتابعة','Monitoring'],
@@ -66,6 +69,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const {data,t,en,post,tell} = useWorkspace()
   const [tab,setTab] = useState(readTab)
   const [edit,setEdit] = useState<Edit>()
+  const [scheduled,setScheduled] = useState(false)
   const [query,setQuery] = useState('')
   const [accountFilter,setAccountFilter] = useState('')
   const [busy,setBusy] = useState(false)
@@ -119,7 +123,8 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     }
     if(edit.kind==='student'||edit.kind==='prize')values.active=fields.has('active')
     if(edit.kind==='enrollment')values.status='active'
-    if(await submit(edit.kind==='enrollment'?'account':edit.kind,values))setEdit(undefined)
+    if(edit.kind==='assessment')values.enabled=fields.has('enabled')
+    if(await submit(edit.kind==='enrollment'?'account':edit.kind==='assessment'?'circle-assessment':edit.kind,values))setEdit(undefined)
   }
 
   const current:Section=sections.find(section=>section.id===tab) ?? sections[0]
@@ -162,7 +167,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
       <section className="panel section-panel admin-main" aria-busy={busy}>
         {tab!=='live'&&<header className="admin-section-head">
           <h2>{t(...current.label)}</h2>
-          {current.edit&&current.add&&<button className="btn btn-primary compact" type="button" disabled={busy} onClick={()=>setEdit({kind:current.edit!})}>
+          {current.edit&&current.add&&<button className="btn btn-primary compact" type="button" disabled={busy} onClick={()=>{setScheduled(false);setEdit({kind:current.edit!})}}>
             <Plus size={16}/>{t(...current.add)}
           </button>}
         </header>}
@@ -225,18 +230,13 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
           items={data.circles.filter(circle=>includes(circle.name,userNames.get(circle.teacherId)))}
           render={circle=><div className="entity-row" key={circle.id}>
             <div><strong>{circle.name}</strong><p>{userNames.get(circle.teacherId)} · {circleSizes.get(circle.id)??0} {t('طالب','students')}</p></div>
-            <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
-          </div>}/>}
-        {tab==='links'&&<AdminList empty={t('لا توجد طلبات ربط','No family link requests')} items={data.links}
-          render={link=><div className="entity-row" key={link.id}>
-            <div><strong>{userNames.get(link.parentId)}</strong><p>{studentNames.get(link.studentId)}</p></div>
-            <div className="chip-row"><Badge status={link.status} label={link.status==='pending'?t('قيد المراجعة','Under review'):undefined}/>
-              {link.status==='pending'&&<>
-                <button className="btn btn-subtle compact" type="button" disabled={busy} onClick={()=>void submit('link-review',{id:link.id,status:'accepted'})}>{t('اعتماد','Approve')}</button>
-                <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void submit('link-review',{id:link.id,status:'declined'})}>{t('رفض','Decline')}</button>
-              </>}
+            <div className="chip-row">
+              {circle.autoExam&&<span className="count-pill">{circle.autoExam.threshold} {t('آية للاختبار','verses for assessment')}</span>}
+              <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'assessment',item:circle})}>{t('الاختبار الآلي','Automatic assessment')}</button>
+              <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
             </div>
           </div>}/>}
+        {tab==='links'&&<ManageFamilyLinks save={submit} busy={busy}/>}
         {tab==='store'&&<>
           <AdminList key={'prizes:'+query} empty={t('لا توجد جوائز','No rewards')} filtered={Boolean(search)}
             items={data.prizes.filter(prize=>includes(prize.name))}
@@ -258,16 +258,10 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
               </div>
             </div>}/>
         </>}
-        {tab==='announcements'&&<AdminList empty={t('لا توجد إعلانات منشورة','No announcements published')}
+        {tab==='announcements'&&<AdminList empty={t('لا توجد إعلانات','No announcements')}
           items={data.notices.filter(notice=>notice.kind==='announcement')}
-          render={notice=><div className="entity-row" key={notice.id}><div><strong>{notice.title}</strong><p>{notice.body}</p></div></div>}/>}
-        {tab==='settings'&&<form className="form-stack" onSubmit={event=>{event.preventDefault();const fields=new FormData(event.currentTarget);void submit('rules',{...Object.fromEntries(fields),chat:fields.has('chat')})}}>
-          <div className="summary-grid">{([
-            ['memorization',t('إتمام الحفظ','Memorization')],['review',t('إتمام المراجعة','Revision')],['attendance',t('الحضور','Attendance')],
-          ] as const).map(([key,label])=><label key={key}>{label}<input name={key} type="number" min={0} max={100} required defaultValue={data.rules[key]}/></label>)}</div>
-          <label className="check-line"><input name="chat" type="checkbox" defaultChecked={data.rules.chat}/>{t('السماح بالمحادثات بين الحسابات','Allow account messaging')}</label>
-          <div><button className="btn btn-primary" disabled={busy}>{t('حفظ الإعدادات','Save settings')}</button></div>
-        </form>}
+          render={notice=><AnnouncementRow key={notice.id} notice={notice} busy={busy} withdraw={()=>void submit('announcement-withdraw',{id:notice.id})}/>}/>}
+        {tab==='settings'&&<PolicySettings busy={busy} save={submit}/>}
         {tab==='audit'&&<AdminList key={query} empty={t('لا توجد عمليات مسجلة','No audit entries')} filtered={Boolean(search)}
           items={data.audit.filter(entry=>includes(entry.actor,entry.action))}
           render={(entry,index)=><div className="entity-row" key={entry.time+':'+index}>
@@ -286,7 +280,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     {menu&&<Modal title={t('أقسام الإدارة','Administration sections')} close={()=>setMenu(false)} appearance="admin-more-dialog">
       <nav className="modal-body admin-more-links">{sectionLinks()}</nav>
     </Modal>}
-    {edit&&<Modal title={({student:t('بيانات الطالب','Student details'),circle:t('بيانات الحلقة','Circle details'),prize:t('بيانات الجائزة','Reward details'),announcement:t('إعلان جديد','New announcement'),invite:t('إضافة حساب','Add account'),enrollment:t('مراجعة طلب الحساب','Review account request')})[edit.kind]} close={()=>{if(!busy)setEdit(undefined)}}>
+    {edit&&<Modal title={({student:t('بيانات الطالب','Student details'),circle:t('بيانات الحلقة','Circle details'),prize:t('بيانات الجائزة','Reward details'),announcement:t('إعلان جديد','New announcement'),invite:t('إضافة حساب','Add account'),enrollment:t('مراجعة طلب الحساب','Review account request'),assessment:t('الاختبار الآلي للحلقة','Automatic circle assessment')})[edit.kind]} close={()=>{if(!busy)setEdit(undefined)}}>
       <form onSubmit={form}><div className="modal-body">
         {edit.kind==='student'&&<>
           <EnrollmentName three value={edit.item?.name}/>
@@ -296,7 +290,8 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         </>}
         {edit.kind==='circle'&&<><label>{t('اسم الحلقة','Circle name')}<input name="name" required defaultValue={edit.item?.name}/></label><label>{t('المحفّظ','Teacher')}<select name="teacherId" defaultValue={edit.item?.teacherId} required>{data.users.filter(u=>(u.role==='teacher'||u.role==='admin')&&u.status==='active').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label><fieldset className="day-select"><legend>{t('أيام الحلقة','Circle days')}</legend>{(en?['Sun','Mon','Tue','Wed','Thu','Fri','Sat']:['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']).map((day,i)=><label key={day} className="check-line"><input name="days" type="checkbox" value={i} defaultChecked={edit.item?.days.includes(i)??i<5}/>{day}</label>)}</fieldset><label>{t('تواريخ الإجازات (YYYY-MM-DD)','Holidays (YYYY-MM-DD)')}<textarea name="holidays" defaultValue={edit.item?.holidays.join('\n')}/></label></>}
         {edit.kind==='prize'&&<><label>{t('اسم الجائزة','Reward name')}<input name="name" defaultValue={edit.item?.name} required/></label><label>{t('الوصف','Description')}<textarea name="description" defaultValue={edit.item?.description} required/></label><label>{t('رابط الصورة','Image URL')}<input name="image" type="url" defaultValue={edit.item?.image}/></label><div className="field-pair"><label>{t('السعر بالنقاط','Points price')}<input name="price" type="number" min={1} defaultValue={edit.item?.price} required/></label><label>{t('الكمية','Stock')}<input name="stock" type="number" min={0} defaultValue={edit.item?.stock} required/></label></div><label className="check-line"><input name="active" type="checkbox" defaultChecked={edit.item?.active??true}/>{t('متاح للطلاب','Visible to students')}</label></>}
-        {edit.kind==='announcement'&&<><label>{t('عنوان الإعلان','Announcement title')}<input name="title" required maxLength={160}/></label><label>{t('نص الإعلان','Announcement text')}<textarea name="body" required maxLength={600}/></label></>}
+        {edit.kind==='announcement'&&<AnnouncementFields scheduled={scheduled} setScheduled={setScheduled}/>}
+        {edit.kind==='assessment'&&<AssessmentPolicyFields circle={edit.item}/>}
         {edit.kind==='invite'&&<EnrollmentFields source="admin"/>}
         {edit.kind==='enrollment'&&<>
           <div><strong>{edit.item.name}</strong><p><RoleName role={edit.item.role}/> · <bdi>{edit.item.phone}</bdi></p></div>
@@ -318,7 +313,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
             <small className="muted">{t('تحقق من علاقة ولي الأمر بالطالب قبل اعتماد الربط.','Verify the guardian’s relationship before approving access.')}</small>
           </>}
         </>}
-      </div><div className="modal-foot"><button className="btn btn-outline" type="button" disabled={busy} onClick={()=>setEdit(undefined)}>{t('إلغاء','Cancel')}</button><button className="btn btn-primary" disabled={busy}>{edit.kind==='announcement'?t('نشر الإعلان','Publish announcement'):edit.kind==='enrollment'?t('اعتماد','Approve'):t('حفظ','Save')}</button></div></form>
+      </div><div className="modal-foot"><button className="btn btn-outline" type="button" disabled={busy} onClick={()=>setEdit(undefined)}>{t('إلغاء','Cancel')}</button><button className="btn btn-primary" disabled={busy}>{edit.kind==='announcement'?(scheduled?t('جدولة الإعلان','Schedule announcement'):t('نشر الإعلان','Publish announcement')):edit.kind==='enrollment'?t('اعتماد','Approve'):t('حفظ','Save')}</button></div></form>
     </Modal>}
   </div>
 }

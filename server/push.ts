@@ -51,9 +51,15 @@ function subscriptionFor(input:unknown):webPush.PushSubscription {
 function target(user:User,notice?:Notice) {
   const kind=notice?.kind
   if(user.role==='teacher'&&notice?.recordReminder)return '/?reminder='+encodeURIComponent(notice.id)+'#records'
-  if(user.role==='admin')return kind==='message'||kind==='chat-report'?'/admin?section=chats':'/admin'
+  if(user.role==='admin') {
+    if(kind==='message'||kind==='chat-report')return '/admin?section=chats'
+    if(kind==='exam')return '/admin?section=exams'
+    if(kind==='link')return '/admin?section=links'
+    return '/admin'
+  }
   if(kind==='message'||kind==='call')return '/#chat'
   if(kind==='exam')return '/#exams'
+  if(kind==='link'&&user.role==='parent')return '/#more'
   if(kind==='leave')return '/#leaves'
   if(kind==='daily'||kind==='attendance')return '/#records'
   return '/'
@@ -96,8 +102,9 @@ export function backgroundPush(database:()=>Promise<Pool>,adminUid?:string) {
     const now=Date.now()
     const rows=devices.flatMap(device=>{
       const user=users.get(device.user_id)
-      const notice=user&&notices.find(item=>noticeRecipient(state,user,item,adminUid))
-      return notice?[[hash(device.id+':'+notice.id),device.id,device.user_id,notice.id,now,now]]:[]
+      if(!user)return []
+      return notices.filter(notice=>noticeRecipient(state,user,notice,adminUid))
+        .map(notice=>[hash(device.id+':'+notice.id),device.id,device.user_id,notice.id,now,now])
     })
     if(rows.length)await connection.query(`INSERT IGNORE INTO halaqat_push_deliveries
       (id,device_id,user_id,notice_id,created_at,available_at) VALUES ?`,[rows])

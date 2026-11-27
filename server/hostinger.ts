@@ -5,6 +5,8 @@ import { serveAsset } from './assets'
 import { mysqlConfig, mysqlFailureIssue } from './hostinger-db'
 import { revisionStream } from './revision-stream'
 import { backgroundPush } from './push'
+import { publishScheduled } from './announcements'
+import type { State } from '../src/domain'
 
 const env = process.env
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
@@ -108,6 +110,24 @@ const repository:Repository = {
   },
 }
 
+let publishing=false
+const scheduleTimer=setInterval(async()=>{
+  if(publishing||databaseStatus!=='ready')return
+  publishing=true
+  try {
+    for(let attempt=0;attempt<4;attempt++){
+      const current=await repository.read('school')
+      if(!current)break
+      const state=JSON.parse(current.data) as State
+      const due=publishScheduled(state)
+      if(!due.length||await repository.write('school',current.revision,state,due))break
+    }
+  } catch(error) {
+    console.error('Scheduled announcement check failed',error instanceof Error?error.name:'UnknownError')
+  } finally {publishing=false}
+},10_000)
+scheduleTimer.unref()
+
 function appRequest(req:HttpRequest) {
   const headers = new Headers()
   // Sites identity headers are issued by its gateway. Hostinger visitors authenticate with Firebase only.
@@ -174,6 +194,7 @@ const server = app.listen(port,'0.0.0.0',()=>{
   }
 })
 process.once('SIGTERM',()=>{
+  clearInterval(scheduleTimer)
   push.stop()
   revisions.stop()
   server.close(()=>{void connection?.end()})
