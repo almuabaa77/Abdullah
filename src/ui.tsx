@@ -46,8 +46,8 @@ export function Badge({ status, label }: {status:string,label?:string}) {
 export function Empty({ title, body, action }: { title:string; body?:string; action?:ReactNode }) {
   return <div className="empty"><div className="empty-icon"><BookOpen size={22} /></div><strong>{title}</strong>{body && <p>{body}</p>}{action}</div>
 }
-export function Modal({ title, children, close, wide = false, appearance = '' }: {
-  title:string; children:ReactNode; close:()=>void; wide?:boolean; appearance?:string
+export function Modal({ title, children, close, wide = false, appearance = '', fullScreen = false }: {
+  title:string; children:ReactNode; close:()=>void; wide?:boolean; appearance?:string; fullScreen?:boolean
 }) {
   const {t} = useWorkspace()
   const panel = useRef<HTMLElement>(null)
@@ -60,17 +60,18 @@ export function Modal({ title, children, close, wide = false, appearance = '' }:
     if(dialog&&!dialog.contains(previous)) dialog.focus()
     return ()=>{document.body.style.overflow=overflow;if(previous instanceof HTMLElement&&previous.isConnected)previous.focus()}
   },[])
-  return <div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)close()}}>
+  return <div className={'modal-backdrop'+(fullScreen?' modal-backdrop-full':'')} onClick={e=>{if(e.target===e.currentTarget)close()}}>
     <section ref={panel} tabIndex={-1} className={['modal',wide?'modal-wide':'',appearance].filter(Boolean).join(' ')} role="dialog" aria-modal="true" aria-labelledby={heading}
       onKeyDown={e=>{
         if(e.key==='Escape'){e.stopPropagation();close();return}
         if(e.key!=='Tab')return
-        const items=[...e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]')].filter(el=>el.getClientRects().length)
+        const items=[...e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]')]
+          .filter(el=>el.tabIndex>=0&&!el.closest('[inert]')&&el.getClientRects().length)
         const first=items[0],last=items.at(-1)
         if(e.shiftKey&&(document.activeElement===first||document.activeElement===e.currentTarget)){e.preventDefault();last?.focus()}
         else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}
       }}>
-      <div className="modal-head"><h2 id={heading}>{title}</h2><button className="icon-button" type="button" onClick={close} aria-label={t('إغلاق','Close')}><X size={20}/></button></div>
+      {fullScreen?<h2 id={heading} className="sr-only">{title}</h2>:<div className="modal-head"><h2 id={heading}>{title}</h2><button className="icon-button" type="button" onClick={close} aria-label={t('إغلاق','Close')}><X size={20}/></button></div>}
       {children}
     </section>
   </div>

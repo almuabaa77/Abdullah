@@ -1,27 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
-import { Headphones, Mic, MicOff, Video, VideoOff, Wifi } from 'lucide-react'
-import type { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack } from 'agora-rtc-sdk-ng'
+import type { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, ILocalVideoTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng'
 import type { LessonCredentials, LessonView } from './lessons'
 import { useWorkspace } from './ui'
 
 type Connection = {client:IAgoraRTCClient; credentials:LessonCredentials}
+export type CallDevices = {micId:string;cameraId:string;speakerId:string}
 type Remote = {uid:number|string; track:IRemoteVideoTrack}
+const mediaError=(error:unknown)=>['NotAllowedError','NotFoundError','NotReadableError','PERMISSION_DENIED','DEVICE_NOT_FOUND'].includes(String((error as {code?:string})?.code??(error as {name?:string})?.name))
 
-export function LessonRtc({lesson}:{lesson:LessonView}) {
+export function useLessonRtc(lesson:LessonView,devices:CallDevices) {
   const {data,lessonRtc,t}=useWorkspace()
-  const [requested,setRequested]=useState(false)
+  const [requested,setRequested]=useState(true)
   const [connection,setConnection]=useState<Connection>()
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
   const [quality,setQuality]=useState(0)
   const [network,setNetwork]=useState('')
   const [remote,setRemote]=useState<Remote[]>([])
-  const [speaker,setSpeaker]=useState<number|string>()
+  const [levels,setLevels]=useState<Record<string,number>>({})
+  const [audioPeers,setAudioPeers]=useState<(number|string)[]>([])
+  const [peerIds,setPeerIds]=useState<(number|string)[]>([])
+  const [playbackBlocked,setPlaybackBlocked]=useState(false)
+  const [audioOnly,setAudioOnly]=useState(false)
+  const audioOnlyRef=useRef(audioOnly);audioOnlyRef.current=audioOnly
+  const speakerRef=useRef(devices.speakerId);speakerRef.current=devices.speakerId
+  const devicesRef=useRef(devices);devicesRef.current=devices
+  const [localVideo,setLocalVideo]=useState<ICameraVideoTrack>()
   const [micOn,setMicOn]=useState(false),[cameraOn,setCameraOn]=useState(false)
-  const [sources,setSources]=useState<MediaDeviceInfo[]>([])
-  const [micId,setMicId]=useState(''),[cameraId,setCameraId]=useState('')
   const mic=useRef<IMicrophoneAudioTrack|undefined>(undefined),camera=useRef<ICameraVideoTrack|undefined>(undefined)
-  const videoBox=useRef<HTMLDivElement>(null)
   const generation=useRef(0)
   const localAction=useRef(false)
   const credentials=useRef(lessonRtc)
@@ -30,17 +36,12 @@ export function LessonRtc({lesson}:{lesson:LessonView}) {
     &&!lesson.mediaChanging&&isSecureContext&&navigator.mediaDevices)
   const publishing=lesson.manager||data.user?.role==='teacher'&&['meeting','urgent'].includes(lesson.kind)||lesson.currentStudent===data.user?.id
   const speak=Boolean(publishing)
-  const show=remote.find(item=>item.uid===speaker)??remote[0]
-  useEffect(()=>{
-    if(!show||!videoBox.current)return
-    show.track.play(videoBox.current)
-    return ()=>show.track.stop()
-  },[show])
   useEffect(()=>{
     if(!requested||!allowed)return
     const attempt=++generation.current
     let client:IAgoraRTCClient|undefined
     let renewing=false
+    let unbindPlayback:(()=>void)|undefined
     const active=()=>generation.current===attempt
     const cleanup=()=>{mic.current?.close();camera.current?.close();mic.current=undefined;camera.current=undefined}
     const start=async()=>{
@@ -55,23 +56,43 @@ export function LessonRtc({lesson}:{lesson:LessonView}) {
         const target=client
         target.on('connection-state-change',next=>{if(active())setNetwork(next)})
         target.on('network-quality',stats=>{if(active())setQuality(Math.max(stats.uplinkNetworkQuality,stats.downlinkNetworkQuality))})
-        target.on('volume-indicator',levels=>{
-          if(active())setSpeaker([...levels].filter(level=>level.level>5).sort((a,b)=>b.level-a.level)[0]?.uid)
+        target.on('volume-indicator',values=>{
+          if(active())setLevels(Object.fromEntries(values.map(item=>[String(item.uid),item.level])))
         })
+        const refreshPeers=()=>{if(active())setPeerIds(target.remoteUsers.map(user=>user.uid))}
+        const playbackBlocked=()=>{if(active())setPlaybackBlocked(true)}
+        sdk.on('autoplay-failed',playbackBlocked)
+        unbindPlayback=()=>sdk.off('autoplay-failed',playbackBlocked)
+        target.on('user-joined',refreshPeers)
         target.on('user-published',async(peer,kind)=>{
           if(kind!=='audio'&&kind!=='video')return
           try{
+            if(kind==='video'&&audioOnlyRef.current)return
             await target.subscribe(peer,kind)
             if(!active())return
-            if(kind==='audio')peer.audioTrack?.play()
-            if(kind==='video'&&peer.videoTrack){
+            if(kind==='audio'&&peer.audioTrack){
+              setAudioPeers(items=>[...new Set([...items,peer.uid])])
+              await routeAudio(peer.audioTrack,speakerRef.current)
+              if(active())peer.audioTrack?.play()
+            }
+            if(kind==='video'&&peer.videoTrack&&!audioOnlyRef.current){
               const track=peer.videoTrack
               setRemote(items=>[...items.filter(item=>item.uid!==peer.uid),{uid:peer.uid,track}])
             }
           }catch{if(active())setError(t('تعذر تشغيل وسائط من أحد المشاركين.','One participant’s media could not be played.'))}
+          finally{refreshPeers()}
         })
-        target.on('user-unpublished',(peer,kind)=>{if(active()&&kind==='video')setRemote(items=>items.filter(item=>item.uid!==peer.uid))})
-        target.on('user-left',peer=>{if(active())setRemote(items=>items.filter(item=>item.uid!==peer.uid))})
+        target.on('user-unpublished',(peer,kind)=>{
+          if(!active())return
+          if(kind==='video')setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+          if(kind==='audio')setAudioPeers(items=>items.filter(id=>id!==peer.uid))
+        })
+        target.on('user-left',peer=>{
+          refreshPeers()
+          if(!active())return
+          setRemote(items=>items.filter(item=>item.uid!==peer.uid))
+          setAudioPeers(items=>items.filter(id=>id!==peer.uid))
+        })
         const renew=async()=>{
           if(renewing||!active())return
           renewing=true
@@ -89,6 +110,7 @@ export function LessonRtc({lesson}:{lesson:LessonView}) {
         await target.join(parameters.appId,parameters.channel,parameters.token,parameters.uid)
         if(!active()){void target.leave();return}
         target.enableAudioVolumeIndicator()
+        refreshPeers()
         setConnection({client:target,credentials:parameters})
       }catch(error){
         if(active()){setRequested(false);setError((error as Error).message||t('تعذر الاتصال بالوسائط.','Could not connect to media.'))}
@@ -98,21 +120,34 @@ export function LessonRtc({lesson}:{lesson:LessonView}) {
     return ()=>{
       generation.current++
       cleanup()
-      setConnection(undefined);setRemote([]);setMicOn(false);setCameraOn(false);setLoading(false)
+      unbindPlayback?.()
+      setConnection(undefined);setRemote([]);setAudioPeers([]);setPeerIds([]);setLevels({})
+      setLocalVideo(undefined);setMicOn(false);setCameraOn(false);setLoading(false);setQuality(0);setNetwork('');setPlaybackBlocked(false)
       if(client)void client.leave().catch(()=>{})
     }
   },[lesson.id,lesson.self?.generation,requested,allowed,speak,lesson.media])
 
-  async function checkDevices() {
-    setError('')
-    try {
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:lesson.media==='video'&&speak})
-      stream.getTracks().forEach(track=>track.stop())
-      setSources(await navigator.mediaDevices.enumerateDevices())
-    }catch{setError(t('تعذر اختبار الأجهزة. راجع إذن الميكروفون أو الكاميرا.','Device check failed. Check your microphone or camera permission.'))}
-  }
+  useEffect(()=>{
+    if(!connection)return
+    for(const peer of connection.client.remoteUsers)if(peer.audioTrack)void routeAudio(peer.audioTrack,devices.speakerId)
+  },[connection,devices.speakerId])
+
+  useEffect(()=>{
+    if(!connection)return
+    let current=true
+    if(audioOnly)setRemote([])
+    for(const peer of connection.client.remoteUsers){
+      if(audioOnly&&peer.videoTrack)void connection.client.unsubscribe(peer,'video').catch(()=>{})
+      if(!audioOnly&&peer.hasVideo&&!peer.videoTrack)void connection.client.subscribe(peer,'video').then(track=>{
+        if(current)setRemote(items=>[...items.filter(item=>item.uid!==peer.uid),{uid:peer.uid,track}])
+      }).catch(()=>{})
+    }
+    return ()=>{current=false}
+  },[connection,audioOnly])
+
   async function toggle(kind:'audio'|'video') {
-    if(!connection||localAction.current||!connection.credentials[kind])return
+    if(!connection||localAction.current||!connection.credentials[kind])return false
+    setError('')
     localAction.current=true
     const attempt=generation.current
     const ref=kind==='audio'?mic:camera
@@ -124,7 +159,7 @@ export function LessonRtc({lesson}:{lesson:LessonView}) {
         ref.current=undefined
       }else {
         const {default:sdk}=await import('agora-rtc-sdk-ng')
-        const track=kind==='audio'?await sdk.createMicrophoneAudioTrack({microphoneId:micId||undefined}):await sdk.createCameraVideoTrack({cameraId:cameraId||undefined,encoderConfig:'360p_4'})
+        const track=kind==='audio'?await sdk.createMicrophoneAudioTrack({microphoneId:devicesRef.current.micId||undefined}):await sdk.createCameraVideoTrack({cameraId:devicesRef.current.cameraId||undefined,encoderConfig:'360p_4'})
         try {
           if(attempt!==generation.current){track.close();return}
           await connection.client.publish(track)
@@ -133,26 +168,43 @@ export function LessonRtc({lesson}:{lesson:LessonView}) {
         if(kind==='audio')mic.current=track as IMicrophoneAudioTrack
         else camera.current=track as ICameraVideoTrack
       }
-      if(attempt===generation.current)(kind==='audio'?setMicOn:setCameraOn)(!current)
-    }catch{if(attempt===generation.current)setError(t('تعذر تشغيل الوسائط. راجع إذن الجهاز ثم حاول مجددًا.','Could not use the device. Check permissions and try again.'))}
-    finally{localAction.current=false}
+      if(attempt!==generation.current)return false
+      if(kind==='audio')setMicOn(!current)
+      else {setCameraOn(!current);setLocalVideo(camera.current)}
+      return true
+    }catch(error){
+      if(attempt===generation.current)setError(mediaError(error)
+        ?t('تحقّق من توصيل الجهاز وإذن استخدامه في المتصفح.','Check that your device is plugged in and allowed in the browser.')
+        :t('تعذر تشغيل الوسائط. حاول مرة أخرى.','Could not use the device. Try again.'))
+      return false
+    }finally{localAction.current=false}
   }
-  if(!data.lessonHealth?.rtcConfigured)return <p className="hint-line">{t('الاتصال الصوتي والمرئي ينتظر إعدادات Agora على الخادم.','Audio and video require Agora configuration on the server.')}</p>
-  if(lesson.mediaChanging)return <p className="hint-line" role="status">{t('جارٍ تطبيق تغييرات الأذونات لدى Agora.','Applying permission changes in Agora.')}</p>
-  return <section className="lesson-media">
-    {show&&<div className="lesson-remote-video" ref={videoBox}/>}
-    <div className="chip-row">
-      <span className="count-pill"><Wifi size={15}/>{network==='RECONNECTING'?t('جارٍ استعادة الاتصال','Reconnecting'):connection?(quality>=4?t('اتصال ضعيف','Weak connection'):quality?t('اتصال مستقر','Stable connection'):t('متصل بغرفة الوسائط','Media room connected')):t('الوسائط غير متصلة','Media disconnected')}</span>
-      {!connection&&allowed&&<button type="button" className="btn btn-outline compact" onClick={()=>void checkDevices()}><Headphones size={17}/>{t('اختبار الأجهزة','Test devices')}</button>}
-      {!connection&&allowed&&<button type="button" className="btn btn-primary compact" disabled={loading} onClick={()=>setRequested(true)}>{loading?t('جارٍ الاتصال','Connecting'):t('الاتصال بالوسائط','Connect to media')}</button>}
-      {connection&&<button type="button" className="btn btn-outline compact" onClick={()=>setRequested(false)}>{t('فصل الوسائط','Disconnect media')}</button>}
-      {connection?.credentials.audio&&speak&&<button type="button" className="btn btn-outline compact" onClick={()=>void toggle('audio')} aria-pressed={micOn}>{micOn?<MicOff size={17}/>:<Mic size={17}/>} {micOn?t('كتم الميكروفون','Mute microphone'):t('تشغيل الميكروفون','Enable microphone')}</button>}
-      {connection?.credentials.video&&speak&&lesson.media==='video'&&<button type="button" className="btn btn-outline compact" onClick={()=>void toggle('video')} aria-pressed={cameraOn}>{cameraOn?<VideoOff size={17}/>:<Video size={17}/>} {cameraOn?t('إيقاف الكاميرا','Disable camera'):t('تشغيل الكاميرا','Enable camera')}</button>}
-    </div>
-    {!connection&&sources.length>0&&<div className="field-pair">
-      <label>{t('الميكروفون','Microphone')}<select value={micId} onChange={event=>setMicId(event.target.value)}><option value="">{t('الجهاز الافتراضي','System default')}</option>{sources.filter(item=>item.kind==='audioinput'&&item.deviceId).map((item,index)=><option key={item.deviceId} value={item.deviceId}>{item.label||String(index+1)}</option>)}</select></label>
-      {lesson.media==='video'&&speak&&<label>{t('الكاميرا','Camera')}<select value={cameraId} onChange={event=>setCameraId(event.target.value)}><option value="">{t('الجهاز الافتراضي','System default')}</option>{sources.filter(item=>item.kind==='videoinput'&&item.deviceId).map((item,index)=><option key={item.deviceId} value={item.deviceId}>{item.label||String(index+1)}</option>)}</select></label>}
-    </div>}
-    {error&&<div className="error-box" role="alert">{error}</div>}
-  </section>
+  const canPublish=Boolean(connection&&speak&&connection.credentials.audio)
+  const canVideo=Boolean(canPublish&&connection?.credentials.video&&lesson.media==='video'&&!audioOnly)
+  async function switchAudioOnly() {
+    if(!audioOnly&&camera.current&&!(await toggle('video')))return
+    setAudioOnly(value=>!value)
+  }
+  function resumeAudio(){
+    for(const peer of connection?.client.remoteUsers??[])peer.audioTrack?.play()
+    setPlaybackBlocked(false)
+  }
+  return {connection,loading,error,quality,network,remote,levels,audioPeers,peerIds,micOn,cameraOn,localVideo,
+    canPublish,canVideo,allowed,audioOnly,playbackBlocked,resumeAudio,switchAudioOnly,toggle,retry:()=>{setError('');setRequested(true)}}
+}
+
+async function routeAudio(track:IRemoteAudioTrack,device:string) {
+  if(typeof HTMLMediaElement!=='undefined'&&'setSinkId' in HTMLMediaElement.prototype){
+    await track.setPlaybackDevice(device||'default').catch(()=>{})
+  }
+}
+
+export function CallVideo({track,local=false}:{track:IRemoteVideoTrack|ILocalVideoTrack;local?:boolean}) {
+  const box=useRef<HTMLDivElement>(null)
+  useEffect(()=>{
+    if(!box.current)return
+    track.play(box.current,{fit:'cover',mirror:local})
+    return ()=>track.stop()
+  },[track,local])
+  return <div ref={box} className="call-tile-video" aria-hidden="true"/>
 }

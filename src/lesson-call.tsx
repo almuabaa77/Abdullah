@@ -1,0 +1,341 @@
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Activity, ArrowDown, ArrowLeft, ArrowUp, AudioLines, BookOpen, CalendarDays, Check, ChevronDown, Clock3, Grid2X2, Hand, ListOrdered, Maximize2, MessageSquare, Mic, MicOff, PanelRightClose, PhoneOff, Settings2, ShieldCheck, Signal, User, Users, Video, VideoOff, X } from 'lucide-react'
+import { recitationAssignment, segmentLabel } from './domain'
+import { CallVideo, useLessonRtc, type CallDevices } from './lesson-rtc'
+import type { LessonPerson, LessonView } from './lessons'
+import { Brand, Modal, useWorkspace } from './ui'
+import './lesson-call.css'
+
+export type SaveLesson = (action:string,values:Record<string,unknown>)=>Promise<boolean>
+type CallPanel = 'queue'|'people'|'messages'|'settings'
+type Rtc = ReturnType<typeof useLessonRtc>
+const clock=(seconds:number)=>[Math.floor(seconds/3600),Math.floor(seconds/60)%60,seconds%60].map(part=>String(part).padStart(2,'0')).join(':')
+const secondsSince=(at:string|undefined,now:number)=>at?Math.max(0,Math.floor((now-Date.parse(at))/1000)):0
+const initials=(name:string)=>name.trim().split(/\s+/).slice(0,2).map(part=>Array.from(part)[0]).join('')
+
+export function CallAvatar({name}:{name:string}) {
+  return <span className="call-avatar" aria-hidden="true">{initials(name)||<User size={25}/>}</span>
+}
+export function CallRole({role}:{role:LessonPerson['role']}) {
+  const {t}=useWorkspace()
+  const Icon=role==='admin'?ShieldCheck:role==='teacher'?BookOpen:User
+  return <span className={'call-role call-role-'+role}><Icon size={13} aria-hidden="true"/>{role==='admin'?t('المدير','Administrator'):role==='teacher'?t('المحفّظ','Teacher'):t('طالب','Student')}</span>
+}
+export function useCallClock(step=1000,enabled=true) {
+  const [now,setNow]=useState(Date.now)
+  useEffect(()=>{
+    if(!enabled)return
+    setNow(Date.now())
+    const timer=window.setInterval(()=>setNow(Date.now()),step)
+    const resume=()=>setNow(Date.now())
+    window.addEventListener('focus',resume)
+    document.addEventListener('visibilitychange',resume)
+    return ()=>{window.clearInterval(timer);window.removeEventListener('focus',resume);document.removeEventListener('visibilitychange',resume)}
+  },[step,enabled])
+  return now
+}
+export function LessonAssignments({lesson,studentId}:{lesson:LessonView;studentId?:string}) {
+  const {data,t,en}=useWorkspace()
+  if(!studentId)return null
+  const assignment=recitationAssignment(data.daily,studentId,lesson.localDate,data.circles.find(circle=>circle.id===lesson.circleId))
+  if(!assignment||!assignment.nextMemorization.length&&!assignment.nextReview.length)return null
+  return <div className="call-assignment"><BookOpen size={18}/><div>
+    {!!assignment.nextMemorization.length&&<p><strong>{t('الحفظ','Memorization')}</strong> · {segmentLabel(assignment.nextMemorization,en)}</p>}
+    {!!assignment.nextReview.length&&<p><strong>{t('المراجعة','Revision')}</strong> · {segmentLabel(assignment.nextReview,en)}</p>}
+  </div></div>
+}
+
+function ParticipantTile({person,rtc,self,current,dominant=false}:{person:LessonPerson;rtc:Rtc;self:boolean;current:boolean;dominant?:boolean}) {
+  const {t}=useWorkspace()
+  const uid=person.mediaUid
+  const track=self?rtc.localVideo:uid===undefined?undefined:rtc.remote.find(item=>item.uid===uid)?.track
+  const mic=self?rtc.micOn:uid!==undefined&&rtc.audioPeers.includes(uid)
+  const level=rtc.levels[String(self?rtc.connection?.credentials.uid:uid)]??0
+  const Microphone=mic?Mic:MicOff
+  const micLabel=mic?t('الميكروفون يعمل','Microphone on'):t('الميكروفون مكتوم','Microphone muted')
+  return <article className={'call-tile call-tile-'+person.role+(current?' call-tile-current':'')+(track?' has-video':'')+(dominant?' call-tile-primary':'')} aria-label={person.name}>
+    {track?<CallVideo track={track} local={self}/>:<div className="call-tile-placeholder"><CallAvatar name={person.name}/></div>}
+    {current&&<span className="call-now"><AudioLines size={15}/>{t('يسمّع الآن','Reciting now')}</span>}
+    <div className="call-tile-footer">
+      <span className={'call-mic-state'+(mic?' on':'')} title={micLabel} aria-label={micLabel}><Microphone size={16}/></span>
+      {mic&&level>5&&<span className="call-volume" role="meter" aria-label={t('مستوى الصوت','Volume')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={level}>
+        {[.45,.75,1,.66,.43].map((scale,index)=><i key={index} style={{height:3+scale*level*.15}}/>)}</span>}
+      <div className="call-tile-name"><strong>{person.name}{self&&<small> · {t('أنت','You')}</small>}</strong><CallRole role={person.role}/>
+        {person.role==='admin'&&!mic&&<small className="call-monitor">{t('متابع','Observing')}</small>}
+      </div>
+    </div>
+  </article>
+}
+
+function CallAction({icon,children,pressed,disabled,onClick,danger=false}:{icon:ReactNode;children:string;pressed?:boolean;disabled?:boolean;onClick:()=>void;danger?:boolean}) {
+  return <button type="button" className={'call-action'+(danger?' call-end':'')} aria-label={children} aria-pressed={pressed} disabled={disabled} onClick={onClick}>{icon}<span>{children}</span></button>
+}
+
+export function LessonDeviceOptions({devices,setDevices,sources}:{devices:CallDevices;setDevices:(devices:CallDevices)=>void;sources:MediaDeviceInfo[]}) {
+  const {t}=useWorkspace()
+  const variants=[
+    {key:'micId',kind:'audioinput',label:t('الميكروفون','Microphone')},
+    {key:'cameraId',kind:'videoinput',label:t('الكاميرا','Camera')},
+    {key:'speakerId',kind:'audiooutput',label:t('السماعة','Speaker')},
+  ] as const
+  return <div className="call-devices">{variants.filter(item=>sources.some(device=>device.kind===item.kind&&device.deviceId)).map(({key,kind,label})=>
+    <label key={key}>{label}<select value={devices[key]} onChange={event=>setDevices({...devices,[key]:event.target.value})}>
+      <option value="">{t('الجهاز الافتراضي','System default')}</option>
+      {sources.filter(device=>device.kind===kind&&device.deviceId&&device.deviceId!=='default').map((device,index)=><option value={device.deviceId} key={device.deviceId}>{device.label||label+' '+(index+1)}</option>)}
+    </select></label>)}</div>
+}
+
+export function LessonCall({lesson,save,busy,devices,setDevices,close,error}:{lesson:LessonView;save:SaveLesson;busy:boolean;devices:CallDevices;setDevices:(value:CallDevices)=>void;close:()=>void;error:string}) {
+  const {data,en,t,open}=useWorkspace()
+  const rtc=useLessonRtc(lesson,devices)
+  const now=useCallClock()
+  const [panel,setPanel]=useState<CallPanel>('queue')
+  const [sheet,setSheet]=useState(false)
+  const [smallLayout,setSmallLayout]=useState(()=>window.matchMedia('(max-width: 970px)').matches)
+  const [showSide,setShowSide]=useState(true)
+  const [menu,setMenu]=useState(false)
+  const [grid,setGrid]=useState(false)
+  const [page,setPage]=useState(0)
+  const [confirm,setConfirm]=useState(false)
+  const [message,setMessage]=useState('')
+  const [sources,setSources]=useState<MediaDeviceInfo[]>([])
+  const feed=useRef<HTMLDivElement>(null)
+  const layout=useRef<HTMLDivElement>(null)
+  const panelControl=useRef<HTMLDivElement>(null)
+  const panelTrigger=useRef<HTMLElement|null>(null)
+  const actor=(action:string,extra:Record<string,unknown>={})=>save(action,{id:lesson.id,...extra})
+  const showPanel=(next:CallPanel)=>{
+    if(!sheet&&document.activeElement instanceof HTMLElement)panelTrigger.current=document.activeElement
+    setPanel(next);setSheet(true);setShowSide(true);setMenu(false)
+    if(next==='settings')void navigator.mediaDevices?.enumerateDevices().then(setSources).catch(()=>{})
+  }
+  const admitted=lesson.people.filter(person=>person.seat?.status==='admitted')
+  const waiting=lesson.manager?lesson.people.filter(person=>person.seat?.status==='waiting'):[]
+  const queue=lesson.order.flatMap(id=>{
+    const person=lesson.people.find(member=>member.id===id)
+    return person?.role==='student'&&(person.seat?.status==='admitted'||lesson.finishedTurns?.includes(id)||person.seat?.periods.length)?[person]:[]
+  })
+  const current=admitted.find(person=>person.id===lesson.currentStudent)
+  const currentRecord=lesson.manager?data.students.find(student=>student.id===current?.studentId):undefined
+  const following=queue.filter(person=>person.seat?.status==='admitted'&&person.id!==current?.id&&!lesson.finishedTurns?.includes(person.id))
+  const next=following[0]
+  const displayedQueue=[...(current?[current]:[]),...queue.filter(person=>person.id!==current?.id)]
+  const host=admitted.find(person=>person.id===lesson.teacherId)??admitted.find(person=>person.id===lesson.substituteId)??admitted.find(person=>person.role==='teacher')
+  const lead=current??host??admitted.find(person=>person.id===data.user?.id)??admitted[0]
+  const hero=[lead,host].filter((person,index,members):person is LessonPerson=>Boolean(person&&members.findIndex(member=>member?.id===person.id)===index))
+  const audience=admitted.filter(person=>!hero.some(member=>member.id===person.id)).sort((a,b)=>Number(b.role==='admin')-Number(a.role==='admin'))
+  const pageSize=grid?8:4
+  const collection=grid?[...hero,...audience]:audience
+  const pages=Math.max(1,Math.ceil(collection.length/pageSize))
+  const shownPage=Math.min(page,pages-1)
+  const mediaActive=rtc.network==='CONNECTED'
+  const connected=mediaActive?Math.max(lesson.connected,rtc.peerIds.length+1):lesson.connected
+  const offlineHost=Boolean(lesson.teacherId&&lesson.actualStart&&(now-Date.parse(lesson.actualStart)>55_000)&&!admitted.some(person=>
+    (person.id===lesson.teacherId||person.id===lesson.substituteId)&&
+    (mediaActive&&(person.id===data.user?.id||rtc.peerIds.includes(person.mediaUid??-1))||person.seat?.lastSeen&&now-Date.parse(person.seat.lastSeen)<55_000)))
+  const modalSheet=sheet&&smallLayout
+  const closeSheet=()=>{
+    setSheet(false)
+    if(modalSheet)requestAnimationFrame(()=>panelTrigger.current?.focus())
+  }
+  useEffect(()=>{
+    if(panel==='messages'&&feed.current)feed.current.scrollTop=feed.current.scrollHeight
+  },[panel,lesson.messages?.at(-1)?.id])
+  useEffect(()=>{
+    if(modalSheet)panelControl.current?.focus()
+  },[modalSheet])
+  useEffect(()=>{
+    const small=window.matchMedia('(max-width: 970px)')
+    const change=()=>{setSmallLayout(small.matches);setSheet(false)}
+    small.addEventListener('change',change)
+    return ()=>small.removeEventListener('change',change)
+  },[])
+  useEffect(()=>{
+    const viewport=window.visualViewport
+    if(!viewport)return
+    const resize=()=>{
+      if(viewport.scale<=1.05)layout.current?.style.setProperty('--call-visible-height',viewport.height+'px')
+      else layout.current?.style.removeProperty('--call-visible-height')
+    }
+    resize()
+    viewport.addEventListener('resize',resize)
+    return ()=>viewport.removeEventListener('resize',resize)
+  },[])
+  async function send(event:FormEvent) {
+    event.preventDefault()
+    if(message.trim()&&await actor('lesson-message',{text:message}))setMessage('')
+  }
+  async function leave() {
+    if(!busy&&await actor('lesson-leave'))close()
+  }
+  async function finish() {
+    if(!busy&&await actor('lesson-end'))setConfirm(false)
+  }
+  async function answerMic(accept:boolean) {
+    if(accept&&!rtc.micOn&&!(await rtc.toggle('audio')))return
+    await actor('lesson-mic-answer')
+  }
+  const tabs:{id:CallPanel;label:string;icon:typeof Users}[]=[
+    {id:'queue',label:t('دور التسميع','Recitation queue'),icon:ListOrdered},
+    {id:'people',label:t('المشاركون','Participants'),icon:Users},
+    {id:'messages',label:t('المحادثة','Chat'),icon:MessageSquare},
+  ]
+  const renderTile=(person:LessonPerson,dominant=false)=><ParticipantTile key={person.id} person={person} rtc={rtc} self={person.id===data.user?.id} current={person.id===current?.id} dominant={dominant}/>
+  return <Modal title={lesson.title} appearance="call-shell" fullScreen close={()=>modalSheet?closeSheet():menu?setMenu(false):void leave()}>
+    <div ref={layout} className={'call-layout'+(!showSide?' call-side-collapsed':'')}>
+      <nav className={'call-nav'+(menu?' call-nav-open':'')} aria-label={t('التنقل داخل المكالمة','Call navigation')}>
+        <Brand/><button type="button" className="call-nav-selected" onClick={()=>setMenu(false)}><Video size={21}/>{t('المكالمة','Call')}</button>
+        <button type="button" onClick={()=>showPanel('queue')}><ListOrdered size={20}/>{t('الدور','Queue')}</button>
+        <button type="button" onClick={()=>showPanel('people')}><Users size={20}/>{t('المشاركون','Participants')}</button>
+        <button type="button" onClick={()=>showPanel('messages')}><MessageSquare size={20}/>{t('المحادثة','Chat')}</button>
+        <button type="button" className="call-nav-last" onClick={()=>void leave()} disabled={busy}><CalendarDays size={20}/>{t('المواعيد','Schedule')}</button>
+      </nav>
+      <header className="call-head" inert={modalSheet}>
+        <button type="button" className="call-small-button call-mobile-menu" aria-expanded={menu} aria-label={t('قائمة المكالمة','Call menu')} onClick={()=>setMenu(value=>!value)}><ChevronDown size={19}/></button>
+        <h1>{lesson.title}</h1>
+        <span className="call-live"><i/>{t('مباشر','Live')}</span>
+        <div className="call-meta">
+          <span><Clock3 size={16}/><bdi>{clock(secondsSince(lesson.actualStart,now))}</bdi></span>
+          <span>{lesson.media==='video'&&!rtc.audioOnly?<Video size={17}/>:<Mic size={16}/>} {lesson.media==='video'&&!rtc.audioOnly?t('صوت وفيديو','Audio and video'):t('صوت فقط','Audio only')}</span>
+          <span className={(rtc.quality>=4||rtc.network==='RECONNECTING')?'call-weak':''}><Signal size={17}/>
+            {rtc.network==='RECONNECTING'?t('جارٍ إعادة الاتصال','Reconnecting'):!mediaActive?t('الوسائط غير متصلة','Media offline'):rtc.quality>=4?t('اتصال ضعيف','Weak connection'):rtc.quality?t('اتصال مستقر','Stable connection'):t('متصل','Connected')}</span>
+          <button type="button" className="call-meta-people" onClick={()=>showPanel('people')}><Users size={17}/>{connected} {t('متصل','connected')}</button>
+          {waiting.length>0&&<button className="call-wait-count" type="button" onClick={()=>showPanel('queue')}>{waiting.length} {t('بانتظار القبول','waiting')}</button>}
+        </div>
+      </header>
+      <main className="call-stage" aria-label={t('مساحة التسميع','Recitation stage')} inert={modalSheet}>
+        {(!rtc.allowed||rtc.loading||rtc.error||error||rtc.playbackBlocked||offlineHost&&Boolean(data.lessonHealth?.rtcConfigured))&&<div className="call-feedback" aria-live="polite">
+          {!data.lessonHealth?.rtcConfigured&&<p>{t('الصوت والفيديو في انتظار تفعيل Agora.','Audio and video require Agora activation.')}</p>}
+          {lesson.mediaChanging&&data.lessonHealth?.rtcConfigured&&<p>{t('جارٍ تطبيق أذونات الوسائط.','Updating media permissions.')}</p>}
+          {!rtc.allowed&&data.lessonHealth?.rtcConfigured&&!lesson.mediaChanging&&<p>{t('افتح المكالمة في متصفح يدعم الوسائط عبر اتصال آمن.','Open the call in a browser that supports media over a secure connection.')}</p>}
+          {rtc.loading&&<p>{t('جارٍ الدخول إلى الوسائط…','Connecting to media…')}</p>}
+          {rtc.error&&<p>{rtc.error}{rtc.allowed&&!rtc.connection&&<button type="button" onClick={rtc.retry}>{t('إعادة المحاولة','Retry')}</button>}</p>}
+          {rtc.playbackBlocked&&<button type="button" onClick={rtc.resumeAudio}>{t('تشغيل صوت المكالمة','Enable call audio')}</button>}
+          {offlineHost&&data.lessonHealth?.rtcConfigured&&<p>{t('المحفّظ غير متصل بالوسائط حاليًا.','The teacher is currently disconnected from media.')}</p>}
+          {error&&<p role="alert">{error}</p>}
+        </div>}
+        {lesson.self?.micRequested&&<div className="call-mic-request">
+          <p>{t('طلب المحفّظ تشغيل الميكروفون لدورك.','The teacher asked you to enable your microphone.')}</p>
+          <button className="btn btn-primary compact" type="button" disabled={!rtc.canPublish||busy} onClick={()=>void answerMic(true)}>{t('تشغيل الميكروفون','Enable microphone')}</button>
+          <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void answerMic(false)}>{t('ليس الآن','Not now')}</button>
+        </div>}
+        <div className="call-stage-tools">
+          <strong><Activity size={17}/>{t('مساحة التسميع','Recitation stage')}</strong>
+          <div className="call-view" role="group" aria-label={t('طريقة العرض','Layout')}>
+            <button type="button" aria-pressed={!grid} onClick={()=>{setGrid(false);setPage(0)}}><Maximize2 size={15}/>{t('التركيز','Focus')}</button>
+            <button type="button" aria-pressed={grid} onClick={()=>{setGrid(true);setPage(0)}}><Grid2X2 size={15}/>{t('الشبكة','Grid')}</button>
+          </div>
+        </div>
+        <div className={grid?'call-mosaic is-grid':'call-mosaic'}>
+          {!grid&&<div className={'call-hero'+(hero.length===1?' call-hero-single':'')}>{hero.map((person,index)=>renderTile(person,index===0))}</div>}
+          <LessonAssignments lesson={lesson} studentId={lesson.manager?current?.studentId:data.user?.studentId}/>
+          {collection.length>0&&<div className={'call-tiles'+(grid?' call-tiles-grid':'')}>{collection.slice(shownPage*pageSize,(shownPage+1)*pageSize).map(person=>renderTile(person))}</div>}
+          {next&&<button type="button" className="call-next" onClick={()=>showPanel('queue')}><ListOrdered size={17}/><strong>{t('التالي','Next')}</strong><span>{next.name}</span><ChevronDown size={16}/></button>}
+        </div>
+        {pages>1&&<div className="call-pagination">
+          <button type="button" className="btn btn-outline compact" disabled={shownPage===0} onClick={()=>setPage(shownPage-1)}>{t('السابق','Previous')}</button>
+          <span><bdi>{shownPage+1} / {pages}</bdi></span>
+          <button type="button" className="btn btn-outline compact" disabled={shownPage+1===pages} onClick={()=>setPage(shownPage+1)}>{t('التالي','Next')}</button>
+        </div>}
+      </main>
+      {modalSheet&&<button type="button" tabIndex={-1} className="call-sheet-shade" aria-label={t('إغلاق اللوحة','Close panel')} onClick={closeSheet}/>}
+      <aside ref={panelControl} tabIndex={-1} aria-label={t('لوحة المكالمة','Call panel')} className={'call-side'+(sheet?' call-side-open':'')}>
+        <div className="call-side-tabs">
+          {tabs.map(({id,label,icon:Icon})=><button key={id} type="button" aria-pressed={panel===id} onClick={()=>setPanel(id)}><Icon size={17}/>{label}</button>)}
+          <button type="button" className="call-small-button call-collapse" onClick={()=>setShowSide(false)} aria-label={t('طي لوحة المكالمة','Collapse panel')}><PanelRightClose size={17}/></button>
+          <button type="button" className="call-small-button call-sheet-close" aria-label={t('إغلاق اللوحة','Close panel')} onClick={closeSheet}><X size={19}/></button>
+        </div>
+        {panel==='queue'&&<div className="call-panel-body">
+          <h2>{t('دور التسميع','Recitation queue')}</h2>
+          {current&&<div className="call-queue-actions"><bdi>{clock(secondsSince(lesson.turnStartedAt,now))}</bdi><small>{t('وقت الدور الحالي','Current turn elapsed')}</small></div>}
+          {lesson.manager&&<div className="call-queue-actions">
+            {next&&<button type="button" className="btn btn-primary compact" disabled={busy} onClick={()=>void actor('lesson-turn',{userId:next.id})}>{t('استدعاء التالي','Call next')}</button>}
+            {current&&<><button type="button" className="btn btn-outline compact" disabled={busy} onClick={()=>void actor('lesson-turn')}>{t('إنهاء الدور','Finish turn')}</button>
+              <button type="button" className="btn btn-outline compact" disabled={busy} onClick={()=>void actor('lesson-turn',{defer:true})}>{t('تأجيل الدور','Defer turn')}</button></>}
+            {currentRecord&&lesson.localDate<=data.date&&<button type="button" className="btn btn-outline compact" disabled={busy} onClick={()=>
+              open(currentRecord,data.daily.some(record=>record.studentId===currentRecord.id&&record.date===lesson.localDate)?'edit':'recite',{date:lesson.localDate})}>{t('سجل التسميع','Recitation record')}</button>}
+          </div>}
+          {!queue.length&&<p className="muted">{t('لا يوجد طلاب في الدور بعد.','No students in the queue yet.')}</p>}
+          <ul className="call-roster">{displayedQueue.map(person=>{
+            const isCurrent=person.id===current?.id
+            const finished=lesson.finishedTurns?.includes(person.id)
+            const recorded=finished&&data.daily.some(record=>record.studentId===(person.studentId??(person.id===data.user?.id?data.user.studentId:undefined))&&record.date===lesson.localDate&&(record.memorization.length||record.review.length))
+            const disconnected=person.seat?.status!=='admitted'||person.seat.periods.length>0&&!person.seat.lastSeen
+            const status=isCurrent?t('يسمّع الآن','Reciting now'):recorded?t('أتم التسميع','Recitation recorded'):finished?t('انتهى الدور','Turn completed'):disconnected?t('انقطع الاتصال','Disconnected'):person.id===next?.id?t('التالي','Next'):t('بانتظار الدور','Waiting for turn')
+            const rank=following.findIndex(item=>item.id===person.id)
+            return <li className={isCurrent?'current':''} key={person.id}>
+              <CallAvatar name={person.name}/><div className="call-roster-name"><strong>{person.name}</strong><small>{status}{person.seat?.hand&&' · '+t('رفع يده','Hand raised')}</small></div>
+              {lesson.manager&&person.seat?.status==='admitted'&&<div className="call-row-controls">
+                {isCurrent?<button type="button" className="call-small-button" disabled={busy} title={t('طلب تشغيل الميكروفون','Request microphone')} aria-label={t('طلب تشغيل الميكروفون','Request microphone')} onClick={()=>void actor('lesson-mic-request',{userId:person.id})}><Mic size={17}/></button>:<>
+                  <button type="button" className="call-small-button" disabled={busy} title={t('إعطاء الدور','Give turn')} aria-label={t('إعطاء الدور','Give turn')+' · '+person.name} onClick={()=>void actor('lesson-turn',{userId:person.id})}><Mic size={17}/></button>
+                  {rank>=0&&<><button type="button" className="call-small-button" title={t('تقديم الدور','Move earlier')} aria-label={t('تقديم الدور','Move earlier')+' · '+person.name} disabled={busy||rank===0} onClick={()=>void actor('lesson-order',{userId:person.id,direction:'earlier'})}><ArrowUp size={15}/></button>
+                    <button type="button" className="call-small-button" title={t('تأخير الدور','Move later')} aria-label={t('تأخير الدور','Move later')+' · '+person.name} disabled={busy||rank===following.length-1} onClick={()=>void actor('lesson-order',{userId:person.id,direction:'later'})}><ArrowDown size={15}/></button></>}
+                </>}
+              </div>}
+            </li>
+          })}</ul>
+          {lesson.manager&&<section className="call-waiting">
+            <h3><Users size={17}/>{t('بانتظار القبول','Waiting for admission')} <span>{waiting.length}</span></h3>
+            {!waiting.length&&<p className="muted">{t('لا توجد طلبات انضمام حالياً.','No join requests right now.')}</p>}
+            <ul className="call-roster">{waiting.map(person=><li key={person.id}>
+              <CallAvatar name={person.name}/><div className="call-roster-name"><strong>{person.name}</strong><small>{new Intl.DateTimeFormat(en?'en':'ar-SA',{timeStyle:'short',timeZone:lesson.zone}).format(new Date(person.seat!.at))}</small></div>
+              <div className="call-row-controls">
+                <button type="button" className="call-small-button call-accept" disabled={busy} onClick={()=>void actor('lesson-admit',{userId:person.id})} aria-label={t('قبول','Admit')+' · '+person.name}><Check size={19}/></button>
+                <button type="button" className="call-small-button call-reject" disabled={busy} onClick={()=>void actor('lesson-decline',{userId:person.id})} aria-label={t('رفض','Decline')+' · '+person.name}><X size={19}/></button>
+              </div>
+            </li>)}</ul>
+          </section>}
+        </div>}
+        {panel==='people'&&<div className="call-panel-body"><h2>{t('المشاركون','Participants')} <span>{admitted.length}</span></h2>
+          <ul className="call-roster">{admitted.map(person=><li key={person.id}>
+            <CallAvatar name={person.name}/><div className="call-roster-name"><strong>{person.name}</strong><CallRole role={person.role}/></div>
+            {lesson.manager&&person.role==='student'&&<button className="call-small-button call-reject" type="button" disabled={busy} aria-label={t('استبعاد','Remove')+' · '+person.name} onClick={()=>{if(window.confirm(t('استبعاد هذا المشارك من الجلسة؟','Remove this participant from the session?')))void actor('lesson-remove',{userId:person.id})}}><X size={17}/></button>}
+          </li>)}</ul>
+        </div>}
+        {panel==='messages'&&<div className="call-chat">
+          <div ref={feed} className="call-chat-messages" role="log" aria-label={t('رسائل الجلسة','Session messages')}>
+            {!lesson.messages?.length&&<p className="muted">{t('لا توجد رسائل بعد.','No messages yet.')}</p>}
+            {lesson.messages?.map(item=><div key={item.id} className={'call-message'+(item.from===data.user?.id?' own':'')}>
+              <strong>{lesson.people.find(person=>person.id===item.from)?.name??t('مشارك','Participant')}</strong><p dir="auto">{item.text}</p></div>)}
+          </div>
+          <form className="call-compose" onSubmit={send}>
+            <input aria-label={t('رسالة للجلسة','Session message')} placeholder={t('اكتب رسالة…','Write a message…')} value={message} maxLength={1000} onChange={event=>setMessage(event.target.value)} />
+            <button className="btn btn-primary compact" disabled={busy||!message.trim()}>{t('إرسال','Send')}</button>
+          </form>
+        </div>}
+        {panel==='settings'&&<div className="call-panel-body call-settings">
+          <h2>{t('إعدادات المكالمة','Call settings')}</h2>
+          <LessonDeviceOptions devices={devices} setDevices={setDevices} sources={sources}/>
+          {lesson.media==='video'&&<button type="button" className="btn btn-outline compact" onClick={()=>void rtc.switchAudioOnly()}>
+            {rtc.audioOnly?t('استعادة الفيديو','Restore video'):t('التبديل إلى الصوت لتقليل استهلاك الشبكة','Use audio to save bandwidth')}</button>}
+          {!rtc.connection&&rtc.allowed&&<button type="button" className="btn btn-outline compact" disabled={rtc.loading} onClick={rtc.retry}>{t('إعادة الاتصال بالوسائط','Reconnect media')}</button>}
+          {lesson.manager&&<>
+            {data.user?.role==='admin'&&<label>{t('سياسة الوسائط','Media policy')}<select value={lesson.media} disabled={busy} onChange={event=>void actor('lesson-media',{media:event.target.value})}>
+              <option value="audio">{t('صوت فقط','Audio only')}</option><option value="video">{t('صوت وفيديو','Audio and video')}</option>
+            </select></label>}
+            <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void actor('lesson-extend',{minutes:15})}>{t('تمديد 15 دقيقة','Extend by 15 minutes')}</button>
+            {!confirm?<button type="button" className="btn btn-outline compact lesson-danger" disabled={busy} onClick={()=>setConfirm(true)}>{t('إنهاء للجميع','End for everyone')}</button>:<div className="call-confirm" role="group" aria-label={t('تأكيد إنهاء الجلسة','Confirm session end')}>
+              <p>{t('سينقطع الاتصال عن جميع المشاركين ويظهر ملخص الجلسة.','Everyone will disconnect and see the session summary.')}</p>
+              <button className="btn btn-outline compact lesson-danger" type="button" disabled={busy} onClick={()=>void finish()}>{t('تأكيد الإنهاء','Confirm end')}</button>
+              <button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>setConfirm(false)}>{t('تراجع','Cancel')}</button>
+            </div>}
+          </>}
+        </div>}
+      </aside>
+      <footer className="call-controls" inert={modalSheet}>
+        <CallAction pressed={rtc.micOn} disabled={!rtc.canPublish} icon={rtc.micOn?<Mic/>:<MicOff/>} onClick={()=>void rtc.toggle('audio')}>{t('الميكروفون','Microphone')}</CallAction>
+        {lesson.media==='video'&&<CallAction pressed={rtc.cameraOn} disabled={!rtc.canVideo} icon={rtc.cameraOn?<Video/>:<VideoOff/>} onClick={()=>void rtc.toggle('video')}>{t('الكاميرا','Camera')}</CallAction>}
+        {data.user?.role==='student'&&<CallAction pressed={Boolean(lesson.self?.hand)} disabled={busy} icon={<Hand/>} onClick={()=>void actor('lesson-hand',{raised:!lesson.self?.hand})}>{lesson.self?.hand?t('خفض اليد','Lower hand'):t('رفع اليد','Raise hand')}</CallAction>}
+        <CallAction icon={<Users/>} onClick={()=>showPanel('people')}>{t('المشاركون','Participants')}</CallAction>
+        <CallAction icon={<MessageSquare/>} onClick={()=>showPanel('messages')}>{t('المحادثة','Chat')}</CallAction>
+        <CallAction icon={<Settings2/>} onClick={()=>showPanel('settings')}>{t('المزيد','More')}</CallAction>
+        <CallAction danger disabled={busy} icon={<PhoneOff/>} onClick={()=>void leave()}>{t('مغادرة','Leave')}</CallAction>
+      </footer>
+    </div>
+  </Modal>
+}
+
+export function LessonBack({close}:{close:()=>void}){
+  const {t}=useWorkspace()
+  return <button className="btn btn-outline" type="button" onClick={close}><ArrowLeft size={16}/>{t('العودة إلى المواعيد','Back to schedule')}</button>
+}

@@ -8,7 +8,8 @@ import { ApiError } from './errors'
 const minute=60_000
 export const lessonActions=new Set([
   'lesson-save','lesson-cancel','lesson-join','lesson-leave','lesson-admit','lesson-decline','lesson-remove',
-  'lesson-hand','lesson-message','lesson-turn','lesson-media','lesson-extend','lesson-end','lesson-settings',
+  'lesson-hand','lesson-message','lesson-turn','lesson-order','lesson-mic-request','lesson-mic-answer',
+  'lesson-media','lesson-extend','lesson-end','lesson-settings',
 ])
 const liveSeats=(lesson:Lesson)=>Object.entries(lesson.seats).filter(([,seat])=>seat.status==='admitted')
 const capacityFor=(state:State,lesson:Lesson)=>liveSeats(lesson).some(([id])=>state.users.some(user=>user.id===id&&user.role==='admin'))?lessonCapacity:lessonCapacity-1
@@ -75,15 +76,18 @@ export function projectLessons(state:State,user:User,now=Date.now()):LessonView[
     .slice(0,450).map(lesson=>{
       const manager=isManager(state,lesson,user)
       const {seats,invitees:_invites,delivered:_sent,...visible}=lesson
-      const people=state.users.flatMap(account=>{
-        if(!allowedInLesson(state,lesson,account))return []
+      const eligible=state.users.filter(account=>allowedInLesson(state,lesson,account))
+      const people=eligible.flatMap(account=>{
         const seat=seats[account.id]
-        if(!manager&&account.id!==user.id&&seat?.status!=='admitted')return []
+        if(!manager&&account.id!==user.id&&seat?.status!=='admitted'&&account.id!==lesson.teacherId&&account.id!==lesson.substituteId)return []
         const role=account.role==='parent'?'student':account.role
         return [{id:account.id,name:account.name,role,studentId:manager?account.studentId:undefined,
-          seat:manager||account.id===user.id?seat:seat&&{status:seat.status,at:seat.at,generation:0,rtcIndex:0,periods:[],lastSeen:seat.lastSeen}}]
+          seat:manager||account.id===user.id?seat:seat?.status==='admitted'?{status:seat.status,at:seat.at,generation:0,rtcIndex:0,periods:[],lastSeen:seat.lastSeen}:undefined,
+          mediaUid:seat?.status==='admitted'&&(manager||seats[user.id]?.status==='admitted')?lessonUid(seat):undefined}]
       })
-      return {...visible,messages:manager||seats[user.id]?.status==='admitted'?visible.messages?.slice(-100):undefined,notes:manager?visible.notes:'',order:visible.order.filter(id=>manager||id===user.id||seats[id]?.status==='admitted'),
+      const order=visible.order.filter(id=>manager||id===user.id||seats[id]?.status==='admitted')
+      return {...visible,messages:manager||seats[user.id]?.status==='admitted'?visible.messages?.slice(-100):undefined,notes:manager?visible.notes:'',order,
+        finishedTurns:visible.finishedTurns?.filter(id=>order.includes(id)),inviteCount:eligible.filter(account=>account.role!=='admin').length,
         manager,self:seats[user.id],people,waiting:manager?Object.values(seats).filter(seat=>seat.status==='waiting').length:0,
         connected:people.filter(person=>person.seat?.lastSeen&&Date.parse(person.seat.lastSeen)>now-55_000).length,
         mediaChanging:restrictionsPending(state,lesson)}
@@ -175,11 +179,13 @@ function restrict(state:State,lesson:Lesson,id:string,reason:string,now:number) 
   state.lessonRestrictions??=[]
   state.lessonRestrictions.push({id:idFor(),lessonId:lesson.id,uid,attempts:0,nextAttempt:now,reason,expiresAt:now+(tokenLifetime+60)*1000})
 }
-function complete(state:State,lesson:Lesson,now:number,status:'completed'|'cancelled') {
-  const at=new Date(now).toISOString()
+function complete(state:State,lesson:Lesson,now:number,status:'completed'|'cancelled',closed=now) {
+  const at=new Date(closed).toISOString()
   for(const [id,seat] of liveSeats(lesson)){restrict(state,lesson,id,status,now);attendanceEnd(seat,at);seat.status='left'}
+  lesson.closedAt=at
   lesson.actualEnd=lesson.actualStart?at:undefined
   lesson.currentStudent=undefined
+  lesson.turnStartedAt=undefined
   lesson.status=status
   lesson.revision++
 }
@@ -299,7 +305,7 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
     restrict(state,lesson,user.id,'leave',now)
     attendanceEnd(self,at)
     self.status='left'
-    if(lesson.currentStudent===user.id)lesson.currentStudent=undefined
+    if(lesson.currentStudent===user.id){lesson.currentStudent=undefined;lesson.turnStartedAt=undefined}
     return
   }
   if(action==='lesson-message'){
@@ -314,14 +320,39 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
     self.hand=p.raised===true
     return
   }
+  if(action==='lesson-mic-answer'){
+    if(self?.status!=='admitted'||!self.micRequested)return false
+    delete self.micRequested
+    return
+  }
   requireManager()
+  if(action==='lesson-mic-request'){
+    if(seat?.status!=='admitted'||id!==lesson.currentStudent)throw forbidden()
+    if(seat.micRequested)return false
+    seat.micRequested=true
+    return
+  }
+  if(action==='lesson-order'){
+    if(!member||member.role!=='student'||seat?.status!=='admitted'||!allowedInLesson(state,lesson,member)
+      ||id===lesson.currentStudent||lesson.finishedTurns?.includes(id))throw forbidden()
+    const direction=selection(p.direction,['earlier','later'] as const)
+    const index=lesson.order.indexOf(id)
+    if(index<0)return false
+    const eligible=lesson.order.filter(key=>key!==lesson.currentStudent&&!lesson.finishedTurns?.includes(key)&&lesson.seats[key]?.status==='admitted')
+    const target=eligible[eligible.indexOf(id)+(direction==='earlier'?-1:1)]
+    if(!target)return false
+    const next=lesson.order.indexOf(target)
+    lesson.order[index]=target
+    lesson.order[next]=id
+    return
+  }
   if(action==='lesson-admit'||action==='lesson-decline'||action==='lesson-remove'){
     if(!seat||!member||isManager(state,lesson,member)||!allowedInLesson(state,lesson,member))throw forbidden()
     if(action==='lesson-remove'&&seat.status==='admitted'){
       restrict(state,lesson,id,'remove',now)
       attendanceEnd(seat,at)
       seat.status='removed'
-      if(lesson.currentStudent===id)lesson.currentStudent=undefined
+      if(lesson.currentStudent===id){lesson.currentStudent=undefined;lesson.turnStartedAt=undefined}
     } else {
       if(seat.status!=='waiting'||action==='lesson-remove')throw new ApiError('تغيّرت حالة المشارك')
       if(action==='lesson-admit'&&liveSeats(lesson).length>=capacityFor(state,lesson))throw new ApiError('اكتملت سعة الجلسة')
@@ -334,12 +365,20 @@ export function applyLessonAction(state:State,user:User,action:string,p:Record<s
   if(action==='lesson-turn'){
     if(id&&(!member||member.role!=='student'||seat?.status!=='admitted'||!allowedInLesson(state,lesson,member)))throw forbidden()
     if(id===lesson.currentStudent)return false
-    if(lesson.currentStudent)restrict(state,lesson,lesson.currentStudent,'turn',now)
+    if(lesson.currentStudent){
+      const previous=lesson.currentStudent
+      restrict(state,lesson,previous,'turn',now)
+      delete lesson.seats[previous]?.micRequested
+      if(p.defer===true)lesson.order=[...lesson.order.filter(key=>key!==previous),previous]
+      else lesson.finishedTurns=[...new Set([...(lesson.finishedTurns??[]),previous])]
+    }
     lesson.currentStudent=id||undefined
+    lesson.turnStartedAt=id?at:undefined
+    if(id&&lesson.finishedTurns)lesson.finishedTurns=lesson.finishedTurns.filter(key=>key!==id)
     if(seat)seat.hand=false
     if(id){
       lessonNotice(state,lesson,'lesson','حان دورك في التسميع',[id],now)
-      const next=lesson.order.slice(lesson.order.indexOf(id)+1).find(key=>lesson.seats[key]?.status==='admitted')
+      const next=lesson.order.find(key=>key!==id&&!lesson.finishedTurns?.includes(key)&&lesson.seats[key]?.status==='admitted')
       if(next)lessonNotice(state,lesson,'lesson','اقترب دورك في التسميع',[next],now)
     }
     audit(state,user,lesson,'تحديث دور التسميع',now)
@@ -397,7 +436,7 @@ export function runLessonSchedule(state:State,now=Date.now()) {
   if(all.length)state.lessons=all
   for(const lesson of all.filter(scheduledOrLive)){
     if(now>=Date.parse(lesson.endsAt)){
-      complete(state,lesson,now,lesson.status==='live'?'completed':'cancelled')
+      complete(state,lesson,now,lesson.status==='live'?'completed':'cancelled',Date.parse(lesson.endsAt))
       changed=true
       continue
     }
@@ -407,7 +446,7 @@ export function runLessonSchedule(state:State,now=Date.now()) {
       restrict(state,lesson,id,'membership',now)
       attendanceEnd(seat,time)
       seat.status='removed'
-      if(lesson.currentStudent===id)lesson.currentStudent=undefined
+      if(lesson.currentStudent===id){lesson.currentStudent=undefined;lesson.turnStartedAt=undefined}
       changed=true
     }
     const start=Date.parse(lesson.startsAt)
@@ -426,6 +465,7 @@ export function runLessonSchedule(state:State,now=Date.now()) {
   return false
 }
 export function applyPresence(lesson:Lesson,ids:Set<number>,now:number) {
+  if(now>=Date.parse(lesson.endsAt))return false
   let changed=false
   const time=new Date(now).toISOString()
   for(const [id,seat] of liveSeats(lesson)){

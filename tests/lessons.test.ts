@@ -5,6 +5,7 @@ import { agoraConfig, issueAgora } from '../server/agora'
 import { applyLessonAction, applyPresence, lessonNoticeAllowed, lessonRtcGrant, projectLessons, runLessonSchedule } from '../server/lesson-workspace'
 import { createState } from '../server/seed'
 import type { User } from '../src/domain'
+import { lessonAgendaGraceMs, lessonClosed, lessonInAgenda } from '../src/lessons'
 
 const before=Date.parse('2026-12-01T06:00:00Z')
 const at=Date.parse('2026-12-01T07:00:00Z')
@@ -119,4 +120,59 @@ test('the 24-seat policy reserves the administrator place and presence reconnect
   applyPresence(lesson,new Set([uid]),at+110_000)
   assert.equal(lesson.seats[learner.id].periods.length,2)
   assert.equal(lesson.seats[learner.id].periods[0].to,new Date(at+25_000).toISOString())
+})
+test('schedules leave the agenda after two minutes while authorized users keep the summary',()=>{
+  const {state,teacher,outsider,learners,action,create}=fixture()
+  const entry=create()
+  const end=at+76_000
+  action(teacher,'lesson-join',{id:entry.id})
+  action(teacher,'lesson-end',{id:entry.id},end)
+  assert.equal(lessonInAgenda(entry,end+lessonAgendaGraceMs-1),true)
+  assert.equal(lessonInAgenda(entry,end+lessonAgendaGraceMs),false)
+  assert.equal(projectLessons(state,learners[0],end+lessonAgendaGraceMs)[0].id,entry.id)
+  assert.equal(projectLessons(state,outsider,end+lessonAgendaGraceMs).length,0)
+})
+test('unstarted and live sessions close at the scheduled deadline even when the worker runs late',()=>{
+  for(const join of [false,true]){
+    const {state,teacher,action,create}=fixture()
+    const entry=create()
+    if(join)action(teacher,'lesson-join',{id:entry.id})
+    const end=Date.parse(entry.endsAt)
+    assert.equal(lessonClosed(entry,end-1),false)
+    assert.equal(lessonClosed(entry,end),true)
+    runLessonSchedule(state,end+10_000)
+    assert.equal(entry.status,join?'completed':'cancelled')
+    assert.equal(Date.parse(entry.closedAt!),end)
+    assert.equal(lessonInAgenda(entry,end+lessonAgendaGraceMs),false)
+  }
+})
+test('queue changes and microphone requests respect the active turn and scope',()=>{
+  const {state,teacher,learners,action,create}=fixture(3)
+  const {id}=create()
+  const [first,second,third]=learners
+  action(teacher,'lesson-join',{id})
+  for(const person of learners){
+    action(person,'lesson-join',{id})
+    action(teacher,'lesson-admit',{id,userId:person.id})
+  }
+  const prior=projectLessons(state,teacher,at)[0]
+  const lead=prior.order[0]
+  const tail=prior.order[2]
+  assert.throws(()=>action(first,'lesson-order',{id,userId:second.id,direction:'earlier'}),{status:403})
+  action(teacher,'lesson-order',{id,userId:tail,direction:'earlier'})
+  assert.equal(projectLessons(state,teacher,at)[0].order[1],tail)
+  action(teacher,'lesson-turn',{id,userId:lead})
+  assert.throws(()=>action(teacher,'lesson-mic-request',{id,userId:tail}),{status:403})
+  action(teacher,'lesson-mic-request',{id,userId:lead})
+  const speaker=learners.find(user=>user.id===lead)!
+  assert.equal(projectLessons(state,speaker,at)[0].self?.micRequested,true)
+  if(third.id!==lead)assert.equal(projectLessons(state,third,at)[0].people.find(person=>person.id===lead)?.seat?.micRequested,undefined)
+  action(speaker,'lesson-mic-answer',{id})
+  action(teacher,'lesson-turn',{id,defer:true})
+  const postponed=projectLessons(state,teacher,at)[0]
+  assert.equal(postponed.order.at(-1),lead)
+  assert.equal(postponed.finishedTurns?.includes(lead),undefined)
+  action(teacher,'lesson-turn',{id,userId:tail})
+  action(teacher,'lesson-turn',{id})
+  assert.deepEqual(projectLessons(state,teacher,at)[0].finishedTurns,[tail])
 })

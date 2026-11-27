@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 're
 import { ArrowLeft, CalendarDays, Check, Flag, MailPlus, LockKeyhole, MessageCircle, Phone, Pin, Plus, Reply, Search, Send, Settings, Users, Video, X } from 'lucide-react'
 import { callPeer, defaultCommunication, idFor, type Chat, type ChatContact, type Role } from './domain'
 import { Empty, Modal, normal, RoleName, useWorkspace } from './ui'
+import { useCallClock } from './lesson-call'
+import { lessonClosed, lessonInAgenda } from './lessons'
 
 import { ChatCallList, useChatCalls } from './chat-calls'
 
@@ -45,7 +47,8 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
   }
   const chats = data.chats.filter(item=>!management||!item.circleId&&item.members.includes(user)).sort((a,b)=>Number(b.pinnedBy.includes(user))-Number(a.pinnedBy.includes(user)) || (b.messages.at(-1)?.time ?? '').localeCompare(a.messages.at(-1)?.time ?? ''))
   const chat = chats.find(item=>item.id===selected)
-  const appointments=chat?(data.lessons??[]).filter(lesson=>lesson.status==='scheduled'||lesson.status==='live').filter(lesson=>lesson.chatId===chat.id||!lesson.chatId&&lesson.kind==='circle'&&lesson.circleId===chat.circleId).slice(0,4):[]
+  const callClock=useCallClock(1000,Boolean(chat))
+  const appointments=chat?(data.lessons??[]).filter(lesson=>lessonInAgenda(lesson,callClock)).filter(lesson=>lesson.chatId===chat.id||!lesson.chatId&&lesson.kind==='circle'&&lesson.circleId===chat.circleId).slice(0,4):[]
   const unread = (item:Chat) => item.messages.filter(message=>message.from!==user&&!message.readBy.includes(user)).length
   const unreadCount = chat ? unread(chat) : 0
   const visible = chats.filter(item=>normal(title(item)).includes(normal(threadQuery)))
@@ -236,7 +239,7 @@ export function ChatPage({showPermissions,management=false}:{showPermissions?:()
       <div className="messenger-messages" role="log" aria-label={t('الرسائل','Messages')} ref={list} onScroll={event=>{const node=event.currentTarget;follow.current=node.scrollHeight-node.scrollTop-node.clientHeight<96}}>
         {appointments.map(lesson=><button className="lesson-chat-card" key={lesson.id} type="button" onClick={()=>{
           sessionStorage.setItem('halaqat-open-lesson',lesson.id);go('lessons')
-        }}><CalendarDays size={18}/><span><strong>{lesson.title}</strong><small>{new Intl.DateTimeFormat(en?'en-GB':'ar-SA-u-ca-gregory',{dateStyle:'medium',timeStyle:'short',timeZone:lesson.zone}).format(new Date(lesson.startsAt))} · {lesson.zone}</small><small>{lesson.media==='video'?t('صوت وفيديو','Audio and video'):t('صوت فقط','Audio only')} · {Math.round((Date.parse(lesson.endsAt)-Date.parse(lesson.startsAt))/60_000)} {t('دقيقة','minutes')}</small></span></button>)}
+        }}><CalendarDays size={18}/><span><strong>{lesson.title}</strong><small>{new Intl.DateTimeFormat(en?'en-GB':'ar-SA-u-ca-gregory',{dateStyle:'medium',timeStyle:'short',timeZone:lesson.zone}).format(new Date(lesson.startsAt))} · {lesson.zone}</small><small>{lessonClosed(lesson,callClock)?t('أُغلق الموعد','Session closed'):lesson.media==='video'?t('صوت وفيديو','Audio and video'):t('صوت فقط','Audio only')} · {Math.round((Date.parse(lesson.endsAt)-Date.parse(lesson.startsAt))/60_000)} {t('دقيقة','minutes')}</small></span></button>)}
         {messages.map(message=><article className={'message '+(message.from===user?'outgoing':'incoming')} key={message.id}>
           <strong className="message-sender">{message.from===user?t('أنت','You'):accounts.get(message.from)?.name??t('عضو الحلقة','Circle member')}
             {accounts.get(message.from)&&<small className="chat-role" data-role={accounts.get(message.from)?.role}><RoleName role={accounts.get(message.from)!.role}/></small>}</strong>
