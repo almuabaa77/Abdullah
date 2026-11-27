@@ -4,12 +4,14 @@ import { api, ApiError, type Repository } from './api'
 import { serveAsset } from './assets'
 import { mysqlConfig, mysqlFailureIssue } from './hostinger-db'
 import { revisionStream } from './revision-stream'
+import { backgroundPush } from './push'
 
 const env = process.env
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
 const port = Number(env.PORT || 3000)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT')
 const config = mysqlConfig(env)
+const push = backgroundPush(database,env.BOOTSTRAP_UID)
 const createSchema = `
   CREATE TABLE IF NOT EXISTS halaqat_workspaces (
     id VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -44,6 +46,7 @@ async function startDatabase(options:PoolOptions) {
   connection ??= createPool(options)
   await connection.query(createSchema)
   await connection.query('SELECT id, revision, data FROM halaqat_workspaces LIMIT 0')
+  await push.initialize(connection).catch(()=>console.error('Background notifications could not initialize'))
   databaseStatus = 'ready'
   databaseIssue = undefined
   return connection
@@ -74,10 +77,32 @@ const repository:Repository = {
   async create(id,state) {
     await query('INSERT INTO halaqat_workspaces(id,data) VALUES(?,?) ON DUPLICATE KEY UPDATE id=id',[id,JSON.stringify(state)])
   },
-  async write(id,revision,state) {
-    const [result] = await query<ResultSetHeader>('UPDATE halaqat_workspaces SET revision=revision+1,data=? WHERE id=? AND revision=?',[JSON.stringify(state),id,revision])
-    if (result.affectedRows===1 && id==='school') revisions.publish(revision+1)
-    return result.affectedRows === 1
+  async write(id,revision,state,notices=[]) {
+    const sql='UPDATE halaqat_workspaces SET revision=revision+1,data=? WHERE id=? AND revision=?'
+    const parameters=[JSON.stringify(state),id,revision]
+    let saved:boolean
+    if(id==='school'&&notices.length&&push.ready()) {
+      const pool=await database()
+      const session=await pool.getConnection()
+      try {
+        await session.beginTransaction()
+        const [result]=await session.execute<ResultSetHeader>(sql,parameters)
+        saved=result.affectedRows===1
+        if(saved)await push.enqueue(session,state,notices)
+        await session.commit()
+      } catch(error) {
+        await session.rollback().catch(()=>{})
+        throw unavailable(error)
+      } finally {session.release()}
+    } else {
+      const [result]=await query<ResultSetHeader>(sql,parameters)
+      saved=result.affectedRows===1
+    }
+    if(saved&&id==='school') {
+      revisions.publish(revision+1)
+      if(notices.length)void push.drain()
+    }
+    return saved
   },
 }
 
@@ -112,6 +137,7 @@ app.get('/api/health',(_req,res)=>{
     database:databaseStatus,
     databaseIssue,
     phoneAuthConfigured:Boolean(env.FIREBASE_WEB_CONFIG),
+    pushReady:push.ready(),
   })
 })
 app.get('/api/workspace/events',async (req,res)=>{
@@ -126,7 +152,7 @@ app.use('/api',express.text({type:'application/json',limit:80000}),async (req,re
     res.status(405).set('Allow','GET, POST').json({error:'Method not allowed'})
     return
   }
-  await forward(res,await api(appRequest(req),repository,env))
+  await forward(res,await api(appRequest(req),repository,env,push.handle))
 })
 app.use(async (req,res)=>{ await forward(res,serveAsset(appRequest(req))) })
 
@@ -146,6 +172,7 @@ const server = app.listen(port,'0.0.0.0',()=>{
   }
 })
 process.once('SIGTERM',()=>{
+  push.stop()
   revisions.stop()
   server.close(()=>{void connection?.end()})
 })

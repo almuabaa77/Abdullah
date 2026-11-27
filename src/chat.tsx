@@ -32,7 +32,7 @@ export function ChatPage() {
   const byMessage = new Map(chat?.messages.map(message=>[message.id,message]))
   const byUser = new Map(data.users.map(account=>[account.id,account.name]))
   const clock = new Intl.DateTimeFormat(en?'en-GB':'ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'})
-  const canSend = chat && data.rules.chat && !chat.blockedBy.length && (chat.members.includes(user) || Boolean(chat.circleId && chat.students.some(id=>data.students.some(student=>student.id===id))))
+  const canSend = chat && data.rules.chat && !chat.locked && !chat.blocked && !chat.blockedBy.length && (chat.members.includes(user) || Boolean(chat.circleId && chat.students.some(id=>data.students.some(student=>student.id===id))))
   const openThread = (id:string) => {follow.current=true;setSelected(id);setQuery('');setSearching(false)}
 
   useEffect(()=>{
@@ -115,7 +115,7 @@ export function ChatPage() {
         {canSend ? <>
           {draft.reply&&<div className="messenger-reply"><Reply size={16}/><span>{byMessage.get(draft.reply)?.text}</span><button type="button" className="icon-button mini" aria-label={t('إلغاء الرد','Cancel reply')} onClick={()=>updateDraft({reply:''})}><X size={17}/></button></div>}
           <form className="compose-form" onSubmit={send}><textarea ref={composer} rows={1} dir="auto" value={draft.text} onChange={event=>updateDraft({text:event.target.value})} placeholder={t('اكتب رسالة…','Write a message…')} aria-label={t('اكتب رسالة','Write a message')} maxLength={3000}/><button className="btn btn-primary icon-button" aria-label={t('إرسال','Send')} disabled={sending||!draft.text.trim()}><Send size={20}/></button></form>
-        </>:<p>{chat.blockedBy.length?t('المحادثة محظورة','Conversation blocked'):t('المحادثة للقراءة فقط','Read-only conversation')}</p>}
+        </>:<p>{chat.locked?t('أوقفت الإدارة الإرسال في هذه المحادثة','Messaging is paused by administration'):chat.blocked||chat.blockedBy.length?t('المحادثة محظورة','Conversation blocked'):t('المحادثة للقراءة فقط','Read-only conversation')}</p>}
       </footer>
     </>:<Empty title={t('اختر محادثة','Select a conversation')} body={t('اختر محادثة من القائمة لعرض الرسائل.','Choose a conversation to view its messages.')}/>}</div>
     {choose&&<Modal title={t('محادثة جديدة','New conversation')} close={()=>{if(!opening)setChoose(false)}}><form onSubmit={openConversation}><div className="modal-body"><label>{t('الطالب','Student')}<select required value={target} onChange={event=>setTarget(event.target.value)}><option value="">{t('اختر طالبًا','Choose a student')}</option>{data.students.filter(student=>student.active).map(student=><option key={student.id} value={student.id}>{nameFor(student,en)}</option>)}</select></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={!target||opening}>{t('فتح المحادثة','Open conversation')}</button></div></form></Modal>}

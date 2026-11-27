@@ -3,7 +3,7 @@ import { CalendarDays, Download, FileText, LayoutList, Printer, Table2 } from 'l
 import { circleMeets, dayOffset, segmentLabel, statusFor, type Student, type Daily } from './domain'
 import { Badge, Brand, dateLabel, Empty, matches, nameFor, statusText, useWorkspace } from './ui'
 
-export function Records() {
+export function Records({embedded=false}:{embedded?:boolean}={}) {
   const {data,en,t,post,open,tell} = useWorkspace()
   const [date,setDate] = useState(data.date)
   const [period,setPeriod] = useState('day')
@@ -33,9 +33,9 @@ export function Records() {
     setClosing(true)
     try {await post('close',{circleId:selectedCircle.id,date});tell(t('تم إغلاق سجل اليوم','Daily register closed'))} catch(e) {tell((e as Error).message,true)} finally{setClosing(false)}
   }
-  return <section className="panel section-panel records-page">
+  return <section className={embedded?'records-page admin-embedded':'panel section-panel records-page'}>
     <div className="print-brand"><Brand/><p>{t('سجل حلقات تحفيظ القرآن الكريم','Quran memorization records')} · {start} — {date}</p></div>
-    <div className="section-title"><div><h1>{t('السجل والتقارير','Records and reports')}</h1><p>{t('تصفح الحفظ والمراجعة والجدولة والحضور','Browse recitation, revision, assignments and attendance')}</p></div>
+    <div className="section-title">{!embedded&&<div><h1>{t('السجل والتقارير','Records and reports')}</h1><p>{t('تصفح الحفظ والمراجعة والجدولة والحضور','Browse recitation, revision, assignments and attendance')}</p></div>}
       <div className="chip-row"><button className="btn btn-outline compact" onClick={()=>window.print()} disabled={!rows.length}><Printer size={16}/>PDF</button><button className="btn btn-outline compact" disabled={!rows.length} onClick={async()=>{const {exportWorkbook}=await import('./export');exportWorkbook([[t('حلقات جامع الخير بآل سرحان','Al-Khair Quran Circles'),start,date],columns,...rowValues],`halaqat-${date}`,!en)}}><Download size={16}/>Excel</button></div>
     </div>
     <div className="records-filters">

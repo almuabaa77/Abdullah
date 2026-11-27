@@ -132,3 +132,72 @@
   .admin-bottom-nav,.admin-nav {display:none!important}
   .admin-grid {display:block}
 }
+
+.admin-embedded > .section-title:empty {display:none}
+.admin-chat-layout {
+  display:grid;
+  grid-template-columns:minmax(210px,.85fr) minmax(0,1.8fr);
+  gap:13px;
+}
+.admin-chat-directory,.admin-chat-thread {min-width:0;display:grid;gap:8px;align-content:start}
+.admin-chat-threads,.admin-chat-messages {
+  display:grid;
+  gap:6px;
+  max-height:min(580px,70dvh);
+  overflow:auto;
+  overscroll-behavior:contain;
+}
+.admin-chat-directory .thread-button {border:1px solid var(--border);min-width:0}
+.admin-chat-directory .thread-button[aria-current] {background:var(--soft);border-color:var(--role-edge)}
+.admin-chat-thread {border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.admin-chat-head,.admin-chat-controls {padding:10px 12px}
+.admin-chat-head {display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.admin-chat-head > div {min-width:0;flex:1;overflow-wrap:anywhere}
+.admin-chat-head p,.admin-chat-controls p {font-size:.83rem}
+.admin-chat-controls {display:grid;gap:6px;overflow-wrap:anywhere}
+.admin-chat-history {color:var(--muted);font-size:.8rem}
+.admin-chat-history summary {cursor:pointer;color:var(--green);font-weight:600}
+.admin-chat-history li {padding-block:4px;border-bottom:1px solid var(--border)}
+.admin-thread-search {margin-inline:10px}
+.admin-chat-messages {padding:0 10px 10px}
+.admin-chat-message {padding:9px 11px;border:1px solid var(--border);border-radius:10px;background:var(--paper);min-width:0}
+.admin-chat-message p {color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
+.admin-chat-message small {display:block;color:var(--muted);margin-bottom:3px}
+.admin-chat-message[data-hidden=true] {border-inline-start:3px solid var(--danger);background:var(--danger-bg)}
+.admin-chat-back {display:none}
+.admin-live-switch {display:none}
+.admin-live-metrics {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.admin-live-metrics button {
+  display:grid;
+  justify-items:start;
+  min-width:0;
+  gap:3px;
+  min-height:70px;
+  padding:8px;
+  text-align:start;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:12px;
+}
+.admin-live-metrics button span {font-size:.79rem;overflow-wrap:anywhere}
+.admin-live-metrics button strong {font-size:1.35rem;color:var(--role-ink);line-height:1.3}
+.admin-live-metrics button[aria-pressed=true] {background:var(--role-tint);border-color:var(--role-edge)}
+.admin-live-row-title {display:flex;align-items:center;gap:8px;min-width:0;overflow-wrap:anywhere}
+.live-activity li + li {margin-top:2px}
+.admin-chat-layout [dir=auto] {unicode-bidi:plaintext}
+
+@media(max-width:850px) {
+  .admin-chat-layout {display:block}
+  .admin-chat-layout[data-thread=closed] .admin-chat-thread,.admin-chat-layout[data-thread=open] .admin-chat-directory {display:none}
+  .admin-chat-back {display:inline-flex}
+  [dir=rtl] .admin-chat-back svg {transform:scaleX(-1)}
+  .admin-chat-messages,.admin-chat-threads {max-height:none}
+  .admin-live-switch {display:flex;gap:5px;width:100%}
+  .admin-live-switch button {flex:1;justify-content:center;min-height:42px}
+  .live-register-layout[data-panel=records] .live-activity-panel,
+  .live-register-layout[data-panel=activity] .live-records-panel {display:none}
+}
+@media(max-width:480px) {
+  .admin-live-metrics {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .live-register-toolbar .search {flex-basis:100%}
+}

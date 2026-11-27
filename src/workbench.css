@@ -441,3 +441,7 @@ body {background:var(--bg)}
 @media(max-height:500px) and (orientation:landscape) {
   .chat-shell .app-body {min-height:245px}
 }
+
+.notification-permissions {padding:8px 7px;width:100%;border-top:1px solid var(--border)}
+.permission-summary {display:flex;align-items:flex-start;gap:10px}
+.permission-summary p {margin-top:5px;font-size:.88rem}

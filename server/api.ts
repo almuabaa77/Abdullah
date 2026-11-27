@@ -1,5 +1,5 @@
 import { groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
-import { balanceFor, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type Daily, type Exam, type Role, type State, type Student, type User, type View } from '../src/domain'
+import { balanceFor, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type Daily, type Exam, type Notice, type Role, type State, type Student, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
@@ -7,8 +7,9 @@ import { memorizationChanged, recordChanges, reviewChanged } from './record-chan
 export type Repository = {
   read(id: string): Promise<{ revision: number; data: string } | null>
   create(id: string, state: State): Promise<void>
-  write(id: string, revision: number, state: State): Promise<boolean>
+  write(id: string, revision: number, state: State, notices?: Notice[]): Promise<boolean>
 }
+export type PushGateway = (request:Request,user:User,payload:Record<string,unknown>) => Promise<Response>
 export type Env = { FIREBASE_WEB_CONFIG?: string; BOOTSTRAP_UID?: string }
 type Identity = { id: string; phone?: string; workspace: string; bootstrap?: User }
 type Payload = Record<string, unknown>
@@ -49,6 +50,12 @@ const scope = (s: State, u: User) => s.students.filter(st => u.role === 'admin'
   || u.role === 'student' && u.studentId === st.id
   || u.role === 'parent' && s.links.some(l => l.parentId === u.id && l.studentId === st.id && l.status === 'accepted'))))
 const chatVisible = (chat: Chat, user: User, ids: Set<string>, enabled: boolean) => user.role === 'admin' || enabled && (chat.members.includes(user.id) || Boolean(chat.circleId) && chat.students.some(id => ids.has(id)))
+const noticeVisible = (notice:Notice,user:User,ids:Set<string>) => notice.users?.includes(user.id) || (!notice.users && (!notice.studentId || ids.has(notice.studentId)))
+export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:string) {
+  if(user.status!=='active'||user.duplicateOf||user.role==='admin'&&user.id!==adminUid)return false
+  const ids=new Set(notice.studentId&&!notice.users?scope(state,user).map(student=>student.id):[])
+  return noticeVisible(notice,user,ids)
+}
 function project(state: State, user: User | null, revision: number, phoneEnabled: boolean): View {
   if (!user || user.status !== 'active') {
     const { operations: _discardEmpty, closedAccounts: _closedAccounts, ...emptyView } = createState()
@@ -66,12 +73,12 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
     recordEvents: isAdmin ? state.recordEvents?.slice(0,100) : undefined,
-    notices: state.notices.filter(n => (n.users?.includes(user.id) || (!n.users && (n.studentId ? ids.has(n.studentId) : true)))),
+    notices: state.notices.filter(notice => noticeVisible(notice,user,ids)),
     links: state.links.filter(l => isAdmin || l.parentId === user.id).map(l => isAdmin || l.status === 'accepted' ? l : {...l, studentId: ''}),
     prizes: state.prizes.filter(p => isAdmin || p.active), orders: state.orders.filter(o => isAdmin || user.role === 'student' && ids.has(o.studentId)),
     exams: state.exams.filter(e => e.studentIds.some(id => ids.has(id))).map(e => ({ ...e, studentIds: e.studentIds.filter(id => ids.has(id)), results: Object.fromEntries(Object.entries(e.results).filter(([id]) => ids.has(id))) })),
     leaves: state.leaves.filter(l => ids.has(l.studentId)), rules: state.rules, audit: isAdmin ? state.audit.slice(-160).reverse() : [],
-    chats: chats.map(c => isAdmin ? c : ({ ...c, students: c.students.filter(id => ids.has(id)), reports: [], pinnedBy: c.pinnedBy.filter(id => id === user.id), blockedBy: c.blockedBy.filter(id => id === user.id) })),
+    chats: chats.map(c => isAdmin ? c : ({ ...c, students: c.students.filter(id => ids.has(id)), reports: [], pinnedBy: c.pinnedBy.filter(id => id === user.id), blocked: Boolean(c.blockedBy.length), blockedBy: c.blockedBy.filter(id => id === user.id), messages:c.messages.filter(message=>!message.hiddenAt) })),
   }
 }
 async function identify(request: Request, env: Env): Promise<Identity | null> {
@@ -286,6 +293,29 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
         state.chats.unshift({id:op,students:[s.id], members, title:s.name, reports:[],pinnedBy:[],blockedBy:[],messages:[]})
       return
     }
+    case 'chat-moderate': {
+      admin()
+      const chat=state.chats.find(chat=>chat.id===p.id)
+      if(!chat)throw new ApiError('المحادثة غير متاحة',404)
+      const decision=choice(p.decision,['lock','unlock','resolve','hide','restore'] as const)
+      const time=new Date().toISOString()
+      const actions={lock:'إيقاف إرسال المحادثة',unlock:'استئناف إرسال المحادثة',resolve:'إغلاق بلاغات المحادثة',hide:'إخفاء رسالة',restore:'إعادة إظهار رسالة'}
+      if(decision==='lock'||decision==='unlock') {
+        if(Boolean(chat.locked)===(decision==='lock'))return false
+        chat.locked=decision==='lock'
+      } else if(decision==='resolve') {
+        if(!chat.reports.length)return false
+        chat.reports=[]
+      } else {
+        const message=chat.messages.find(message=>message.id===p.messageId)
+        if(!message)throw new ApiError('الرسالة غير متاحة',404)
+        if(Boolean(message.hiddenAt)===(decision==='hide'))return false
+        if(decision==='hide')message.hiddenAt=time
+        else delete message.hiddenAt
+      }
+      state.audit.push({time,actor:u.name,action:actions[decision],target:chat.id})
+      return
+    }
     case 'message':
     case 'chat-read':
     case 'chat-pin':
@@ -294,9 +324,9 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const chat = state.chats.find(c => c.id === p.id && chatVisible(c,u,ids,state.rules.chat))
       if (!chat) throw new ApiError('المحادثة غير متاحة')
       if (action === 'message') {
-        if (!state.rules.chat || !chat.members.includes(u.id) && !(chat.circleId && chat.students.some(id => ids.has(id))) || chat.blockedBy.length) deny('إرسال الرسائل غير متاح لهذه المحادثة')
+        if (!state.rules.chat || chat.locked || !chat.members.includes(u.id) && !(chat.circleId && chat.students.some(id => ids.has(id))) || chat.blockedBy.length) deny('إرسال الرسائل غير متاح لهذه المحادثة')
         const reply = clean(p.reply,50)
-        if (reply && !chat.messages.some(m => m.id === reply)) throw new ApiError('الرسالة غير متاحة')
+        if (reply && !chat.messages.some(m => m.id === reply && !m.hiddenAt)) throw new ApiError('الرسالة غير متاحة')
         const message = required(p.text, 3000)
         chat.messages.push({ id:op,from:u.id,text:message,time:new Date().toISOString(),reply:reply || undefined, readBy:[u.id] })
         const users = state.users.filter(x => x.id !== u.id && x.status === 'active' && chatVisible(chat,x,new Set(scope(state,x).map(s=>s.id)),state.rules.chat) && (x.role !== 'admin' || chat.members.includes(x.id))).map(x=>x.id)
@@ -307,7 +337,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (action === 'chat-block') chat.blockedBy = chat.blockedBy.includes(u.id) ? chat.blockedBy.filter(x => x !== u.id) : [...chat.blockedBy,u.id]
       if (action === 'chat-report' && !chat.reports.includes(u.id)) {
         chat.reports.push(u.id)
-        notify(state,'message','بلاغ عن محادثة',chat.title,{users:state.users.filter(x => x.role === 'admin').map(x=>x.id)})
+        notify(state,'chat-report','بلاغ عن محادثة',chat.title,{users:state.users.filter(x => x.role === 'admin').map(x=>x.id)})
       }
       return
     }
@@ -426,16 +456,17 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   state.audit.push({ time:new Date().toISOString(),actor:u.name,action,target:clean(p.studentId || p.id || p.circleId) || undefined })
 }
 
-export async function api(request: Request, repo: Repository, env: Env = {}) {
+export async function api(request: Request, repo: Repository, env: Env = {}, push?:PushGateway) {
   try {
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
+    const pushRoute = url.pathname === '/api/push'
     const phoneEnabled = Boolean(env.FIREBASE_WEB_CONFIG)
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && (request.method !== 'GET' || events)) throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events || pushRoute)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
-    if (url.pathname !== '/api/workspace' && !events) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events && !pushRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
     if (events && !get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
@@ -443,9 +474,9 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
     const raw = get ? '' : await request.text()
     if (raw.length > 75000) throw new ApiError('حجم الطلب غير مدعوم',413)
     const payload = get ? {} : JSON.parse(raw) as Payload
-    const action = get ? '' : required(payload.action, 40)
-    const op = get ? '' : required(payload.op, 70)
-    if (!get && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
+    const action = get||pushRoute ? '' : required(payload.action,40)
+    const op = get||pushRoute ? '' : required(payload.op,70)
+    if (!get && !pushRoute && !/^[\w-]{10,70}$/.test(op)) throw new ApiError('معرّف العملية غير صالح')
     for (let attempt = 0; attempt < 6; attempt++) {
       const current = await repo.read(identity.workspace)
       if (!current) {
@@ -456,7 +487,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
       let user = state.users.find(x => x.id === identity.id) ?? null
       if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
-        if (events) return deny()
+        if (events || pushRoute) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
       }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
@@ -524,6 +555,11 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
         return restricted('duplicate')
       }
       const operationKey=identity.id+':'+op
+      if (pushRoute) {
+        if(!user||user.status!=='active')return deny()
+        if(!push||identity.workspace!=='school')throw new ApiError('تنبيهات الخلفية غير متاحة في هذا الإصدار',503)
+        return await push(request,user,payload)
+      }
       if (events) {
         if (user?.role!=='admin'||user.status!=='active') return deny()
         return Response.json({revision:current.revision},{headers})
@@ -533,9 +569,10 @@ export async function api(request: Request, repo: Repository, env: Env = {}) {
         return new Response(null,{status:204,headers})
       }
       if (get || state.operations.includes(operationKey)) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
+      const previousNotices=state.notices.length
       if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled),{headers})
       state.operations.push(operationKey)
-      if (!(await repo.write(identity.workspace,current.revision,state))) continue
+      if (!(await repo.write(identity.workspace,current.revision,state,state.notices.slice(0,state.notices.length-previousNotices)))) continue
       user = state.users.find(x => x.id === identity.id) ?? null
       return Response.json(project(state,user,current.revision + 1,phoneEnabled),{headers})
     }

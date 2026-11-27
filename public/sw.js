@@ -63,8 +63,26 @@ self.addEventListener('fetch', event => {
 })
 self.addEventListener('notificationclick', event => {
   event.notification.close()
+  let target=new URL('/',self.location.origin)
+  try {
+    const candidate=new URL(event.notification.data?.url || '/',self.location.origin)
+    if(candidate.origin===target.origin&&['/','/admin'].includes(candidate.pathname))target=candidate
+  } catch { /* Open the homepage if a link is invalid. */ }
   event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients => {
-    const tab = clients.find(client => new URL(client.url).pathname === '/')
-    return tab ? tab.focus() : self.clients.openWindow('/')
+    const tab=clients.find(client=>client.url===target.href)
+    return tab?tab.focus():self.clients.openWindow(target.href)
+  }))
+})
+
+self.addEventListener('push', event => {
+  let payload
+  try {payload=event.data?.json() ?? {}} catch {payload={}}
+  if(!payload||typeof payload!=='object')payload={}
+  const title=typeof payload.title==='string'?payload.title.slice(0,90):'حلقات جامع الخير'
+  const body=typeof payload.body==='string'?payload.body.slice(0,200):'لديك تحديث جديد في التطبيق.'
+  event.waitUntil(self.registration.showNotification(title,{
+    body,icon:'/assets/icon-192.png',badge:'/assets/icon-64.png',
+    tag:typeof payload.tag==='string'?payload.tag.slice(0,50):undefined,
+    data:{url:typeof payload.url==='string'?payload.url:'/'},
   }))
 })

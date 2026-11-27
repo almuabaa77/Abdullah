@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Plus, Search, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Plus, Search, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import type { Circle, Prize, Student, User } from './domain'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
+import { AdminChats } from './admin-chats'
+import { Exams, Leaves } from './features'
+import { Records } from './records'
 import type { RecordStreamStatus } from './live-records'
 import { normalizeMobile } from './phone-number'
 import { Avatar, Badge, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
@@ -13,12 +16,16 @@ type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'p
 const sections = [
   {id:'live',group:'monitor',icon:Activity,label:['المتابعة المباشرة','Live monitoring'],short:['المتابعة','Live']},
   {id:'overview',group:'monitor',icon:LayoutGrid,label:['الإحصاءات العامة','Overview']},
+  {id:'records',group:'monitor',icon:ClipboardList,label:['السجلات والتقارير','Records & reports']},
   {id:'audit',group:'monitor',icon:History,label:['سجل العمليات','Audit log']},
   {id:'people',group:'school',icon:Users,label:['الحسابات وطلبات التسجيل','Accounts & enrollment'],short:['الحسابات','Accounts'],add:['إضافة حساب','Add account'],edit:'invite',search:true},
   {id:'students',group:'school',icon:GraduationCap,label:['الطلاب','Students'],short:['الطلاب','Students'],add:['إضافة طالب','Add student'],edit:'student',search:true},
   {id:'circles',group:'school',icon:BookOpen,label:['الحلقات','Circles'],short:['الحلقات','Circles'],add:['إضافة حلقة','Add circle'],edit:'circle',search:true},
   {id:'links',group:'school',icon:Link2,label:['ربط الأبناء','Family links']},
   {id:'duplicates',group:'school',icon:ShieldAlert,label:['الأرقام المكررة','Duplicate numbers']},
+  {id:'chats',group:'services',icon:MessageCircle,label:['الإشراف على المحادثات','Conversation moderation']},
+  {id:'exams',group:'services',icon:CalendarDays,label:['الاختبارات','Assessments']},
+  {id:'leaves',group:'services',icon:UserCheck,label:['الاستئذانات','Leave requests']},
   {id:'store',group:'services',icon:Gift,label:['المتجر والطلبات','Store & orders'],add:['إضافة جائزة','Add reward'],edit:'prize',search:true},
   {id:'announcements',group:'services',icon:Bell,label:['الإعلانات','Announcements'],add:['إعلان جديد','New announcement'],edit:'announcement'},
   {id:'settings',group:'services',icon:Settings,label:['النقاط وصلاحيات التواصل','Points & communication']},
@@ -55,7 +62,7 @@ function AdminList<T>({items,render,empty,filtered=false}:{items:T[];render:(ite
 }
 
 export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;online:boolean}) {
-  const {data,t,en,go,post,tell} = useWorkspace()
+  const {data,t,en,post,tell} = useWorkspace()
   const [tab,setTab] = useState(readTab)
   const [edit,setEdit] = useState<Edit>()
   const [query,setQuery] = useState('')
@@ -134,6 +141,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
       {sections.filter(section=>section.group===id).map(({id,icon:Icon,label})=><button key={id} type="button"
         aria-current={tab===id?'page':undefined} onClick={()=>openTab(id)}>
         <Icon size={18}/><span>{t(label[0],label[1])}</span>
+        {id==='chats'&&data.chats.some(chat=>chat.reports.length>0)&&<Flag size={15}/>}
         {id==='people'&&pendingCount>0&&<small className="count-pill" aria-label={t('طلبات تسجيل معلّقة','Pending registrations')}>{pendingCount}</small>}
       </button>)}
     </div>)
@@ -169,7 +177,6 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
               ['links',Link2,pendingLinks,t('طلبات الربط','Family link requests')],
               ['records',ClipboardList,data.daily.length,t('سجلات التسميع','Recitation records')],
             ] as const).map(([id,Icon,count,label])=><button type="button" className="record-tile admin-metric" key={id} onClick={()=>{
-              if(id==='records'){go(id);return}
               openTab(id)
               if(id==='people')setAccountFilter('pending')
             }}>
@@ -180,13 +187,17 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
             [ClipboardList,'records',t('الحفظ والمراجعة والحضور والتقارير','Recitation, attendance and reports')],
             [CalendarDays,'exams',t('إدارة الاختبارات','Manage assessments')],
             [UserCheck,'leaves',t('إدارة الاستئذانات','Manage leave')],
-            [MessageCircle,'chat',t('الإشراف على المحادثات','Oversee conversations')],
-          ] as const).map(([Icon,page,label])=><button className="more-row" type="button" key={page} onClick={()=>go(page)}>
+            [MessageCircle,'chats',t('الإشراف على المحادثات','Oversee conversations')],
+          ] as const).map(([Icon,page,label])=><button className="more-row" type="button" key={page} onClick={()=>openTab(page)}>
             <span className="stat-icon tint-green"><Icon size={17}/></span><strong>{label}</strong>
           </button>)}</div>
         </>}
         {tab==='live'&&<AdminLive status={liveRecords} online={online}/>}
         {tab==='duplicates'&&<DuplicateAccounts/>}
+        {tab==='records'&&<Records embedded/>}
+        {tab==='exams'&&<Exams embedded/>}
+        {tab==='leaves'&&<Leaves embedded/>}
+        {tab==='chats'&&<AdminChats/>}
         {tab==='people'&&<AdminList key={query+':'+accountFilter} empty={t('لا توجد حسابات','No accounts')} filtered={Boolean(search||accountFilter)}
           items={data.users.filter(user=>(!accountFilter||user.status===accountFilter)
             &&(includes(user.name,user.phone)||!!phone&&normalizeMobile(user.phone??'')===phone))}

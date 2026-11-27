@@ -21,8 +21,8 @@ export type Prize = { id: string; name: string; description: string; price: numb
 export type Order = { id: string; studentId: string; prizeId: string; name: string; price: number; status: 'pending' | 'approved' | 'ready' | 'delivered' | 'cancelled'; date: string }
 export type Exam = { id: string; name: string; date: string; place: string; scope: string; studentIds: string[]; results: Record<string, { score: number; feedback: string }> }
 export type Audit = { time: string; actor: string; action: string; target?: string; before?: number; after?: number }
-export type Chat = { id: string; circleId?: string; students: string[]; members: string[]; title: string; reports: string[]; pinnedBy: string[]; blockedBy: string[]; messages: Message[] }
-export type Message = { id: string; from: string; text: string; time: string; reply?: string; readBy: string[] }
+export type Chat = { id: string; circleId?: string; students: string[]; members: string[]; title: string; reports: string[]; pinnedBy: string[]; blockedBy: string[]; messages: Message[]; locked?: boolean; blocked?: boolean }
+export type Message = { id: string; from: string; text: string; time: string; reply?: string; readBy: string[]; hiddenAt?: string }
 export type State = {
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
   notices: Notice[]; links: Link[]; prizes: Prize[]; orders: Order[]; exams: Exam[]; leaves: Leave[]

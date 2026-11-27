@@ -9,6 +9,8 @@ import { Assistant } from './assistant'
 import { Records } from './records'
 import { Exams, Leaves, More, Store } from './features'
 import { ChatPage } from './chat'
+import { DevicePermissions } from './device-permissions'
+import { disableDevicePush } from './device-push'
 import { AccountAccess } from './account-access'
 import { subscribeRecordRevisions, type RecordStreamStatus } from './live-records'
 import { Starting, Welcome } from './welcome'
@@ -86,8 +88,7 @@ function App() {
   const [toast,setToast] = useState<{text:string;error:boolean}>()
   const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>;circleId?:string}>()
   const [online,setOnline] = useState(navigator.onLine)
-  const seenNotices = useRef<{user:string;ids:Set<string>}>(undefined)
-  const routedAdmin = useRef<string>(undefined)
+  const [permissions,setPermissions] = useState(false)
   const [install,setInstall] = useState<InstallEvent|null>(null)
   const [registering,setRegistering] = useState(false)
   const [recheck,setRecheck] = useState(0)
@@ -194,8 +195,7 @@ function App() {
         setSessionExpired(false)
         refreshedUid.current=''
         const adminId = token&&result.user?.role==='admin'&&result.user.status==='active' ? result.user.id : undefined
-        if(adminId&&adminId!==routedAdmin.current&&currentPage()!=='admin')go('admin',true)
-        routedAdmin.current=adminId
+        if(adminId&&currentPage()!=='admin')go('admin',true)
       } catch(e){
         const expired = e instanceof WorkspaceError&&e.status===401
         const revoked = e instanceof WorkspaceError&&e.status===403
@@ -218,7 +218,7 @@ function App() {
     const timer=window.setInterval(()=>{
       const now=Date.now()
       if((now-lastStreamMessage.current>14000||now-lastWorkspaceSync.current>75000||announcedRevision.current>latestView.current.revision)
-        &&(document.visibilityState==='visible'||'Notification'in window&&Notification.permission==='granted'))refresh()
+        &&document.visibilityState==='visible')refresh()
     },6500)
     window.addEventListener('online',refresh);window.addEventListener('focus',refresh)
     return ()=>{active=false;refreshWorkspace.current=()=>{};controller.abort();clearInterval(timer);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh)}
@@ -243,28 +243,16 @@ function App() {
   const teacher = data.user?.role==='teacher'||data.user?.role==='admin'
   const student=data.user?.role==='student'
   const notices=data.notices.filter(n=>!n.readBy.includes(data.user?.id||''))
-  useEffect(()=>{
-    const user=data.user?.id
-    if(!user)return
-    const seen=seenNotices.current
-    if(!seen||seen.user!==user){seenNotices.current={user,ids:new Set(data.notices.map(n=>n.id))};return}
-    const incoming=data.notices.filter(n=>!seen.ids.has(n.id)&&!n.readBy.includes(user))
-    for(const n of data.notices)seen.ids.add(n.id)
-    if(!incoming.length||document.visibilityState!=='hidden'||!('Notification'in window)||Notification.permission!=='granted'||!('serviceWorker'in navigator))return
-    void navigator.serviceWorker.getRegistration().then(reg=>reg?.showNotification(en?'Al-Khair Quran Circles':'حلقات جامع الخير',{
-      body:en?'You have new notifications.':'لديك إشعارات جديدة.',
-      icon:'/assets/icon-192.png',tag:'halaqat-updates',
-    })).catch(()=>{})
-  },[data.notices,data.user?.id,en])
-
   const loadingView = loading||!authReady||loadedUid!==uid
   useEffect(()=>{
     if(availableUpdate&&page==='home'&&!loadingView&&!loadError&&!token&&!data.user&&!data.accountAccess&&!phone) applyAppUpdate(availableUpdate,true)
   },[availableUpdate,page,loadingView,loadError,token,data.user,data.accountAccess,phone])
   const show = !loadingView&&!loadError&&data.user?.status==='active'
-  const adminPage = page==='admin'
-  const workspaceVisible=show&&!adminPage
   const adminAccess=show&&data.user?.role==='admin'
+  const manager=Boolean(adminAccess&&token)
+  const adminPage = page==='admin'||manager
+  const workspaceVisible=show&&!adminPage
+  useEffect(()=>{if(manager&&page!=='admin')go('admin',true)},[manager,page,go])
   const streamEnabled = Boolean(adminPage&&adminAccess&&token&&online)
   useEffect(()=>{
     if(!streamEnabled)return
@@ -295,7 +283,7 @@ function App() {
   const extras = [
     ['exams',CalendarDays,t('الاختبارات','Assessments')],['leaves',UserCheck,t('الاستئذانات','Leave requests')],
   ] as const
-  const assistantOpen=Boolean(show&&teacher&&page==='assistant')
+  const assistantOpen=Boolean(workspaceVisible&&teacher&&page==='assistant')
   const chatOpen=workspaceVisible&&page==='chat'
   const label=[...nav,...extras].find(([p])=>p===page)?.[2]||t('الرئيسية','Home')
   const userName=data.sample&&en?({admin:'Abdulrahman Al-Sarhan',teacher:'Abdulrahman Al-Sarhan',student:'Abdullah Al-Shehri',parent:'Student guardian'} as Record<string,string>)[role]:data.user?.name
@@ -303,12 +291,13 @@ function App() {
   const signOut = useCallback(async (next:Page) => {
     if(!auth)return
     const {endPhone}=await import('./phone')
+    if(token)await disableDevicePush(token).catch(()=>{})
     await endPhone(auth)
+    setPermissions(false)
     setData(emptyData);setSession({token:'',uid:''});setUnregistered(false);setWizard(undefined);setSessionExpired(false);setLoadError('')
     refreshedUid.current=''
-    routedAdmin.current=undefined
     go(next)
-  },[auth,go])
+  },[auth,go,token])
   const exit = () => signOut(adminPage?'admin':'home')
   useEffect(()=>{
     if(data.accountAccess!=='closed'||!token||!auth)return
@@ -344,7 +333,6 @@ function App() {
           <div className="topbar-title">{workspaceVisible?<><div className="mobile-brand"><Brand small/></div><div className="breadcrumbs"><span><Home size={15}/>{t('مساحة العمل','Workspace')}</span><i>/</i><strong>{page==='home'&&teacher?t('لوحة المحفّظ','Teacher dashboard'):label}</strong></div></>:<Brand/>}</div>
           <div className="topbar-actions">
             {workspaceVisible&&<button className="icon-button mobile-menu-trigger" type="button" aria-label={t('فتح قائمة التنقّل','Open navigation menu')} aria-haspopup="dialog" aria-expanded={openPanel==='navigation'} onClick={()=>setOpenPanel('navigation')}><Menu size={21}/></button>}
-            {adminPage&&<button className="icon-button" onClick={()=>go('home')} aria-label={t('العودة إلى المنصة','Back to the platform')} title={t('العودة إلى المنصة','Back to the platform')}><Home size={19}/></button>}
             <button className="lang-button" onClick={changeLanguage} aria-label={t('التبديل إلى الإنجليزية','Switch to Arabic')}><Globe size={17}/><span>{t('English','العربية')}</span></button>
             {(workspaceVisible||adminAccess)&&<>
               {!token&&<button type="button" className="phone-topbar" onClick={openPhone} aria-label={t('الدخول أو التسجيل بالجوال','Sign in or register by phone')}><Smartphone size={17}/><span>{t('الدخول بالجوال','Mobile sign-in')}</span></button>}
@@ -353,9 +341,11 @@ function App() {
               {openPanel==='notices'&&<div className="popover notifications"><div className="section-title"><h2>{t('الإشعارات','Notifications')}</h2><button className="text-button" onClick={()=>void post('notice-read').catch(e=>tell(e.message,true))}>{t('تحديد الكل كمقروء','Mark all read')}</button></div>
                 {data.notices.slice(0,30).map(n=><button key={n.id} className={'notice-row '+(!n.readBy.includes(data.user?.id||'')?'unread':'')} onClick={()=>void post('notice-read',{id:n.id}).catch(e=>tell(e.message,true))}><span className="stat-icon tint-green"><Bell size={16}/></span><span><strong>{en&&n.en?n.en:n.title}</strong><small>{en&&n.bodyEn?n.bodyEn:n.body}</small></span></button>)}
                 {!data.notices.length&&<Empty title={t('لا توجد إشعارات','No notifications')}/>}
+                {token&&<button className="text-button notification-permissions" type="button" onClick={()=>{setOpenPanel('');setPermissions(true)}}>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>}
               </div>}</div>
               <div className="relative"><button className="profile-trigger" onClick={()=>setOpenPanel(openPanel==='profile'?'':'profile')} aria-expanded={openPanel==='profile'} aria-label={t('الحساب','Account')}><span className="profile-avatar">{en?'A':'ع'}</span><ChevronDown size={15}/></button>
-              {openPanel==='profile'&&<div className="popover profile-pop"><strong>{userName}</strong><small><RoleName role={data.user?.role||''}/></small>{adminAccess&&!adminPage&&<button onClick={()=>go('admin')}><ShieldCheck size={16}/>{t('لوحة الإدارة','Administration')}</button>}<button onClick={()=>go('more')}>{t('إعدادات الحساب','Account settings')}</button>{token?<button onClick={()=>void exit()}><LogOut size={16}/>{t('تسجيل الخروج','Sign out')}</button>:<button onClick={()=>{setOpenPanel('');openPhone()}}><LogIn size={16}/>{t('الدخول بالجوال','Mobile sign-in')}</button>}</div>}
+              {openPanel==='profile'&&<div className="popover profile-pop"><strong>{userName}</strong><small><RoleName role={data.user?.role||''}/></small>{adminAccess&&!adminPage&&<button onClick={()=>go('admin')}><ShieldCheck size={16}/>{t('لوحة الإدارة','Administration')}</button>}{adminPage?<button onClick={()=>{setOpenPanel('');setPermissions(true)}}><Bell size={16}/>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>
+                :<button onClick={()=>go('more')}>{t('إعدادات الحساب','Account settings')}</button>}{token?<button onClick={()=>void exit()}><LogOut size={16}/>{t('تسجيل الخروج','Sign out')}</button>:<button onClick={()=>{setOpenPanel('');openPhone()}}><LogIn size={16}/>{t('الدخول بالجوال','Mobile sign-in')}</button>}</div>}
               </div>
             </>}
           </div>
@@ -364,11 +354,12 @@ function App() {
           {availableUpdate&&!phone&&(!adminPage||token)&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
           {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone}/>:
-          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}
         </main>
       </div>
       {workspaceVisible&&openPanel==='navigation'&&<Modal title={t('القائمة الرئيسية','Main navigation')} close={()=>setOpenPanel('')} appearance="mobile-menu"><nav className="modal-body mobile-menu-links">{[...nav,...extras].map(([p,Icon,title])=><button type="button" key={p} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={19}/>{title}</button>)}</nav></Modal>}
     </div>
+    {permissions&&show&&token&&<DevicePermissions token={token} close={()=>setPermissions(false)}/>}
     {wizard&&teacher&&(workspaceVisible||adminPage&&adminAccess)&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
     {phone&&!adminPage&&!token&&<Suspense fallback={null}><PhoneSignIn {...phoneProps} close={()=>changePhone(false)}/></Suspense>}
     {toast&&<div className={'toast '+(toast.error?'toast-error':'')} role={toast.error?'alert':'status'}>{toast.error?<CircleAlert size={19}/>:<Check size={19}/>}<span>{toast.text}</span><button className="icon-button mini" onClick={()=>setToast(undefined)} aria-label={t('إغلاق','Close')}><X size={16}/></button></div>}

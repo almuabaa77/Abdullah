@@ -24,21 +24,21 @@ export function Store() {
   </div>
 }
 
-export function Leaves() {
+export function Leaves({embedded=false}:{embedded?:boolean}={}) {
   const {data,t,en,post,tell} = useWorkspace()
   const [show,setShow] = useState(false)
   const [busy,setBusy] = useState(false)
   const staff = data.user?.role==='teacher'||data.user?.role==='admin'
   const submit = async (e:FormEvent<HTMLFormElement>)=>{e.preventDefault();setBusy(true);try{await post('leave',Object.fromEntries(new FormData(e.currentTarget)));setShow(false);tell(t('تم إرسال طلب الاستئذان','Leave request submitted'))}catch(e){tell((e as Error).message,true)}finally{setBusy(false)}}
   const review = async (id:string,status:string)=>{try{await post('leave-review',{id,status});tell(t('تم تحديث الطلب','Request updated'))}catch(e){tell((e as Error).message,true)}}
-  return <section className="panel section-panel"><div className="section-title"><div><h1>{t('طلبات الاستئذان','Leave requests')}</h1><p>{t('تابع حالة الطلبات وأيام الاستئذان','Track leave requests and dates')}</p></div>{!staff&&<button className="btn btn-primary" onClick={()=>setShow(true)} disabled={!data.students.length}><Plus size={17}/>{t('طلب استئذان','Request leave')}</button>}</div>
+  return <section className={embedded?'admin-embedded':'panel section-panel'}><div className="section-title">{!embedded&&<div><h1>{t('طلبات الاستئذان','Leave requests')}</h1><p>{t('تابع حالة الطلبات وأيام الاستئذان','Track leave requests and dates')}</p></div>}{!staff&&<button className="btn btn-primary" onClick={()=>setShow(true)} disabled={!data.students.length}><Plus size={17}/>{t('طلب استئذان','Request leave')}</button>}</div>
     {data.leaves.map(l=><div key={l.id} className="entity-row"><div><strong>{data.students.find(s=>s.id===l.studentId)?.name}</strong><p>{dateLabel(l.date,en)} · {l.reason}</p></div><div className="chip-row"><Badge status={l.status} label={l.status==='pending'?t('قيد المراجعة','Under review'):undefined}/>{staff&&l.status==='pending'&&<><button className="btn btn-subtle compact" onClick={()=>void review(l.id,'accepted')}>{t('اعتماد','Accept')}</button><button className="btn btn-outline compact" onClick={()=>void review(l.id,'declined')}>{t('رفض','Decline')}</button></>}</div></div>)}
     {!data.leaves.length&&<Empty title={t('لا توجد طلبات استئذان بعد','No leave requests yet')}/>}
     {show&&<Modal title={t('طلب استئذان','Request leave')} close={()=>setShow(false)}><form onSubmit={submit}><div className="modal-body"><label>{t('الطالب','Student')}<select name="studentId" required>{data.students.map(s=><option value={s.id} key={s.id}>{nameFor(s,en)}</option>)}</select></label><label>{t('التاريخ','Date')}<input type="date" name="date" min={data.date} defaultValue={data.date} required/></label><label>{t('السبب','Reason')}<textarea name="reason" maxLength={400} required/></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={busy}>{t('إرسال الطلب','Submit request')}</button></div></form></Modal>}
   </section>
 }
 
-export function Exams() {
+export function Exams({embedded=false}:{embedded?:boolean}={}) {
   const {data,t,en,post,tell} = useWorkspace()
   const staff = data.user?.role==='teacher'||data.user?.role==='admin'
   const [open,setOpen] = useState(false)
@@ -46,7 +46,7 @@ export function Exams() {
   const [certificate,setCertificate] = useState<{exam:Exam; student:Student}>()
   const [busy,setBusy] = useState(false)
   const submit = async (e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);setBusy(true);try{if(result){await post('exam-result',{...Object.fromEntries(f),id:result.exam.id,studentId:result.student.id});setResult(undefined)}else{await post('exam',{...Object.fromEntries(f),studentIds:f.getAll('studentIds')});setOpen(false)}tell(t('تم الحفظ','Saved'))}catch(e){tell((e as Error).message,true)}finally{setBusy(false)}}
-  return <section className="panel section-panel"><div className="section-title"><div><h1>{t('الاختبارات','Assessments')}</h1><p>{t('المواعيد والنتائج وشهادات الإنجاز','Schedules, results and certificates')}</p></div>{staff&&<button className="btn btn-primary" onClick={()=>setOpen(true)} disabled={!data.students.length}><Plus size={16}/>{t('اختبار جديد','New assessment')}</button>}</div>
+  return <section className={embedded?'admin-embedded':'panel section-panel'}><div className="section-title">{!embedded&&<div><h1>{t('الاختبارات','Assessments')}</h1><p>{t('المواعيد والنتائج وشهادات الإنجاز','Schedules, results and certificates')}</p></div>}{staff&&<button className="btn btn-primary" onClick={()=>setOpen(true)} disabled={!data.students.length}><Plus size={16}/>{t('اختبار جديد','New assessment')}</button>}</div>
     {data.exams.map(exam=><article className="record-tile exam-card" key={exam.id}><div className="split-line"><div><h2>{exam.name}</h2><p>{dateLabel(exam.date,en,true)} · {exam.place}</p></div><span className="stat-icon tint-gold"><Award size={20}/></span></div><p>{exam.scope}</p>{data.students.filter(s=>exam.studentIds.includes(s.id)).map(s=><div className="entity-row" key={s.id}><div><strong>{nameFor(s,en)}</strong><p>{exam.results[s.id]?exam.results[s.id].score+'/100 · '+exam.results[s.id].feedback:t('بانتظار النتيجة','Awaiting result')}</p></div><div className="chip-row">{staff&&<button className="btn btn-outline compact" onClick={()=>setResult({exam,student:s})}>{t('تسجيل النتيجة','Record result')}</button>}{exam.results[s.id]&&<button className="btn btn-subtle compact" onClick={()=>setCertificate({exam,student:s})}><Award size={16}/>{t('شهادة','Certificate')}</button>}</div></div>)}</article>)}
     {!data.exams.length&&<Empty title={t('لا توجد اختبارات مجدولة','No assessments scheduled')}/>}
     {(open||result)&&<Modal title={result?t('تسجيل النتيجة','Record result'):t('اختبار جديد','New assessment')} close={()=>{setOpen(false);setResult(undefined)}}><form onSubmit={submit}><div className="modal-body">{result?<><strong>{nameFor(result.student,en)}</strong><label>{t('الدرجة من 100','Score out of 100')}<input name="score" type="number" min="0" max="100" required defaultValue={result.exam.results[result.student.id]?.score}/></label><label>{t('التقييم','Feedback')}<textarea name="feedback" defaultValue={result.exam.results[result.student.id]?.feedback}/></label></>:<>
@@ -57,9 +57,9 @@ export function Exams() {
 }
 
 type InstallEvent = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
-export function More({ changeLanguage, switchRole, currentRole, install }: {changeLanguage:()=>void; switchRole:(role:string)=>void; currentRole:string;install:InstallEvent|null}) {
+export function More({ changeLanguage, switchRole, currentRole, install,showPermissions }: {changeLanguage:()=>void; switchRole:(role:string)=>void; currentRole:string;install:InstallEvent|null;showPermissions:()=>void}) {
   const {data,t,go,post,tell,en} = useWorkspace()
-  const [modal,setModal] = useState<'link'|'install'|'permissions'|''>('')
+  const [modal,setModal] = useState<'link'|'install'|''>('')
   const [busy,setBusy] = useState(false)
   const parent = data.user?.role === 'parent'
   const staff = data.user?.role==='admin'||data.user?.role==='teacher'
@@ -70,7 +70,7 @@ export function More({ changeLanguage, switchRole, currentRole, install }: {chan
     ...(staff?[[BookOpen,t('السجل والتقارير','Records and reports'),()=>go('records')]] as const:[]),
     [Globe,t('English','العربية'),changeLanguage],
     [Smartphone,t('تثبيت التطبيق','Install application'),()=>{if(install)void install.prompt();else setModal('install')}],
-    [Bell,t('الأذونات','Permissions'),()=>setModal('permissions')],
+    [Bell,t('الأذونات والتنبيهات','Permissions & notifications'),showPermissions],
   ] as const
   return <section className="panel section-panel">
     <div className="section-title"><div><h1>{t('المزيد','More')}</h1><p>{data.user?.name} · <RoleName role={data.user?.role||''}/></p></div></div>
@@ -79,7 +79,6 @@ export function More({ changeLanguage, switchRole, currentRole, install }: {chan
     {data.sample&&<div className="demo-settings"><div><strong>{t('مساحة المعاينة','Preview workspace')}</strong><p>{t('بيانات توضيحية خاصة بك. يمكنك تجربة الواجهات بالأدوار المختلفة.','Private sample data. Explore the interface from each role.')}</p></div><label>{t('عرض الحساب','Account view')}<select value={currentRole} onChange={e=>switchRole(e.target.value)}><option value="admin">{t('لوحة المحفّظ والإدارة','Teacher dashboard & administration')}</option><option value="teacher">{t('المحفّظ','Teacher')}</option><option value="student">{t('الطالب','Student')}</option><option value="parent">{t('ولي الأمر','Guardian')}</option></select></label></div>}
     {modal==='link'&&<Modal title={t('إضافة طالب','Add a student')} close={()=>setModal('')}><form onSubmit={async e=>{e.preventDefault();const form=new FormData(e.currentTarget);setBusy(true);try{await post('link',{phone:form.get('phone')});tell(t('إذا كان الرقم مسجلًا فسيصل الطلب للإدارة.','If the phone is registered, the request will be sent to administration.'));setModal('')}catch(err){tell((err as Error).message,true)}finally{setBusy(false)}}}><div className="modal-body"><p>{t('أدخل رقم جوال الطالب المسجل. تراجع الإدارة الطلب قبل إتاحة البيانات.','Enter the student’s registered mobile number. Administration reviews access requests.')}</p><label>{t('رقم جوال الطالب','Student mobile number')}<input type="tel" name="phone" dir="ltr" placeholder="+966 5X XXX XXXX" required/></label></div><div className="modal-foot"><button className="btn btn-primary" disabled={busy}><Link2 size={16}/>{t('إرسال طلب الربط','Send link request')}</button></div></form></Modal>}
     {modal==='install'&&<Modal title={t('تثبيت التطبيق','Install application')} close={()=>setModal('')}><div className="modal-body"><div className="hint-line"><Smartphone size={18}/>{t('على iPhone أو iPad من Safari، اضغط مشاركة ثم إضافة إلى الشاشة الرئيسية.','On iPhone or iPad in Safari, tap Share and then Add to Home Screen.')}</div><p>{t('على Android أو الكمبيوتر، افتح قائمة المتصفح واختر تثبيت التطبيق إذا ظهر الخيار.','On Android or desktop, open the browser menu and select Install app when offered.')}</p></div></Modal>}
-    {modal==='permissions'&&<Modal title={t('أذونات التطبيق','App permissions')} close={()=>setModal('')}><div className="modal-body"><p>{t('يطلب التطبيق الأذونات من المتصفح عند استخدامها. يمكنك تغييرها من إعدادات الموقع.','The browser asks for permissions when needed. Change them in site settings.')}</p><button className="btn btn-outline" onClick={async()=>{if(!('Notification'in window)){tell(t('هذا المتصفح لا يدعم الإشعارات','Notifications are unavailable in this browser'),true);return}const result=await Notification.requestPermission();tell(result==='granted'?t('تم السماح بإشعارات الجهاز','Device notifications allowed'):t('يمكن تغيير الإذن من إعدادات الموقع','Change access from site settings'))}}><Bell size={16}/>{t('السماح بالإشعارات','Allow notifications')}</button></div></Modal>}
   </section>
 }
 
