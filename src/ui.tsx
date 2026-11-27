@@ -1,4 +1,4 @@
-import { brandIconUrl, type Palette } from './appearance'
+import { brandIconUrl, type GeneratedIcon, type Palette } from './appearance'
 import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, CircleMinus, CircleX, Clock3, Star, X } from 'lucide-react'
 import type { LessonCredentials, LessonRtcStatus } from './lessons'
@@ -10,7 +10,7 @@ export type Page = 'home' | 'assistant' | 'records' | 'chat' | 'more' | 'admin' 
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
-  refresh:()=>void; iconGeneration:boolean; generateIcon:(description:string,palette:Palette)=>Promise<string>; lessonRtc:(id:string)=>Promise<LessonCredentials>; lessonRtcStatus:()=>Promise<LessonRtcStatus>;
+  refresh:()=>void; iconGeneration:boolean; generateIcon:(description:string,palette:Palette)=>Promise<GeneratedIcon>; lessonRtc:(id:string)=>Promise<LessonCredentials>; lessonRtcStatus:()=>Promise<LessonRtcStatus>;
   lessonRtcPresence:(id:string,uid:number,version:number)=>Promise<boolean>;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => void
 }

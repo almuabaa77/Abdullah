@@ -323,3 +323,49 @@ body:has(.live-register-expanded) {overflow:hidden}
 .appearance-preview-button {padding:5px 10px;border-radius:7px;background:var(--green);color:#fff;font-size:.8rem}
 .admin-appearance>footer {display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}
 @media(max-width:640px){.appearance-layout {grid-template-columns:minmax(0,1fr)}}
+
+.admin-section-links {display:grid;gap:4px;min-width:0}
+.admin-workspace {padding-block-end:72px}
+.admin-register-fab {
+  position:fixed;z-index:36;inset-inline-end:max(clamp(12px,3vw,28px),env(safe-area-inset-right),env(safe-area-inset-left));
+  inset-block-end:calc(20px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:9px;
+  min-height:52px;padding:5px 6px 5px 12px;padding-inline:6px 12px;border:1px solid color-mix(in srgb,var(--gold) 50%,var(--green));
+  border-radius:17px;background:linear-gradient(125deg,var(--green),var(--deep));color:white;font-weight:700;font-size:.86rem;
+  box-shadow:0 8px 25px color-mix(in srgb,var(--deep) 32%,transparent),inset 0 1px #ffffff38;
+  transition:transform 180ms ease,box-shadow 180ms ease;
+}
+.admin-register-fab:hover {transform:translateY(-3px);box-shadow:0 12px 27px color-mix(in srgb,var(--deep) 40%,transparent),inset 0 1px #ffffff38}
+.admin-register-fab:active {transform:translateY(1px)}
+.admin-register-fab-icon {display:grid;place-items:center;width:39px;height:39px;border-radius:11px;background:#ffffff20;box-shadow:inset 0 1px #ffffff33}
+.admin-register-fab i {width:6px;height:6px;border-radius:50%;background:#ffffff8c}
+.admin-register-fab i[data-live=true] {background:#b9f7cd;animation:register-live-pulse 2.8s ease-out 3}
+@keyframes register-live-pulse {0%,100%{box-shadow:0 0 0 0 #b9f7cd00} 25%{box-shadow:0 0 0 0 #b9f7cd8c} 75%{box-shadow:0 0 0 7px #b9f7cd00}}
+.admin-register-dialog {width:min(100%,1260px)}
+.admin-register-dialog>.modal-body {padding:clamp(10px,2vw,18px)}
+.admin-register-dialog:has(.live-register-expanded) {animation:none}
+.admin-register-dialog:has(.live-register-expanded)>.modal-head {visibility:hidden}
+.admin-more-dialog {width:min(100%,560px);max-height:min(83dvh,740px)}
+.admin-more-search {position:sticky;z-index:1;inset-block-start:65px;background:var(--paper);padding:10px 14px 7px}
+.admin-more-search .search {width:100%}
+.admin-more-links {padding-block-start:6px}
+.admin-more-links .admin-section-links {grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.admin-more-links .admin-menu-group {gap:5px}
+.admin-more-links .admin-menu-group button {min-height:53px;padding:6px;line-height:1.35}
+.admin-more-links .admin-menu-group button .admin-more-icon {
+  flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:var(--surface-strong);color:var(--green);
+}
+[dir=ltr] .admin-more-chevron {transform:scaleX(-1)}
+@media(max-width:850px) {
+  .admin-register-fab {inset-block-end:calc(74px + env(safe-area-inset-bottom))}
+  .modal-backdrop:has(>.admin-register-dialog) {padding:8px}
+  .admin-register-dialog {max-height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+}
+@media(max-width:400px) {
+  .admin-more-links .admin-section-links {grid-template-columns:minmax(0,1fr)}
+}
+@media(prefers-reduced-motion:reduce) {
+  .admin-register-fab {transition:none}
+  .admin-register-fab:hover,.admin-register-fab:active {transform:none}
+  .admin-register-fab i[data-live=true] {animation:none}
+}
+@media print {.admin-register-fab {display:none!important}}

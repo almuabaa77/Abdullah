@@ -3,7 +3,7 @@ import { AnnouncementFields, AnnouncementRow } from './announcements'
 import { AssessmentPolicyFields, PolicySettings } from './admin-policies'
 import { ManageFamilyLinks } from './family-links'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Activity, Bell, BookOpen, CalendarDays, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Palette, Plus, Search, Settings, ShieldAlert, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { Activity, Bell, BookOpen, CalendarDays, ChevronLeft, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Palette, Plus, Search, Settings, ShieldAlert, ShieldCheck, Table2, UserCheck, Users } from 'lucide-react'
 import { circleMeets, type Circle, type Prize, type Student, type User } from './domain'
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
@@ -15,7 +15,7 @@ import { Exams, Leaves } from './features'
 import { Records } from './records'
 import type { RecordStreamStatus } from './live-records'
 import { normalizeMobile } from './phone-number'
-import { Avatar, Badge, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
+import { Avatar, Badge, dateLabel, Empty, Modal, nameFor, normal, RoleName, useWorkspace } from './ui'
 import './admin.css'
 
 type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}|{kind:'enrollment';item:User}|{kind:'assessment';item:Circle}
@@ -82,19 +82,20 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const [accountFilter,setAccountFilter] = useState('')
   const [busy,setBusy] = useState(false)
   const [menu,setMenu] = useState(false)
+  const [menuQuery,setMenuQuery] = useState('')
+  const [register,setRegister] = useState(()=>new URLSearchParams(location.search).get('circle')??undefined)
   const writing = useRef(false)
   useEffect(()=>{
-    const restore=()=>{setTab(readTab());setInbox(new URLSearchParams(location.search).get('inbox')==='1');setQuery('');setAccountFilter('');setMenu(false);setEdit(undefined)}
+    const restore=()=>{setTab(readTab());setInbox(new URLSearchParams(location.search).get('inbox')==='1');setQuery('');setAccountFilter('');setMenu(false);setEdit(undefined);setRegister(new URLSearchParams(location.search).get('circle')??undefined)}
     window.addEventListener('popstate',restore)
     return ()=>window.removeEventListener('popstate',restore)
   },[])
   if(data.user?.role!=='admin'||data.user.status!=='active') return <div className="panel"><Empty title={t('لا تتوفر صلاحية الإدارة','Administration access required')}/></div>
 
-  function openTab(id:Tab,circleId?:string) {
-    if(id!==tab||circleId) {
+  function openTab(id:Tab) {
+    if(id!==tab) {
       const url=new URL(location.href)
-      if(circleId)url.searchParams.set('circle',circleId)
-      else url.searchParams.delete('circle')
+      url.searchParams.delete('circle')
       if(id==='live')url.searchParams.delete('section')
       else url.searchParams.set('section',id)
       history.pushState(null,'',url)
@@ -105,6 +106,14 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
       window.scrollTo({top:0,behavior:'instant'})
     }
     setMenu(false)
+  }
+  function closeRegister() {
+    setRegister(undefined)
+    const url=new URL(location.href)
+    if(url.searchParams.has('circle')){
+      url.searchParams.delete('circle')
+      history.replaceState(history.state,'',url)
+    }
   }
   async function submit(action:string,payload:Record<string,unknown>) {
     if(writing.current)return false
@@ -161,16 +170,25 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const searchTitle=t('بحث في هذا القسم','Search this section')
   const primaryActive=mobileSections.some(section=>section.id===tab)
 
-  function sectionLinks() {
-    return groups.map(([id,ar,english])=><div className="admin-menu-group" key={id}>
-      <span>{t(ar,english)}</span>
-      {sections.filter(section=>section.group===id).map(({id,icon:Icon,label})=><button key={id} type="button"
-        aria-current={tab===id?'page':undefined} onClick={()=>openTab(id)}>
-        <Icon size={18}/><span>{t(label[0],label[1])}</span>
-        {id==='chats'&&data.chats.some(chat=>chat.reports.length>0)&&<Flag size={15}/>}
-        {id==='people'&&pendingCount>0&&<small className="count-pill" aria-label={t('طلبات تسجيل معلّقة','Pending registrations')}>{pendingCount}</small>}
-      </button>)}
-    </div>)
+  function sectionLinks(inSheet=false) {
+    const term=inSheet?normal(menuQuery):''
+    const matching=sections.filter(section=>!term||normal(t(section.label[0],section.label[1])).includes(term))
+    if(!matching.length)return <Empty title={t('لا توجد أقسام مطابقة','No matching sections')}/>
+    return groups.map(([id,ar,english])=>{
+      const entries=matching.filter(section=>section.group===id)
+      if(!entries.length)return null
+      return <div className="admin-menu-group" key={id}>
+        <span>{t(ar,english)}</span>
+        <div className="admin-section-links">{entries.map(({id,icon:Icon,label})=><button type="button" key={id}
+          aria-current={tab===id?'page':undefined} onClick={()=>openTab(id)}>
+          {inSheet?<span className="admin-more-icon"><Icon size={19}/></span>:<Icon size={18}/>}
+          <span>{t(label[0],label[1])}</span>
+          {id==='chats'&&data.chats.some(chat=>chat.reports.length>0)&&<Flag size={15}/>}
+          {id==='people'&&pendingCount>0&&<small className="count-pill" aria-label={t('طلبات تسجيل معلّقة','Pending registrations')}>{pendingCount}</small>}
+          {inSheet&&<ChevronLeft size={15} className="admin-more-chevron" aria-hidden="true"/>}
+        </button>)}</div>
+      </div>
+    })
   }
 
   return <div className="page-stack admin-workspace">
@@ -263,7 +281,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
                 <div><dt>{t('سجلات اليوم','Records today')}</dt><dd>{entered} / {total}</dd></div></dl>
               <div className="chip-row">{weekDays.map(([ar,english],day)=>circle.days.includes(day)&&<span key={day} className="count-pill">{t(ar,english)}</span>)}</div>
               <div className="admin-circle-actions">
-                <button className="btn btn-primary compact" type="button" onClick={()=>openTab('live',circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
+                <button className="btn btn-primary compact" type="button" onClick={()=>setRegister(circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'assessment',item:circle})}>{t('الاختبار الآلي','Automatic assessment')}</button>
               </div>
@@ -307,12 +325,25 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     <nav className="admin-bottom-nav" aria-label={t('قائمة الإدارة السفلية','Administration bottom navigation')}>
       {mobileSections.map(({id,icon:Icon,label,short})=><button type="button" key={id} aria-current={tab===id?'page':undefined}
         aria-label={t(label[0],label[1])} onClick={()=>openTab(id)}><Icon size={21}/><span>{t(short[0],short[1])}</span></button>)}
-      <button type="button" aria-haspopup="dialog" aria-expanded={menu} aria-current={primaryActive?undefined:'page'} onClick={()=>setMenu(true)}>
+      <button type="button" aria-haspopup="dialog" aria-expanded={menu} aria-current={primaryActive?undefined:'page'} onClick={()=>{setMenuQuery('');setMenu(true)}}>
         <Ellipsis size={21}/><span>{t('المزيد','More')}</span>
       </button>
     </nav>
-    {menu&&<Modal title={t('أقسام الإدارة','Administration sections')} close={()=>setMenu(false)} appearance="admin-more-dialog">
-      <nav className="modal-body admin-more-links">{sectionLinks()}</nav>
+    <button className="admin-register-fab" type="button" aria-haspopup="dialog" aria-expanded={register!==undefined}
+      onClick={()=>setRegister('')}>
+      <span className="admin-register-fab-icon"><Table2 size={22} aria-hidden="true"/></span>
+      <span>{t('جدول المتابعة','Monitoring table')}</span>
+      <i aria-hidden="true" data-live={liveRecords==='live'&&online}/>
+    </button>
+    {register!==undefined&&<Modal title={t('جدول المتابعة','Monitoring table')} close={closeRegister} appearance="admin-register-dialog">
+      <div className="modal-body">
+        <AdminLive key={register} register initialCircle={register} status={liveRecords} online={online}/>
+      </div>
+    </Modal>}
+    {menu&&<Modal title={t('المزيد','More')} close={()=>setMenu(false)} appearance="admin-more-dialog">
+      <div className="admin-more-search"><label className="search"><Search size={18}/><input type="search" aria-label={t('بحث في أقسام الإدارة','Search administration sections')}
+        placeholder={t('ابحث عن قسم…','Find a section…')} value={menuQuery} onChange={event=>setMenuQuery(event.target.value)}/></label></div>
+      <nav className="modal-body admin-more-links" aria-label={t('أقسام الإدارة','Administration sections')}>{sectionLinks(true)}</nav>
     </Modal>}
     {edit&&<Modal title={({student:t('بيانات الطالب','Student details'),circle:t('بيانات الحلقة','Circle details'),prize:t('بيانات الجائزة','Reward details'),announcement:t('إعلان جديد','New announcement'),invite:t('إضافة حساب','Add account'),enrollment:t('مراجعة طلب الحساب','Review account request'),assessment:t('الاختبار الآلي للحلقة','Automatic circle assessment')})[edit.kind]} close={()=>{if(!busy)setEdit(undefined)}}>
       <form onSubmit={form}><div className="modal-body">

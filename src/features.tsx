@@ -1,6 +1,6 @@
 import { ParentLinks } from './family-links'
 import { useState, type FormEvent } from 'react'
-import { Award, Bell, BookOpen, CalendarDays, ChevronLeft, Download, Gift, Globe, Plus, Smartphone, Star, UserCheck } from 'lucide-react'
+import { Award, Bell, BookOpen, CalendarDays, ChevronLeft, Download, Gift, Globe, Plus, Settings2, Smartphone, Star, UserCheck, Video } from 'lucide-react'
 import { balanceFor, dateKey, dayOffset, examDateFor, idFor, type Exam, type Student } from './domain'
 import { Avatar, Badge, Brand, dateLabel, Empty, Modal, nameFor, RoleName, useWorkspace } from './ui'
 
@@ -121,18 +121,29 @@ export function More({ changeLanguage, switchRole, currentRole, install,showPerm
   const [modal,setModal] = useState<'install'|''>('')
   const parent = data.user?.role === 'parent'
   const staff = data.user?.role==='admin'||data.user?.role==='teacher'
-  const opts = [
-    [CalendarDays,t('جلسات التسميع','Live sessions'),()=>go('lessons')],
+  const services = [
+    [Video,t('جلسات التسميع','Live sessions'),()=>go('lessons')],
     [CalendarDays,t('الاختبارات','Assessments'),()=>go('exams')],
     [UserCheck,t('الاستئذانات','Leave requests'),()=>go('leaves')],
     ...(staff?[[BookOpen,t('السجل والتقارير','Records and reports'),()=>go('records')]] as const:[]),
+  ] as const
+  const preferences = [
     [Globe,t('English','العربية'),changeLanguage],
     [Smartphone,t('تثبيت التطبيق','Install application'),()=>{if(install)void install.prompt();else setModal('install')}],
     [Bell,t('الأذونات والتنبيهات','Permissions & notifications'),showPermissions],
   ] as const
-  return <section className="panel section-panel">
-    <div className="section-title"><div><h1>{t('المزيد','More')}</h1><p>{data.user?.name} · <RoleName role={data.user?.role||''}/></p></div></div>
-    <div className="more-list">{opts.map(([Icon,label,fn])=><button className="more-row" key={label} onClick={fn}><span className="stat-icon tint-green"><Icon size={18}/></span><strong>{label}</strong><ChevronLeft size={17}/></button>)}</div>
+  return <section className="panel section-panel account-more">
+    <header className="account-more-header">
+      <span className="stat-icon"><Settings2 size={23}/></span>
+      <div><h1>{t('المزيد','More')}</h1><p>{data.user?.name} · <RoleName role={data.user?.role||''}/></p></div>
+    </header>
+    <div className="account-more-grid">{([
+      [t('خدمات الحلقة','Circle services'),services],
+      [t('إعدادات التطبيق','App settings'),preferences],
+    ] as const).map(([title,items])=><section className="account-more-group" key={title}>
+      <h2>{title}</h2>
+      <div className="more-list">{items.map(([Icon,label,fn])=><button type="button" className="more-row" key={label} onClick={fn}><span className="stat-icon"><Icon size={19}/></span><strong>{label}</strong><ChevronLeft size={17} aria-hidden="true"/></button>)}</div>
+    </section>)}</div>
     {parent&&<ParentLinks/>}
     {data.sample&&<div className="demo-settings"><div><strong>{t('مساحة المعاينة','Preview workspace')}</strong><p>{t('بيانات توضيحية خاصة بك. يمكنك تجربة الواجهات بالأدوار المختلفة.','Private sample data. Explore the interface from each role.')}</p></div><label>{t('عرض الحساب','Account view')}<select value={currentRole} onChange={e=>switchRole(e.target.value)}><option value="admin">{t('لوحة المحفّظ والإدارة','Teacher dashboard & administration')}</option><option value="teacher">{t('المحفّظ','Teacher')}</option><option value="student">{t('الطالب','Student')}</option><option value="parent">{t('ولي الأمر','Guardian')}</option></select></label></div>}
     {modal==='install'&&<Modal title={t('تثبيت التطبيق','Install application')} close={()=>setModal('')}><div className="modal-body"><div className="hint-line"><Smartphone size={18}/>{t('على iPhone أو iPad من Safari، اضغط مشاركة ثم إضافة إلى الشاشة الرئيسية.','On iPhone or iPad in Safari, tap Share and then Add to Home Screen.')}</div><p>{t('على Android أو الكمبيوتر، افتح قائمة المتصفح واختر تثبيت التطبيق إذا ظهر الخيار.','On Android or desktop, open the browser menu and select Install app when offered.')}</p></div></Modal>}

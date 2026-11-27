@@ -972,11 +972,11 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       const operationKey=identity.id+':'+op
       if(iconRoute){
         if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()
-        if(!generateIcon)throw new ApiError('خدمة توليد الأيقونات تحتاج إلى مفتاح OpenAI في إعدادات الخادم.',503)
+        if(!generateIcon)throw new ApiError('خدمة توليد الأيقونات تحتاج إلى مفتاح Gemini أو OpenAI في إعدادات الخادم.',503)
         const description=required(payload.description,350)
         const palette=readPalette(payload.palette)
         if(!palette||!readablePalette(palette))throw new ApiError('اختر ألوانًا واضحة للأيقونة وطابع التطبيق.')
-        return Response.json({image:await generateIcon(description,palette)},{headers})
+        return Response.json(await generateIcon(description,palette),{headers})
       }
       if(rtcStatusRoute) {
         if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, Bell, ClipboardList, ChevronDown, ChevronUp, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
+import { Activity, Bell, ChevronDown, ChevronUp, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
 import { circleMeets, recordedAssignment, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
 import { Avatar, Badge, dateLabel, Empty, matches, Modal, nameFor, useWorkspace } from './ui'
 import type { RecordStreamStatus } from './live-records'
@@ -13,13 +13,13 @@ const pageSize = 25
 const reminderKey = ({studentId,circleId,date,field}:RecordReminder,teacherId:string) => [studentId,circleId,date,field,teacherId].join('/')
 type OrientationLock = ScreenOrientation & {lock?:(orientation:'landscape')=>Promise<void>}
 
-export function AdminLive({status,online}:{status:RecordStreamStatus;online:boolean}) {
+export function AdminLive({status,online,register=false,initialCircle=''}:{status:RecordStreamStatus;online:boolean;register?:boolean;initialCircle?:string}) {
   const {data,t,en,open,post,tell} = useWorkspace()
   const [selectedDate,setDate] = useState('')
-  const [circleId,setCircleId] = useState(()=>new URLSearchParams(location.search).get('circle')??'')
+  const [circleId,setCircleId] = useState(initialCircle)
   const [query,setQuery] = useState('')
   const [limit,setLimit] = useState(pageSize)
-  const [panel,setPanel] = useState<'records'|'reminders'|'activity'>('records')
+  const [panel,setPanel] = useState<'reminders'|'activity'>('reminders')
   const [filter,setFilter] = useState<string>('all')
   const [expanded,setExpanded] = useState(false)
   const [reminder,setReminder] = useState<RecordReminder>()
@@ -67,7 +67,7 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
   const firstRows=visibleRows.slice(0,4).map(row=>row.student.id).join(',')
   useEffect(()=>{
     const box=tableScroll.current
-    if(!box||expanded||panel!=='records'||visibleRows.length<=4)return
+    if(!box||expanded||visibleRows.length<=4)return
     const head=box.querySelector('thead')
     const rows=[...box.querySelectorAll('tbody tr')].slice(0,4)
     const measure=()=>{
@@ -82,7 +82,7 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
     rows.forEach(row=>observer.observe(row))
     measure()
     return ()=>{observer.disconnect();box.style.removeProperty('--visible-register-height')}
-  },[expanded,panel,firstRows,visibleRows.length])
+  },[expanded,firstRows,visibleRows.length])
   useEffect(()=>{if(tableScroll.current)tableScroll.current.scrollTop=0},[date,circleId,query,filter])
   function stepTable(direction:number) {
     const box=tableScroll.current
@@ -110,7 +110,8 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
     const teacher=accounts.get(circles.get(target.circleId)?.teacherId ?? '')
     return teacher?.role==='teacher'&&teacher.status==='active'&&!teacher.duplicateOf?teacher:undefined
   }
-  const alerts=panel==='reminders'?visibleRows.flatMap(({student,record})=>
+  const shownEvents=filter==='all'?events:events.filter(event=>visibleRows.some(row=>row.student.id===event.studentId))
+  const alerts=!register&&panel==='reminders'?visibleRows.flatMap(({student,record})=>
     reminderFields.flatMap(field=>{
       const target=availableReminder(student,record,field)
       return target?[{student,record,target}]:[]
@@ -123,7 +124,6 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       requestAnimationFrame(()=>expandButton.current?.focus())
       return
     }
-    if(panel!=='records')return
     setExpanded(true)
     if(!document.fullscreenEnabled||document.fullscreenElement)return
     try {
@@ -145,17 +145,9 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
         requestAnimationFrame(()=>expandButton.current?.focus())
       }
     }
-    function onEscape(event:KeyboardEvent) {
-      if(event.key==='Escape'&&!nativeFullscreen.current&&!document.querySelector('.modal-backdrop')){
-        setExpanded(false)
-        requestAnimationFrame(()=>expandButton.current?.focus())
-      }
-    }
     document.addEventListener('fullscreenchange',onFullscreenChange)
-    document.addEventListener('keydown',onEscape)
     return ()=>{
       document.removeEventListener('fullscreenchange',onFullscreenChange)
-      document.removeEventListener('keydown',onEscape)
       if(nativeFullscreen.current&&document.fullscreenElement)void document.exitFullscreen().catch(()=>{})
       nativeFullscreen.current=false
       if(orientationLocked.current)screen.orientation?.unlock()
@@ -208,12 +200,14 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
     </button>
   }
 
-  return <div className={'live-register'+(expanded?' live-register-expanded':'')}>
+  return <div className={'live-register'+(expanded?' live-register-expanded':'')} onKeyDown={event=>{
+    if(expanded&&event.key==='Escape'){event.stopPropagation();void toggleExpanded()}
+  }}>
     {!expanded&&<>
     <header className="live-register-head">
-      <div><h2>{t('المتابعة المباشرة','Live monitoring')}</h2>
+      <div>{!register&&<h2>{t('المتابعة المباشرة','Live monitoring')}</h2>}
         <span className={'live-status'+(status==='live'&&online?' connected':'')} role="status"><Radio size={15}/>{connectionLabel}</span></div>
-      {panel==='records'&&<button ref={expandButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
+      {register&&<button ref={expandButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
         <Maximize size={17}/>{t('الجدول بملء الشاشة','Full-screen table')}
       </button>}
     </header>
@@ -224,20 +218,19 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       <label className="search"><Search size={16}/><input type="search" aria-label={t('ابحث عن طالب','Search students')} placeholder={t('ابحث عن طالب','Search students')} value={query} onChange={event=>{setQuery(event.target.value);setLimit(pageSize)}}/></label>
     </div>
     <div className="admin-live-metrics" aria-label={t('ملخص السجلات','Record summary')}>
-      {summaries.map(([id,count,title])=><button key={id} type="button" aria-pressed={filter===id} onClick={()=>{setFilter(id);setPanel('records');setLimit(pageSize)}}>
+      {summaries.map(([id,count,title])=><button key={id} type="button" aria-pressed={filter===id} onClick={()=>{setFilter(id);setLimit(pageSize)}}>
         <strong>{count}</strong><span>{title}</span>
       </button>)}
     </div>
-    <div className="seg-toggle admin-live-switch" role="group" aria-label={t('عرض المتابعة','Monitoring view')}>
+    {!register&&<div className="seg-toggle admin-live-switch" role="group" aria-label={t('عرض المتابعة','Monitoring view')}>
       {([
-        ['records',ClipboardList,t('الجدول','Register')],
         ['reminders',Bell,t('التنبيهات','Reminders')],
         ['activity',Activity,t('آخر النشاط','Activity')],
       ] as const).map(([id,Icon,title])=><button type="button" key={id} className={panel===id?'selected':''} aria-pressed={panel===id} onClick={()=>{setPanel(id);setLimit(pageSize);if(id==='reminders')setFilter('all')}}><Icon size={16}/>{title}</button>)}
-    </div>
+    </div>}
     </>}
 
-    {panel==='records'&&<section className="live-pane" aria-label={t('سجلات الطلاب','Student records')}>
+    {register&&<section className="live-pane" aria-label={t('سجلات الطلاب','Student records')}>
       {expanded?<div className="live-table-only-bar">
         <button ref={exitButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
           <Minimize size={17}/>{t('خروج من ملء الشاشة','Exit full screen')}
@@ -290,7 +283,7 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       </div>
     </section>}
 
-    {!expanded&&panel==='reminders'&&<section className="live-pane live-list-pane" aria-label={t('الخانات التي تحتاج متابعة','Fields requiring follow-up')}>
+    {!register&&panel==='reminders'&&<section className="live-pane live-list-pane" aria-label={t('الخانات التي تحتاج متابعة','Fields requiring follow-up')}>
       <ul className="live-alerts">
         {alerts.slice(0,limit).map(({student,record,target})=>{
           const teacher=teacherFor(target)
@@ -306,8 +299,8 @@ export function AdminLive({status,online}:{status:RecordStreamStatus;online:bool
       {alerts.length>limit&&<div className="live-more"><button className="btn btn-outline compact" type="button" onClick={()=>setLimit(limit+pageSize)}>{t('عرض تنبيهات إضافية','Show more reminders')}</button></div>}
     </section>}
 
-    {!expanded&&panel==='activity'&&<section className="live-pane live-list-pane" aria-label={t('آخر العمليات','Recent activity')}>
-      {events.length ? <ol className="live-activity">{events.map(event=><li key={event.id}>
+    {!register&&panel==='activity'&&<section className="live-pane live-list-pane" aria-label={t('آخر العمليات','Recent activity')}>
+      {shownEvents.length ? <ol className="live-activity">{shownEvents.map(event=><li key={event.id}>
         <strong>{nameFor(studentsById.get(event.studentId)!,en)}</strong>
         <small>{accounts.get(event.actorId)?.name ?? t('حساب سابق','Former account')} · <time dateTime={event.time}>{timeFormat.format(new Date(event.time))}</time></small>
         <div className="chip-row">{event.changes.map(kind=><span className="count-pill" key={kind}>{t(...sectionNames[kind])}</span>)}</div>

@@ -1,6 +1,7 @@
 export const paletteKeys = ['primary','accent','background','surface','text'] as const
 export type Palette = Record<typeof paletteKeys[number],string>
 export type Appearance = Palette & {iconVersion?:string}
+export type GeneratedIcon = {image:string;mimeType:'image/webp'|'image/png'|'image/jpeg'}
 export const defaultPalette:Palette = {primary:'#235848',accent:'#ead19b',background:'#f6f3ed',surface:'#fffefa',text:'#20352e'}
 
 export function readPalette(input:unknown):Palette|undefined {

@@ -661,3 +661,30 @@ html[data-custom-appearance] .brand img {object-fit:cover;border-radius:24%}
 html[data-custom-appearance] .nav-item.active i,
 html[data-custom-appearance] .notification-trigger i {background:var(--gold)}
 html[data-custom-appearance] .welcome-screen {border-block-start:3px solid var(--gold)}
+
+.topbar {--topbar-control-size:40px;--topbar-icon-size:20px}
+.topbar .topbar-actions>button,.topbar .topbar-actions>.relative>button,.topbar .workspace-home {
+  min-width:var(--topbar-control-size);min-height:var(--topbar-control-size);height:var(--topbar-control-size);
+  padding:0 8px;gap:6px;align-items:center;justify-content:center;
+}
+.topbar .topbar-actions .icon-button {width:var(--topbar-control-size);padding:0}
+.topbar .topbar-actions>button>svg,.topbar .topbar-actions>.relative>button>svg,.topbar .workspace-home>svg {
+  width:var(--topbar-icon-size);height:var(--topbar-icon-size);
+}
+.topbar .topbar-actions .profile-avatar {width:var(--topbar-icon-size);height:var(--topbar-icon-size);font-size:.7rem}
+@media(max-width:450px) {
+  .topbar {--topbar-control-size:36px}
+  .topbar .topbar-actions>button,.topbar .topbar-actions>.relative>button {width:var(--topbar-control-size);padding:0}
+}
+
+.account-more {display:grid;gap:14px}
+.account-more-header {display:flex;align-items:center;gap:10px;padding:12px;border-radius:14px;background:var(--role-tint);color:var(--role-ink)}
+.account-more-header .stat-icon {width:44px;height:44px;background:var(--paper);color:var(--role-ink)}
+.account-more-header p {font-size:.83rem;overflow-wrap:anywhere}
+.account-more-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.account-more-group {display:grid;align-content:start;gap:9px;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.account-more-group h2 {font-size:.98rem;color:var(--role-ink)}
+.account-more-group .more-row {min-height:50px;background:var(--paper)}
+.account-more-group .more-row:hover {background:var(--role-tint);border-color:var(--role-edge)}
+.account-more-group .more-row .stat-icon {background:var(--role-tint);color:var(--role-ink)}
+@media(max-width:570px) {.account-more-grid {grid-template-columns:minmax(0,1fr)}}

@@ -13,7 +13,7 @@ import { publishScheduled } from './announcements'
 import { noticeExpiresAt, type State } from '../src/domain'
 
 const env = process.env
-const generateIcon=env.OPENAI_API_KEY?.trim()?createIconGenerator(env.OPENAI_API_KEY.trim()):undefined
+const generateIcon=createIconGenerator({gemini:env.GEMINI_API_KEY,openai:env.OPENAI_API_KEY})
 const settings = { connectionLimit:5, connectTimeout:10000, charset:'utf8mb4' }
 const port = Number(env.PORT || 3000)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT')

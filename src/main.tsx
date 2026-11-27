@@ -1,4 +1,4 @@
-import { brandIconUrl, defaultPalette, paletteKeys, paletteVariables, type Appearance, type Palette } from './appearance'
+import { brandIconUrl, defaultPalette, paletteKeys, paletteVariables, type Appearance, type GeneratedIcon, type Palette } from './appearance'
 import { protectAppText } from './app-interactions'
 import { activeNotices, NotificationList, useNoticeTime } from './notifications'
 import { LessonCenter } from './lesson-center'
@@ -425,12 +425,12 @@ function App() {
     const result=await fetch('/api/lesson-rtc/presence',{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({id,uid,version})})
     return result.ok
   }
-  async function generateIcon(description:string,palette:Palette):Promise<string> {
+  async function generateIcon(description:string,palette:Palette):Promise<GeneratedIcon> {
     const response=await fetch('/api/appearance/generate',{method:'POST',cache:'no-store',signal:typeof AbortSignal.timeout==='function'?AbortSignal.timeout(90_000):undefined,
       headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({description,palette})})
-    const value=await response.json() as {image?:string;error?:string}
-    if(!response.ok||!value.image)throw new Error(value.error??t('تعذّر توليد الأيقونة.','Could not generate an icon.'))
-    return value.image
+    const value=await response.json() as Partial<GeneratedIcon> & {error?:string}
+    if(!response.ok||!value.image||!value.mimeType)throw new Error(value.error??t('تعذّر توليد الأيقونة.','Could not generate an icon.'))
+    return {image:value.image,mimeType:value.mimeType}
   }
   const workspace = {data:appearance===data.appearance?data:{...data,appearance},en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,
     lessonRtcPresence,iconGeneration:Boolean(publicAppearance.iconGeneration),generateIcon,refresh:()=>refreshWorkspace.current()}

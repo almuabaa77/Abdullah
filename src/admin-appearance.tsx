@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { ImagePlus, Palette as PaletteIcon, RotateCcw, Save, Sparkles } from 'lucide-react'
-import { brandIconUrl, defaultPalette, iconContentLimit, paletteKeys, paletteVariables, readablePalette, type Palette } from './appearance'
+import { brandIconUrl, defaultPalette, iconContentLimit, paletteKeys, paletteVariables, readablePalette, type GeneratedIcon, type Palette } from './appearance'
 import { useWorkspace } from './ui'
 
 const colorLabels = {
@@ -8,9 +8,9 @@ const colorLabels = {
   surface:['البطاقات والأسطح','Cards and surfaces'],text:['لون النص','Text color'],
 } as const
 
-async function compressIcon(image:string) {
+async function compressIcon({image,mimeType}:GeneratedIcon) {
   const picture=new Image()
-  picture.src='data:image/webp;base64,'+image
+  picture.src='data:'+mimeType+';base64,'+image
   await picture.decode()
   const canvas=document.createElement('canvas')
   canvas.width=512
@@ -87,7 +87,7 @@ export function AdminAppearance({busy,save}:{busy:boolean;save:(action:string,pa
           </button>
           {(icon||icon!==null&&data.appearance?.iconVersion)&&<button type="button" className="btn btn-subtle compact" disabled={generating||busy} onClick={()=>setIcon(null)}><ImagePlus size={16}/>{t('استعادة الأيقونة الأصلية','Restore original icon')}</button>}
         </div>
-        {!iconGeneration&&<p className="appearance-help">{t('لتفعيل التوليد، أضف مفتاح OpenAI إلى متغيرات بيئة الخادم.','Add an OpenAI key to the server environment to enable generation.')}</p>}
+        {!iconGeneration&&<p className="appearance-help">{t('لتفعيل التوليد، أضف مفتاح Gemini أو OpenAI إلى متغيرات بيئة الخادم.','Add a Gemini or OpenAI key to the server environment to enable generation.')}</p>}
         {error&&<p className="error-box" role="alert">{error}</p>}
       </div>
       <div className="appearance-preview" style={paletteVariables(palette) as CSSProperties}>
