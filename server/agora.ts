@@ -9,7 +9,7 @@ export type AgoraEnvironment = {
 import { tokenLifetime } from './lesson-media-policy'
 const hex=/^[a-f0-9]{32}$/i
 // Agora uses this public project identifier in the browser. Certificates stay in the environment.
-const projectAppId='6d0bf82846d445e98ad9382c01906fa6'
+const projectAppId='f2750a7af7be417e8d802e7f82d65b10'
 export function agoraConfig(env:AgoraEnvironment) {
   const {AGORA_APP_ID:appId=projectAppId,AGORA_APP_CERTIFICATE:certificate,AGORA_CUSTOMER_ID:customerId,AGORA_CUSTOMER_SECRET:customerSecret}=env
   if(!appId||!hex.test(appId)||!certificate||!hex.test(certificate)||!customerId||!customerSecret||env.AGORA_COHOST_AUTH_ENABLED!=='true')return
