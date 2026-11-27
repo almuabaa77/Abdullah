@@ -155,12 +155,12 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     <div className="admin-grid">
       <nav className="panel admin-nav" aria-label={t('أقسام الإدارة','Administration sections')}>{sectionLinks()}</nav>
       <section className="panel section-panel admin-main" aria-busy={busy}>
-        <header className="admin-section-head">
+        {tab!=='live'&&<header className="admin-section-head">
           <h2>{t(...current.label)}</h2>
           {current.edit&&current.add&&<button className="btn btn-primary compact" type="button" disabled={busy} onClick={()=>setEdit({kind:current.edit!})}>
             <Plus size={16}/>{t(...current.add)}
           </button>}
-        </header>
+        </header>}
         {(current.search||tab==='audit')&&<div className="admin-filters">
           <label className="search"><Search size={17}/><input type="search" aria-label={searchTitle} placeholder={searchTitle} value={query} onChange={event=>setQuery(event.target.value)}/></label>
           {tab==='people'&&<select aria-label={t('حالة الحساب','Account status')} value={accountFilter} onChange={event=>setAccountFilter(event.target.value)}>

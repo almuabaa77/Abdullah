@@ -14,6 +14,7 @@ const hash=(value:string)=>createHash('sha256').update(value).digest('hex')
 const alertDescriptions:Record<string,[string,string]>={
   daily:['هناك تحديث في سجل الحلقة.','There is an update to a circle record.'],
   attendance:['هناك تحديث في الحضور.','There is an attendance update.'],
+  'record-reminder':['لديك تنبيه من الإدارة لمراجعة سجل طالب.','Administration requested that you review a student record.'],
   message:['لديك رسالة جديدة.','You have a new message.'],
   call:['لديك مكالمة واردة.','You have an incoming call.'],
   'chat-report':['هناك بلاغ محادثة بانتظار المراجعة.','A conversation report is awaiting review.'],
@@ -47,7 +48,9 @@ function subscriptionFor(input:unknown):webPush.PushSubscription {
   return {endpoint:endpointFor(endpoint),keys:{p256dh,auth}}
 }
 
-function target(user:User,kind?:string) {
+function target(user:User,notice?:Notice) {
+  const kind=notice?.kind
+  if(user.role==='teacher'&&notice?.recordReminder)return '/?reminder='+encodeURIComponent(notice.id)+'#records'
   if(user.role==='admin')return kind==='message'||kind==='chat-report'?'/admin?section=chats':'/admin'
   if(kind==='message'||kind==='call')return '/#chat'
   if(kind==='exam')return '/#exams'
@@ -165,7 +168,7 @@ export function backgroundPush(database:()=>Promise<Pool>,adminUid?:string) {
           const description=delivery.notice_id?(alertDescriptions[kind??'']??['لديك تحديث جديد في التطبيق.','You have a new update in the app.'])
             :['وصل تنبيه الاختبار إلى هذا الجهاز.','Background notifications are working on this device.']
           const body=description[en?1:0]
-          const payload=JSON.stringify({title:en?'Al-Khair Quran Circles':'حلقات جامع الخير',body,url:target(user,kind),tag:delivery.id.slice(0,20)})
+          const payload=JSON.stringify({title:en?'Al-Khair Quran Circles':'حلقات جامع الخير',body,url:target(user,notice),tag:delivery.id.slice(0,20)})
           await webPush.sendNotification(subscription,payload,{TTL:kind==='call'?60:300,timeout:8000,topic:delivery.id.slice(0,24),vapidDetails:{...credentials,subject}})
           await finish()
         } catch(error) {

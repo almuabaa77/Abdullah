@@ -1,5 +1,5 @@
 import { groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
-import { balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, nextCircleDate, pointsFor, validateSegments, type Attendance, type Chat, type ChatCall, type Daily, type Exam, type Notice, type Role, type State, type Student, type User, type View } from '../src/domain'
+import { balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, pointsFor, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type Daily, type Exam, type Notice, type Role, type State, type Student, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
@@ -65,11 +65,18 @@ function callDescription(value:unknown) {
   if(typeof value!=='string'||value.length>24_000||!/^v=0\r?\n/.test(value)||!/^m=(audio|video) /m.test(value))throw new ApiError('بيانات اتصال المكالمة غير صالحة')
   return value
 }
-const noticeVisible = (notice:Notice,user:User,ids:Set<string>) => notice.users?.includes(user.id) || (!notice.users && (!notice.studentId || ids.has(notice.studentId)))
+const noticeVisible = (notice:Notice,user:User,ids:Set<string>) => {
+  if(notice.recordReminder && (user.role!=='teacher'||!ids.has(notice.recordReminder.studentId)))return false
+  return notice.users?.includes(user.id) || (!notice.users && (!notice.studentId || ids.has(notice.studentId)))
+}
+function matchesReminderCircle(notice:Notice,state:State) {
+  const target=notice.recordReminder
+  return !target||state.students.some(student=>student.id===target.studentId&&student.circleId===target.circleId)
+}
 export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:string) {
   if(user.status!=='active'||user.duplicateOf||user.role==='admin'&&user.id!==adminUid)return false
-  const ids=new Set(notice.studentId&&!notice.users?scope(state,user).map(student=>student.id):[])
-  return noticeVisible(notice,user,ids)
+  const ids=new Set(notice.recordReminder||notice.studentId&&!notice.users?scope(state,user).map(student=>student.id):[])
+  return noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
 }
 function project(state: State, user: User | null, revision: number, phoneEnabled: boolean): View {
   if (!user || user.status !== 'active') {
@@ -88,8 +95,10 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
     recordEvents: isAdmin ? state.recordEvents?.slice(0,100) : undefined,
+    recordReminders:isAdmin?state.notices.filter(notice=>notice.recordReminder&&notice.users?.[0]).slice(0,300)
+      .map(notice=>({...notice.recordReminder!,teacherId:notice.users![0],time:notice.time})):undefined,
     calls:state.calls?.filter(call=>call.from===user.id||call.to===user.id).slice(0,50).map(call=>currentCall(state,call)),
-    notices: state.notices.filter(notice => noticeVisible(notice,user,ids)),
+    notices: state.notices.filter(notice => noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)),
     links: state.links.filter(l => isAdmin || l.parentId === user.id).map(l => isAdmin || l.status === 'accepted' ? l : {...l, studentId: ''}),
     prizes: state.prizes.filter(p => isAdmin || p.active), orders: state.orders.filter(o => isAdmin || user.role === 'student' && ids.has(o.studentId)),
     exams: state.exams.filter(e => e.studentIds.some(id => ids.has(id))).map(e => ({ ...e, studentIds: e.studentIds.filter(id => ids.has(id)), results: Object.fromEntries(Object.entries(e.results).filter(([id]) => ids.has(id))) })),
@@ -226,8 +235,29 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       state.closed.push(key)
       break
     }
+    case 'record-reminder': {
+      admin()
+      const s = student(), date = validDate(p.date), field = choice(p.field, reminderFields)
+      const circle = circleOf(s)
+      if (!circle||circle.id!==p.circleId||date>dateKey()||!circleMeets(date,circle)) throw new ApiError('تحقق من الحلقة وتاريخ انعقادها')
+      const teacher = state.users.find(account=>account.id===circle.teacherId&&account.role==='teacher'&&account.status==='active'&&!account.duplicateOf)
+      if (!teacher) throw new ApiError('عيّن محفظًا نشطًا لهذه الحلقة قبل إرسال التنبيه',409)
+      const record = state.daily.find(item=>item.studentId===s.id&&item.date===date)
+      if (!needsRecordReminder(record,field)) throw new ApiError('حُدّثت هذه الخانة ولم تعد بحاجة إلى تنبيه',409)
+      const last = state.notices.find(notice=>notice.users?.includes(teacher.id)&&notice.recordReminder?.studentId===s.id
+        &&notice.recordReminder.circleId===circle.id&&notice.recordReminder.date===date&&notice.recordReminder.field===field)
+      const now = Date.now()
+      if (last && now-Date.parse(last.time)<reminderCooldown) throw new ApiError('أُرسل تنبيه لهذه الخانة مؤخرًا. انتظر قبل إعادة الإرسال.',409)
+      const message = recordReminderMessage(s.name,field,record?.attendance==='absent')
+      state.notices.unshift({id:idFor(),kind:'record-reminder',title:'تنبيه بشأن سجل طالب',en:'Student record reminder',
+        body:message.ar,bodyEn:message.en,time:new Date(now).toISOString(),users:[teacher.id],readBy:[],
+        recordReminder:{studentId:s.id,circleId:circle.id,date,field}})
+      state.audit.push({time:new Date(now).toISOString(),actor:u.name,action:'إرسال تنبيه إلى المحفّظ',target:s.id})
+      return
+    }
     case 'notice-read': {
-      for (const notice of state.notices) if ((!p.id || p.id === notice.id) && (!notice.users || notice.users.includes(u.id)) && (!notice.studentId || ids.has(notice.studentId)) && !notice.readBy.includes(u.id)) notice.readBy.push(u.id)
+      for (const notice of state.notices) if ((!p.id || p.id === notice.id) && noticeVisible(notice,u,ids)
+        && (!notice.studentId||ids.has(notice.studentId)) && matchesReminderCircle(notice,state) && !notice.readBy.includes(u.id)) notice.readBy.push(u.id)
       return
     }
     case 'leave': {
@@ -611,6 +641,9 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         return await push(request,user,payload)
       }
       if (events) {
+        if (url.searchParams.get('scope')==='reminders'&&user?.role==='teacher'&&user.status==='active') {
+          return Response.json({revision:current.revision,recipient:user.id},{headers})
+        }
         if (user?.role!=='admin'||user.status!=='active') return deny()
         return Response.json({revision:current.revision},{headers})
       }

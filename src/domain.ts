@@ -14,7 +14,11 @@ export type Daily = {
 }
 export type RecordSection = 'memorization' | 'review' | 'nextMemorization' | 'nextReview' | 'attendance' | 'points' | 'note'
 export type RecordEvent = { id: string; studentId: string; circleId: string; date: string; actorId: string; time: string; changes: RecordSection[] }
-export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; readBy: string[] }
+export const reminderFields = ['memorization','review','attendance'] as const
+export type ReminderField = typeof reminderFields[number]
+export type RecordReminder = { studentId:string; circleId:string; date:string; field:ReminderField }
+export type SentReminder = RecordReminder & { teacherId:string; time:string }
+export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; readBy: string[] }
 export type Leave = { id: string; studentId: string; date: string; reason: string; status: 'pending' | 'accepted' | 'declined' }
 export type Link = { id: string; parentId: string; studentId: string; status: 'pending' | 'accepted' | 'declined' }
 export type Prize = { id: string; name: string; description: string; price: number; stock: number; image?: string; active: boolean }
@@ -43,7 +47,25 @@ export type State = {
   rules: { memorization: number; review: number; attendance: number; chat: boolean }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'closedAccounts' | 'users'> & { users: User[]; user: User | null; date: string; revision: number; phoneEnabled: boolean; recordReminders?:SentReminder[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+
+export const reminderCooldown = 5 * 60_000
+export function needsRecordReminder(record:Daily|undefined,field:ReminderField) {
+  return field==='attendance'
+    ? !record || record.attendance==='pending' || record.attendance==='absent'
+    : !record?.[field].length
+}
+export function recordReminderMessage(student:string,field:ReminderField,absent:boolean) {
+  const missing = {
+    memorization:['لم يُسجَّل له الحفظ الجديد','has no new memorization recorded'],
+    review:['لم تُسجَّل له المراجعة','has no revision recorded'],
+    attendance:absent?['مُسجَّل غائبًا','is marked absent']:['لم يُسجَّل حضوره','has no attendance recorded'],
+  }[field]
+  return {
+    ar:`عزيزي المحفّظ، الطالب «${student}» ${missing[0]}. الرجاء التحقق من السجل وتحديثه عند الحاجة.`,
+    en:`Dear teacher, ${student} ${missing[1]}. Please review the record and update it if needed.`,
+  }
+}
 
 const names = 'الفاتحة البقرة آل_عمران النساء المائدة الأنعام الأعراف الأنفال التوبة يونس هود يوسف الرعد إبراهيم الحجر النحل الإسراء الكهف مريم طه الأنبياء الحج المؤمنون النور الفرقان الشعراء النمل القصص العنكبوت الروم لقمان السجدة الأحزاب سبأ فاطر يس الصافات ص الزمر غافر فصلت الشورى الزخرف الدخان الجاثية الأحقاف محمد الفتح الحجرات ق الذاريات الطور النجم القمر الرحمن الواقعة الحديد المجادلة الحشر الممتحنة الصف الجمعة المنافقون التغابن الطلاق التحريم الملك القلم الحاقة المعارج نوح الجن المزمل المدثر القيامة الإنسان المرسلات النبأ النازعات عبس التكوير الانفطار المطففين الانشقاق البروج الطارق الأعلى الغاشية الفجر البلد الشمس الليل الضحى الشرح التين العلق القدر البينة الزلزلة العاديات القارعة التكاثر العصر الهمزة الفيل قريش الماعون الكوثر الكافرون النصر المسد الإخلاص الفلق الناس'.split(' ')
 const roman = 'Al-Fatihah Al-Baqarah Ali_Imran An-Nisa Al-Maidah Al-Anam Al-Araf Al-Anfal At-Tawbah Yunus Hud Yusuf Ar-Rad Ibrahim Al-Hijr An-Nahl Al-Isra Al-Kahf Maryam Ta-Ha Al-Anbiya Al-Hajj Al-Muminun An-Nur Al-Furqan Ash-Shuara An-Naml Al-Qasas Al-Ankabut Ar-Rum Luqman As-Sajdah Al-Ahzab Saba Fatir Ya-Sin As-Saffat Sad Az-Zumar Ghafir Fussilat Ash-Shura Az-Zukhruf Ad-Dukhan Al-Jathiyah Al-Ahqaf Muhammad Al-Fath Al-Hujurat Qaf Adh-Dhariyat At-Tur An-Najm Al-Qamar Ar-Rahman Al-Waqiah Al-Hadid Al-Mujadilah Al-Hashr Al-Mumtahanah As-Saff Al-Jumuah Al-Munafiqun At-Taghabun At-Talaq At-Tahrim Al-Mulk Al-Qalam Al-Haqqah Al-Maarij Nuh Al-Jinn Al-Muzzammil Al-Muddaththir Al-Qiyamah Al-Insan Al-Mursalat An-Naba An-Naziat Abasa At-Takwir Al-Infitar Al-Mutaffifin Al-Inshiqaq Al-Buruj At-Tariq Al-Ala Al-Ghashiyah Al-Fajr Al-Balad Ash-Shams Al-Layl Ad-Duha Ash-Sharh At-Tin Al-Alaq Al-Qadr Al-Bayyinah Az-Zalzalah Al-Adiyat Al-Qariah At-Takathur Al-Asr Al-Humazah Al-Fil Quraysh Al-Maun Al-Kawthar Al-Kafirun An-Nasr Al-Masad Al-Ikhlas Al-Falaq An-Nas'.split(' ')

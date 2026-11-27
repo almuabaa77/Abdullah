@@ -100,6 +100,8 @@ const repository:Repository = {
     }
     if(saved&&id==='school') {
       revisions.publish(revision+1)
+      const recipients = new Set(notices.filter(notice=>notice.recordReminder).flatMap(notice=>notice.users ?? []))
+      if(recipients.size)revisions.publishReminders(revision+1,recipients)
       if(notices.length)void push.drain()
     }
     return saved
@@ -144,8 +146,8 @@ app.get('/api/workspace/events',async (req,res)=>{
   const response = await api(appRequest(req),repository,env)
   if (!response.ok) {await forward(res,response);return}
   if (res.destroyed) return
-  const {revision} = await response.json() as {revision:number}
-  revisions.connect(res,revision)
+  const {revision,recipient} = await response.json() as {revision:number;recipient?:string}
+  revisions.connect(res,revision,recipient)
 })
 app.use('/api',express.text({type:'application/json',limit:80000}),async (req,res)=>{
   if (req.method !== 'GET' && req.method !== 'POST') {

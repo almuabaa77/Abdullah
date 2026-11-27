@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, ListChecks, Plus, Sparkles, Trash2, UserCheck } from 'lucide-react'
-import { circleMeets, dayOffset, expandRange, idFor, isRecitationDue, pointsFor, sameSegments, segmentLabel, suggestNext, surahs, validateSegments, type Attendance, type Daily, type Result, type Segment, type Student } from './domain'
+import { circleMeets, dayOffset, expandRange, idFor, isRecitationDue, pointsFor, sameSegments, segmentLabel, suggestNext, surahs, validateSegments, type Attendance, type Daily, type ReminderField, type Result, type Segment, type Student } from './domain'
 import { Avatar, Modal, dateLabel, nameFor, statusText, useWorkspace, type WizardMode } from './ui'
 import { RecitationBadge, StudentPicker } from './recitation-roster'
 import { outcome, prepareRecitation, recitationKinds } from './recitation-draft'
@@ -42,10 +42,11 @@ function Segments({ value, change, label }: {value:Segment[];change:(next:Segmen
 
 const stages = [[BookOpen,'الحفظ الجديد','Memorization'],[ListChecks,'المراجعة','Revision'],[CalendarDays,'الجدولة القادمة','Assignment'],[CircleCheck,'النقاط والاعتماد','Points & submit']] as const
 const attendance = ['present','pending','absent','leave','excused'] as const
-export function EntryWizard({ student, mode, preset, circleId, close }: {student?:Student; mode:WizardMode; preset?:Partial<Daily>; circleId?:string; close:()=>void}) {
+export function EntryWizard({ student, mode, preset, circleId, focus, close }: {student?:Student; mode:WizardMode; preset?:Partial<Daily>; circleId?:string; focus?:ReminderField; close:()=>void}) {
   const {data,t,en,post,tell} = useWorkspace()
   const [selected,setStudent] = useState(student)
-  const initialStep = mode==='review'?1:0
+  const focusedRecitation = focus==='memorization'||focus==='review' ? focus : undefined
+  const initialStep = (focus ?? mode)==='review'?1:0
   const [step,setStep] = useState(initialStep)
   const [error,setError] = useState('')
   const [busy,setBusy] = useState(false)
@@ -58,7 +59,8 @@ export function EntryWizard({ student, mode, preset, circleId, close }: {student
   const init = (s:Student, records=data.daily, values=preset) => prepareRecitation(records,s.id,date,data.circles.find(c=>c.id===s.circleId),mode,values)
   const [entry,setEntry] = useState(()=>student?init(student):undefined)
   const [attendanceEdited,setAttendanceEdited] = useState(preset?.attendance !== undefined)
-  const title = editing ? t('تعديل سجل الطالب','Edit student record') : ({recite:t('تسجيل تسميع','Record recitation'),review:t('تسجيل مراجعة','Log revision'),attendance:t('تسجيل الحضور','Record attendance'),schedule:t('الجدولة القادمة','Upcoming assignment'),points:t('تعديل النقاط','Adjust points'),edit:t('تعديل سجل الطالب','Edit student record')})[mode]
+  const title = focusedRecitation==='memorization' ? t('الحفظ الجديد','New memorization') : focusedRecitation==='review' ? t('المراجعة','Revision')
+    : editing ? t('تعديل سجل الطالب','Edit student record') : ({recite:t('تسجيل تسميع','Record recitation'),review:t('تسجيل مراجعة','Log revision'),attendance:t('تسجيل الحضور','Record attendance'),schedule:t('الجدولة القادمة','Upcoming assignment'),points:t('تعديل النقاط','Adjust points'),edit:t('تعديل سجل الطالب','Edit student record')})[mode]
   const select = (s:Student, next=init(s)) => {
     setStudent(s);setEntry(next);setStep(initialStep);setError('');setDirty(false)
     setAttendanceEdited(next.draft.attendance!==next.base.attendance);setEditing(mode==='edit');setOp(idFor())
@@ -78,7 +80,8 @@ export function EntryWizard({ student, mode, preset, circleId, close }: {student
     confirmed[kind] = base[kind]
     confirmed[outcome[kind]] = base[outcome[kind]]
   }
-  const changedRecitation = recitationKinds.filter(kind=>!sameSegments(base[kind],confirmed[kind]) || base[outcome[kind]]!==confirmed[outcome[kind]])
+  const changedRecitation = recitationKinds.filter(kind=>(!focusedRecitation||kind===focusedRecitation)
+    &&(!sameSegments(base[kind],confirmed[kind])||base[outcome[kind]]!==confirmed[outcome[kind]]))
   const automatic = isRecite&&(!editing||!existing)&&changedRecitation.some(kind=>confirmed[kind].length>0)?'present':draft.attendance
   const recorded = attendanceEdited||mode==='attendance'?draft.attendance:automatic
   const recordedAttendance = recorded==='pending'&&data.closed.includes(selected.circleId+'/'+date)?'absent':recorded
@@ -93,6 +96,9 @@ export function EntryWizard({ student, mode, preset, circleId, close }: {student
   const save = async (continueNext=false) => {
     setBusy(true);setError('')
     try {
+      if(focusedRecitation&&(!confirmed[focusedRecitation].length||suggested.includes(focusedRecitation))) {
+        throw new Error(t('أضف مقطعًا وأكّد حالة الإنجاز قبل الحفظ.','Add a passage and confirm the outcome before saving.'))
+      }
       const values:Record<string,unknown> = {studentId:selected.id,date:draft.date,entry:editing?'edit':'record',baseVersion:base.version ?? 0}
       if (mode==='attendance'||attendanceEdited) values.attendance = draft.attendance
       if (mode==='points'||isRecite) {
@@ -138,8 +144,8 @@ export function EntryWizard({ student, mode, preset, circleId, close }: {student
     <div className="modal-body" ref={body}>
       <div className="wizard-student entry-student"><Avatar student={selected}/><div><strong>{nameFor(selected,en)}</strong><p>{dateLabel(draft.date,en,true)}</p></div><RecitationBadge record={existing}/></div>
       {changedElsewhere&&<div className="error-box" role="status">{t('حُدّث هذا السجل في جلسة أخرى. حمّل آخر نسخة قبل الحفظ.','This record changed in another session. Load the latest version before saving.')} <button className="text-button" type="button" onClick={()=>{if(!dirty||window.confirm(t('استبدال المسودة بالتغييرات المحفوظة؟','Replace the draft with the saved changes?')))select(selected,init(selected,data.daily,{date}))}}>{t('تحميل آخر نسخة','Load latest version')}</button></div>}
-      {isRecite&&<div className="stepper">{stages.map(([Icon,ar,enLabel],index)=><button type="button" key={ar} className={index===step?'current':index<step?'done':''} disabled={!editing&&index>step} aria-current={index===step?'step':undefined} onClick={()=>navigate(index)}><span>{index<step&&!editing?<Check size={16}/>:<Icon size={16}/>}</span><small>{t(ar,enLabel)}</small></button>)}</div>}
-      {isRecite&&<div className="entry-stage-title"><span>{t(`المرحلة ${step+1} من ${stages.length}`,`Step ${step+1} of ${stages.length}`)}</span><h3>{t(stages[step][1],stages[step][2])}</h3></div>}
+      {isRecite&&!focusedRecitation&&<div className="stepper">{stages.map(([Icon,ar,enLabel],index)=><button type="button" key={ar} className={index===step?'current':index<step?'done':''} disabled={!editing&&index>step} aria-current={index===step?'step':undefined} onClick={()=>navigate(index)}><span>{index<step&&!editing?<Check size={16}/>:<Icon size={16}/>}</span><small>{t(ar,enLabel)}</small></button>)}</div>}
+      {isRecite&&!focusedRecitation&&<div className="entry-stage-title"><span>{t(`المرحلة ${step+1} من ${stages.length}`,`Step ${step+1} of ${stages.length}`)}</span><h3>{t(stages[step][1],stages[step][2])}</h3></div>}
       {isRecite&&step<2&&(locked ? <div className="entry-saved-section">
         <strong><CircleCheck size={18}/>{t('مسجّل في سجل اليوم','Already recorded today')}</strong>
         <p>{segmentLabel(base[kind],en)} · {statusText(base[resultKey],t)}</p>
@@ -171,11 +177,11 @@ export function EntryWizard({ student, mode, preset, circleId, close }: {student
       {error&&<div className="error-box" role="alert">{error}</div>}
     </div>
     <div className="modal-foot entry-foot">
-      <button className="btn btn-outline entry-back" type="button" disabled={busy} onClick={()=>{if(isRecite&&step>0)navigate(step-1);else exit()}}>{isRecite&&step>0?t('رجوع','Back'):t('إلغاء','Cancel')}</button>
+      <button className="btn btn-outline entry-back" type="button" disabled={busy} onClick={()=>{if(isRecite&&!focusedRecitation&&step>0)navigate(step-1);else exit()}}>{isRecite&&!focusedRecitation&&step>0?t('رجوع','Back'):t('إلغاء','Cancel')}</button>
       {isRecite&&step===3&&nextStudent&&<button className="btn btn-outline" type="button" disabled={busy||changedElsewhere} onClick={()=>void save(true)}>{t('حفظ وتسميع التالي','Save and recite next')}</button>}
-      <button className="btn btn-primary" type="button" disabled={busy||changedElsewhere} onClick={isRecite&&step<3&&!editing?advance:()=>void save()}>
-        {busy?t('جارٍ الحفظ…','Saving…'):editing?t('حفظ التعديل','Save changes'):isRecite&&step<3?t('متابعة','Continue'):t('اعتماد وحفظ','Confirm and save')}
-        {(!isRecite||editing||step===3)&&<Check size={17}/>}
+      <button className="btn btn-primary" type="button" disabled={busy||changedElsewhere} onClick={isRecite&&!focusedRecitation&&step<3&&!editing?advance:()=>void save()}>
+        {busy?t('جارٍ الحفظ…','Saving…'):editing?t('حفظ التعديل','Save changes'):isRecite&&!focusedRecitation&&step<3?t('متابعة','Continue'):t('اعتماد وحفظ','Confirm and save')}
+        {(!isRecite||focusedRecitation||editing||step===3)&&<Check size={17}/>}
       </button>
     </div>
   </Modal>

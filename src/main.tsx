@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDownToLine, Bell, BookOpen, CalendarDays, Check, ChevronDown, CircleAlert, ClipboardList, Ellipsis, Globe, Home, LogIn, LogOut, Menu, MessageCircle, ShieldCheck, ShoppingBag, Sparkles, Smartphone, UserCheck, WifiOff, X } from 'lucide-react'
-import { callState, idFor, type Daily, type Student, type View } from './domain'
+import { callState, idFor, type Daily, type Notice, type ReminderField, type Student, type View } from './domain'
 import { Context, Brand, Empty, Modal, RoleName, type Page, type Tr, type WizardMode } from './ui'
 import { Dashboard, StudentHome } from './dashboard'
 import { EntryWizard } from './wizard'
@@ -27,6 +27,7 @@ const currentPage = ():Page => {
   return pages.includes(fragment) ? fragment as Page : 'home'
 }
 const phoneRequested = () => new URLSearchParams(location.search).get('signin')==='phone'
+const requestedReminder = () => new URLSearchParams(location.search).get('reminder')
 const emptyData:View = {
   user:null,date:'',revision:0,phoneEnabled:false,sample:false,students:[],users:[],circles:[],daily:[],closed:[],notices:[],links:[],prizes:[],orders:[],exams:[],leaves:[],rules:{memorization:4,review:4,attendance:2,chat:true},chats:[],audit:[],
 }
@@ -86,7 +87,8 @@ function App() {
   const [openPanel,setOpenPanel] = useState<'notices'|'profile'|'navigation'|''>('')
   const [phone,setPhone] = useState(phoneRequested)
   const [toast,setToast] = useState<{text:string;error:boolean}>()
-  const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>;circleId?:string}>()
+  const [wizard,setWizard] = useState<{student?:Student;mode:WizardMode;preset?:Partial<Daily>;circleId?:string;focus?:ReminderField}>()
+  const [reminderId,setReminderId] = useState(requestedReminder)
   const [online,setOnline] = useState(navigator.onLine)
   const [permissions,setPermissions] = useState(false)
   const [install,setInstall] = useState<InstallEvent|null>(null)
@@ -131,7 +133,7 @@ function App() {
     const nav=()=>{
       const next=currentPage()
       if(next==='admin'&&location.pathname!=='/admin')history.replaceState(null,'','/admin')
-      setPage(next);setOpenPanel('');setPhone(phoneRequested())
+      setPage(next);setOpenPanel('');setPhone(phoneRequested());setReminderId(requestedReminder())
     }
     nav()
     const change=()=>setOnline(navigator.onLine)
@@ -239,7 +241,7 @@ function App() {
     }
     return result
   }
-  const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>,circleId?:string) => setWizard({student,mode,preset,circleId})
+  const open = (student?:Student,mode:WizardMode='recite',preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => setWizard({student,mode,preset,circleId,focus})
   const teacher = data.user?.role==='teacher'||data.user?.role==='admin'
   const student=data.user?.role==='student'
   const notices=data.notices.filter(n=>!n.readBy.includes(data.user?.id||''))
@@ -252,6 +254,37 @@ function App() {
   const manager=Boolean(adminAccess&&token)
   const adminPage = page==='admin'||manager
   const workspaceVisible=show&&!adminPage
+  const receivingReminders = Boolean(workspaceVisible&&data.user?.role==='teacher'&&token&&online)
+  useEffect(()=>{
+    if(!receivingReminders)return
+    return subscribeRecordRevisions(token,revision=>{
+      if(revision>latestView.current.revision)refreshWorkspace.current()
+    },()=>{},true)
+  },[receivingReminders,token])
+  const openNotice = (notice:Notice) => {
+    if(notice.recordReminder&&data.user?.role==='teacher') {
+      const {studentId,circleId,date,field}=notice.recordReminder
+      const target=data.students.find(student=>student.id===studentId&&student.active&&student.circleId===circleId)
+      if(!target){tell(t('سجل الطالب غير متاح لهذا الحساب.','This student record is unavailable to this account.'),true);return}
+      const record=data.daily.find(entry=>entry.studentId===studentId&&entry.date===date)
+      const mode=field==='attendance'?'attendance':record?.[field].length?'edit':field==='review'?'review':'recite'
+      go('records')
+      open(target,mode,{date},circleId,field)
+    }
+    if(!notice.readBy.includes(data.user?.id||''))void post('notice-read',{id:notice.id}).catch(e=>tell(e.message,true))
+  }
+  useEffect(()=>{
+    if(!reminderId||!workspaceVisible||data.user?.role!=='teacher')return
+    const url=new URL(location.href)
+    if(url.searchParams.has('reminder')){
+      url.searchParams.delete('reminder')
+      history.replaceState(history.state,'',url)
+    }
+    setReminderId(null)
+    const notice=data.notices.find(item=>item.id===reminderId&&item.recordReminder)
+    if(notice)openNotice(notice)
+    else tell(t('هذا التنبيه غير متاح لهذا الحساب.','This reminder is unavailable to this account.'),true)
+  },[reminderId,workspaceVisible,data.user,data.notices,openNotice,tell,t])
   useEffect(()=>{if(manager&&page!=='admin')go('admin',true)},[manager,page,go])
   const streamEnabled = Boolean(adminPage&&adminAccess&&token&&online)
   useEffect(()=>{
@@ -287,6 +320,7 @@ function App() {
   const chatOpen=workspaceVisible&&page==='chat'
   const teacherNavigation=workspaceVisible&&data.user?.role==='teacher'&&!chatOpen
   const incomingCall=workspaceVisible&&!chatOpen&&data.calls?.some(call=>call.to===data.user?.id&&callState(call)==='ringing')
+  const incomingReminder=workspaceVisible&&data.user?.role==='teacher'&&!chatOpen&&!wizard&&notices.find(notice=>notice.recordReminder)
   const activeChatCall=chatOpen&&data.calls?.some(call=>{
     const status=callState(call)
     return status==='ringing'||status==='accepted'&&Date.now()-Date.parse(call.updatedAt)<30_000
@@ -351,7 +385,7 @@ function App() {
               <div className="topbar-rule" />
               <div className="relative"><button className="icon-button notification-trigger" onClick={()=>setOpenPanel(openPanel==='notices'?'':'notices')} aria-label={t('الإشعارات','Notifications')} aria-expanded={openPanel==='notices'}><Bell size={21}/>{notices.length>0&&<i/>}</button>
               {openPanel==='notices'&&<div className="popover notifications"><div className="section-title"><h2>{t('الإشعارات','Notifications')}</h2><button className="text-button" onClick={()=>void post('notice-read').catch(e=>tell(e.message,true))}>{t('تحديد الكل كمقروء','Mark all read')}</button></div>
-                {data.notices.slice(0,30).map(n=><button key={n.id} className={'notice-row '+(!n.readBy.includes(data.user?.id||'')?'unread':'')} onClick={()=>void post('notice-read',{id:n.id}).catch(e=>tell(e.message,true))}><span className="stat-icon tint-green"><Bell size={16}/></span><span><strong>{en&&n.en?n.en:n.title}</strong><small>{en&&n.bodyEn?n.bodyEn:n.body}</small></span></button>)}
+                {data.notices.slice(0,30).map(n=><button key={n.id} className={'notice-row '+(!n.readBy.includes(data.user?.id||'')?'unread':'')} onClick={()=>openNotice(n)}><span className="stat-icon tint-green"><Bell size={16}/></span><span><strong>{en&&n.en?n.en:n.title}</strong><small>{en&&n.bodyEn?n.bodyEn:n.body}</small>{n.recordReminder&&<small className="notice-record-action">{t('فتح سجل الطالب','Open student record')}</small>}</span></button>)}
                 {!data.notices.length&&<Empty title={t('لا توجد إشعارات','No notifications')}/>}
                 {token&&<button className="text-button notification-permissions" type="button" onClick={()=>{setOpenPanel('');setPermissions(true)}}>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>}
               </div>}</div>
@@ -366,6 +400,11 @@ function App() {
           {availableUpdate&&!phone&&(!adminPage||token)&&<div className="update-banner" role="status"><span>{t('يتوفر تحديث للتطبيق','An app update is available')}</span><button className="btn btn-outline compact" type="button" onClick={()=>applyAppUpdate(availableUpdate)}>{t('تحديث الآن','Update now')}</button></div>}
           {incomingCall&&<div className="update-banner" role="status"><span>{t('لديك مكالمة واردة','You have an incoming call')}</span>
             <button className="btn btn-outline compact" type="button" onClick={()=>go('chat')}>{t('فتح الدردشة','Open chat')}</button></div>}
+          {incomingReminder&&<div className="update-banner record-reminder-banner" role="status">
+            <span>{en&&incomingReminder.bodyEn?incomingReminder.bodyEn:incomingReminder.body}</span>
+            <button className="btn btn-outline compact" type="button" onClick={()=>openNotice(incomingReminder)}>{t('فتح سجل الطالب','Open student record')}</button>
+            <button className="icon-button mini" type="button" aria-label={t('تحديد التنبيه كمقروء','Mark reminder read')} onClick={()=>void post('notice-read',{id:incomingReminder.id}).catch(e=>tell(e.message,true))}><X size={16}/></button>
+          </div>}
           {!online&&<div className="offline-banner"><WifiOff size={17}/>{t('أنت غير متصل. سيستأنف حفظ العمليات المفتوحة عند عودة الاتصال.','You are offline. Open changes can resume on reconnection.')}</div>}
           {loadingView?<Starting/>:loadError?<div className="panel"><Empty title={t('تعذر تحميل المنصة','Could not load the workspace')} body={loadError} action={sessionExpired?<button className="btn btn-primary" onClick={()=>void exit()}>{t('تسجيل الدخول مجددًا','Sign in again')}</button>:<button className="btn btn-primary" onClick={()=>setRecheck(n=>n+1)}>{t('إعادة المحاولة','Retry')}</button>}/></div>:data.accountAccess?<AccountAccess status={data.accountAccess} signOut={exit}/>:adminPage?adminContent:unregistered?<section className="panel section-panel intro-card signup-card"><div className="signup-verified"><Check size={16}/>{t('تم التحقق من رقم الجوال','Phone number verified')}</div><h1>{t('إكمال طلب التسجيل','Complete your registration')}</h1><p>{t('عرّفنا بنفسك واختر نوع الحساب. تراجع إدارة الحلقات الطلب قبل التفعيل.','Tell us about yourself and choose an account type. Administration reviews the request before activation.')}</p><form className="form-stack" onSubmit={async e=>{e.preventDefault();setRegistering(true);try{await post('register',Object.fromEntries(new FormData(e.currentTarget)))}catch(e){tell((e as Error).message,true)}finally{setRegistering(false)}}}><label>{t('الاسم الكامل','Full name')}<input name="name" autoComplete="name" maxLength={90} required/></label><label>{t('نوع الحساب','Account type')}<select name="role"><option value="teacher">{t('محفّظ','Teacher')}</option><option value="student">{t('طالب','Student')}</option><option value="parent">{t('ولي أمر','Guardian')}</option></select></label><button className="btn btn-primary" disabled={registering}>{t('إرسال طلب التسجيل','Submit registration')}</button></form><button className="text-button" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button></section>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone}/>:
           <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={page+role}>{page==='assistant'&&teacher?<Assistant/>:page==='records'?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard/>:<StudentHome/>}</div>}

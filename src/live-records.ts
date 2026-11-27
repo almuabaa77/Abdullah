@@ -1,7 +1,7 @@
 export type RecordStreamStatus = 'connecting' | 'live' | 'polling'
 
-async function readRevisions(token:string,signal:AbortSignal,onRevision:(revision:number)=>void,onHeartbeat:()=>void) {
-  const response = await fetch('/api/workspace/events',{headers:{Authorization:'Bearer '+token},cache:'no-store',signal})
+async function readRevisions(token:string,signal:AbortSignal,onRevision:(revision:number)=>void,onHeartbeat:()=>void,reminders:boolean) {
+  const response = await fetch('/api/workspace/events'+(reminders?'?scope=reminders':''),{headers:{Authorization:'Bearer '+token},cache:'no-store',signal})
   if (!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) throw new Error('Record updates unavailable')
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
   let pending = ''
@@ -28,7 +28,7 @@ async function readRevisions(token:string,signal:AbortSignal,onRevision:(revisio
   }
 }
 
-export function subscribeRecordRevisions(token:string,onRevision:(revision:number)=>void,onStatus:(status:RecordStreamStatus)=>void) {
+export function subscribeRecordRevisions(token:string,onRevision:(revision:number)=>void,onStatus:(status:RecordStreamStatus)=>void,reminders=false) {
   let closed = false
   let current:AbortController|undefined
   let retry:number|undefined
@@ -44,7 +44,7 @@ export function subscribeRecordRevisions(token:string,onRevision:(revision:numbe
         deadline = window.setTimeout(()=>connection.abort(),22_000)
         delay = 1500
         onStatus('live')
-      })
+      },reminders)
     } catch { /* Periodic reads keep the view current during a stream interruption. */ }
     finally {window.clearTimeout(deadline)}
     if (closed) return
