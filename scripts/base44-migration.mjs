@@ -64,7 +64,7 @@ async function execute(){
   if(action==='capture'){
     const root=await outPath()
     const results=await captureArchive(root,{appId:required('app'),input:values.input,token:process.env.BASE44_PERSONAL_ACCESS_TOKEN,draft:values.draft})
-    console.log(JSON.stringify({sealed:!values.draft,tables:results.tables,assets:results.assets,functions:results.functions,metadata:results.metadata},null,2))
+    console.log(JSON.stringify({sealed:!values.draft,tables:results.tables,assets:results.assets,functions:results.functions,metadata:results.metadata,trash:results.trash},null,2))
   }else if(action==='verify'){
     const {manifest,digest}=await inspect(await verifyPrivatePath(required('archive')))
     console.log(JSON.stringify({sha256:digest,tables:manifest.tables,assets:manifest.assets,metadata:manifest.metadata},null,2))

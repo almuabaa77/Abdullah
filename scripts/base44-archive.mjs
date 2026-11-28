@@ -132,14 +132,18 @@ function inventory(spec) {
   return {tables:[...tables].sort(),functions:[...functions].sort()}
 }
 
-async function getResponse(url,token,accept='application/json') {
+async function getResponse(url,token,accept='application/json',redirectTo) {
   for(let attempt=0;attempt<4;attempt++){
     let response
     const headers=token?{Authorization:'Bearer '+token,Accept:accept}:{Accept:accept}
-    try {response=await fetch(url,{headers,redirect:'error',signal:AbortSignal.timeout(120_000)})}
+    try {response=await fetch(url,{headers,redirect:redirectTo?'manual':'error',signal:AbortSignal.timeout(120_000)})}
     catch {if(attempt===3)throw new Error('Connection to the Base44 API failed. Re-run capture to resume.')}
     if(response?.ok)return response
     await response?.body?.cancel()
+    if(redirectTo&&response?.status>=300&&response.status<400){
+      const next=redirectTo(response.headers.get('location'))
+      if(next)return getResponse(next,undefined,accept)
+    }
     if(response&&response.status!==429&&response.status<500)throw new Error('Base44 returned HTTP '+response.status)
     if(attempt===3)throw new Error('Base44 returned HTTP '+response?.status+'. Re-run capture to resume.')
     const requested=response?.headers.get('Retry-After')
@@ -163,11 +167,11 @@ async function cachedJson(path,url,token){
   }catch(error){if(!unavailable(error))throw error}
 }
 
-async function saveDownload(path,url,{token,zip=false}={}){
+async function saveDownload(path,url,{token,zip=false,redirectTo}={}){
   if(await lstat(path).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error)))return true
   const temp=path+'.'+randomUUID()+'.tmp'
   try{
-    const response=await getResponse(url,token,zip?'application/zip':'*/*')
+    const response=await getResponse(url,token,zip?'application/zip':'*/*',redirectTo)
     const type=response.headers.get('content-type')?.split(';')[0]
     if(!response.body||type==='text/html'||zip&&!['application/zip','application/x-zip-compressed','application/octet-stream'].includes(type)){
       await response.body?.cancel()
@@ -244,8 +248,9 @@ async function captureMetadata(root,appId,token){
 function mediaUrl(value,appId){
   try {
     const url=new URL(value,'https://media.base44.com')
-    if(url.origin!=='https://media.base44.com'||url.username||url.password||
-      !url.pathname.startsWith('/files/public/'+appId+'/'))return
+    const current=url.origin==='https://media.base44.com'&&['files','images'].some(area=>url.pathname.startsWith('/'+area+'/public/'+appId+'/'))
+    const legacy=url.origin==='https://base44.app'&&url.pathname.startsWith('/api/apps/'+appId+'/files/mp/public/'+appId+'/')
+    if((!current&&!legacy)||url.username||url.password)return
     url.hash=''
     return url
   }catch{}
@@ -261,12 +266,19 @@ async function captureTable(root,appId,name,token) {
     let entry=await readJson(path).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error))
     if(!entry){
       if(!token)return {issue:'Capture of this table needs source access'}
-      const url=new URL('https://app.base44.com/api/apps/'+appId+'/entities/'+encodeURIComponent(name)+'/v2/list')
+      const entity='entities/'+encodeURIComponent(name)
+      const userList=name==='User'
+      const url=apiUrl(appId,userList?entity:entity+'/v2/list')
       url.searchParams.set('sort','id');url.searchParams.set('limit','500')
-      if(cursor)url.searchParams.set('cursor',cursor)
+      if(cursor)url.searchParams.set(userList?'skip':'cursor',cursor)
       const response=await getJson(url,token)
-      if(response.has_more!==(typeof response.next_cursor==='string'&&Boolean(response.next_cursor)))throw new Error('Invalid pagination response in '+name+'.')
-      entry={cursor,rows:recordsFrom(response.items),next:response.next_cursor??null}
+      if(userList){
+        const rows=recordsFrom(response)
+        entry={cursor,rows,next:rows.length>=500?String(Number(cursor??0)+rows.length):null}
+      }else{
+        if(response.has_more!==(typeof response.next_cursor==='string'&&Boolean(response.next_cursor)))throw new Error('Invalid pagination response in '+name+'.')
+        entry={cursor,rows:recordsFrom(response.items),next:response.next_cursor??null}
+      }
       await writeJson(path,entry)
     }
     if(entry.cursor!==cursor||entry.next!==null&&(typeof entry.next!=='string'||!entry.next||cursors.has(entry.next)))throw new Error('Pagination changed or repeated in '+name+'.')
@@ -308,6 +320,30 @@ export async function tablesFrom(root,manifest) {
     if(tables[name]&&tables[name].length!==entry.count)throw new Error('Table record count changed.')
   }
   return tables
+}
+
+async function captureTrash(root,appId,tables,token){
+  const dir=join(root,'trash')
+  if(!token&&!await lstat(dir).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error)))return
+  await privateDir(dir)
+  const names=tables.filter(table=>table.name!=='User').map(table=>table.name)
+  const entries=[]
+  for(let index=0;index<names.length;index+=5){
+    const group=await Promise.all(names.slice(index,index+5).map(async name=>{
+      const raw=await cachedJson(join(dir,name+'.json'),apiUrl(appId,'entities/'+encodeURIComponent(name)+'/trash'),token)
+      if(raw===undefined)return [name,undefined]
+      const rows=recordsFrom(raw)
+      if(rows.some(row=>typeof row.id!=='string'||!row.id)||new Set(rows.map(row=>row.id)).size!==rows.length)throw new Error('Missing or duplicate trash IDs in '+name+'.')
+      return [name,rows]
+    }))
+    entries.push(...group)
+  }
+  const archived=entries.filter(([,rows])=>rows!==undefined)
+  return {tables:Object.fromEntries(archived),summary:{
+    checked:archived.length,records:archived.reduce((sum,[,rows])=>sum+rows.length,0),
+    unavailable:entries.filter(([,rows])=>rows===undefined).map(([name])=>name),
+    userTrash:'not-exposed',
+  }}
 }
 
 export function attachmentCandidates(tables) {
@@ -388,7 +424,9 @@ export async function captureArchive(root,{appId,input,token,draft=false}) {
     }else if(typeof item.file!=='string'||!availableAssets.has(item.file))missingAssets++
     inventoried.add(item.sourceUri)
   }
-  const candidates=attachmentCandidates(await tablesFrom(root,{tables}))
+  const trash=await captureTrash(root,appId,tables,token)
+  const trashTables=Object.fromEntries(Object.entries(trash?.tables??{}).map(([name,rows])=>['Trash/'+name,rows]))
+  const candidates=attachmentCandidates({...await tablesFrom(root,{tables}),...trashTables})
   const libraryUris=new Set()
   let uncataloguedLibraryFiles=0
   for(const asset of metadata?.assets??[]){
@@ -409,7 +447,11 @@ export async function captureArchive(root,{appId,input,token,draft=false}) {
       if(!url)continue
       const extension=url.pathname.match(/\.[a-z0-9]{1,10}$/i)?.[0].toLowerCase()??'.bin'
       const file=sha256(url.href)+extension
-      if(token?await saveDownload(join(path,file),url):await optionalFile(join(path,file))){
+      const redirectTo=url.origin==='https://base44.app'?location=>{
+        const next=mediaUrl(location,appId)
+        return next?.origin==='https://media.base44.com'?next:undefined
+      }:undefined
+      if(token?await saveDownload(join(path,file),url,{redirectTo}):await optionalFile(join(path,file))){
         inventoried.add(sourceUri)
         downloads.push({sourceUri,file:'files/'+file})
       }
@@ -424,7 +466,7 @@ export async function captureArchive(root,{appId,input,token,draft=false}) {
     listing.push({path,size:(await stat(full)).size,sha256:await hashFile(full)})
   }
   const manifest={format:1,appId,capturedAt:new Date().toISOString(),hasOpenApi:Boolean(supplied??metadata?.spec),tables,functions:expected.functions,
-    metadata:metadata?.summary,assets:{
+    metadata:metadata?.summary,trash:trash?.summary,assets:{
       inventory:Boolean(assetRecords)||Boolean(metadata?.summary.assetCatalog&&!metadata.summary.libraryCapped),
       listed:(assetRecords?.length??0)+downloads.length,missing:missingAssets+uncataloguedLibraryFiles,
       unlisted:unlisted.length,files:availableAssets.size+new Set(downloads.map(item=>item.file)).size
