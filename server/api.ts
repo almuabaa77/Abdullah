@@ -286,7 +286,8 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     const index = state.daily.findIndex(x => x.date === d.date && x.studentId === d.studentId)
     const previous = state.daily[index] ?? emptyDaily(d.studentId,d.date,circleOf(student))
     if (!recordChanges(previous,d).length) return false
-    d.points = pointsFor(d, state.rules)
+    const calculated=pointsFor(d,state.rules)
+    d.points=d.historicalImport?previous.points+calculated-pointsFor(previous,state.rules):calculated
     const changes = recordChanges(previous,d)
     const time = new Date().toISOString()
     d.version = (previous.version ?? 0) + 1
@@ -294,9 +295,11 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     if (index < 0) state.daily.push(d)
     else state.daily[index] = d
     state.recordEvents = [{id:idFor(),studentId:d.studentId,circleId:student.circleId,date:d.date,actorId:u.id,time,changes},...(state.recordEvents ?? [])].slice(0,160)
-    const assessment=scheduleAssessment(state,student,circleOf(student))
-    if(assessment)state.notices.unshift(assessment)
-    if(changes.includes('memorization'))evaluateAssessmentEligibility(state,student)
+    if(!d.historicalImport){
+      const assessment=scheduleAssessment(state,student,circleOf(student))
+      if(assessment)state.notices.unshift(assessment)
+      if(changes.includes('memorization'))evaluateAssessmentEligibility(state,student)
+    }
     if (previous.points !== d.points) state.audit.push({ time, actor: u.name, action: 'تحديث النقاط', target: d.studentId, before:previous.points, after:d.points })
     return true
   }
@@ -345,7 +348,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       const explicit=p.attendance===undefined?undefined:choice(p.attendance,['present','absent','excused','leave','pending'] as const)
       Object.assign(d,resolveAttendance(previous,d,explicit,state.closed.includes(s.circleId+'/'+date),p.confirmDefaultAttendance===true))
       if (!writeRecord(d,s)) return false
-      notify(state, 'daily', `تحديث سجل ${s.name}`, `${date} · ${d.points} نقاط`, { studentId: s.id })
+      if(!d.historicalImport)notify(state, 'daily', `تحديث سجل ${s.name}`, `${date} · ${d.points} نقاط`, { studentId: s.id })
       return
     }
     case 'close': {
@@ -362,7 +365,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
         if (d.attendance !== 'pending') continue
         const result=resolveAttendance(d,d,undefined,true)
         writeRecord({...d,...result},s)
-        if(result.attendance==='absent')notify(state,'attendance',`غياب ${s.name}`,date,{studentId:s.id})
+        if(result.attendance==='absent'&&!d.historicalImport)notify(state,'attendance',`غياب ${s.name}`,date,{studentId:s.id})
       }
       state.closed.push(key)
       break

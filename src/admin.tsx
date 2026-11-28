@@ -8,6 +8,7 @@ import { circleMeets, type Circle, type Prize, type Student, type User } from '.
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
+import { AdminOverview } from './admin-overview'
 import { LessonCenter } from './lesson-center'
 import { ChatPage } from './chat'
 import { AdminChats } from './admin-chats'
@@ -24,8 +25,8 @@ type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'p
 const weekDays = [['الأحد','Sun'],['الاثنين','Mon'],['الثلاثاء','Tue'],['الأربعاء','Wed'],['الخميس','Thu'],['الجمعة','Fri'],['السبت','Sat']] as const
 
 const sections = [
+  {id:'overview',group:'monitor',icon:LayoutGrid,label:['نظرة عامة','Overview'],short:['نظرة عامة','Overview']},
   {id:'live',group:'monitor',icon:Activity,label:['المتابعة المباشرة','Live monitoring'],short:['المتابعة','Live']},
-  {id:'overview',group:'monitor',icon:LayoutGrid,label:['الإحصاءات العامة','Overview']},
   {id:'records',group:'monitor',icon:ClipboardList,label:['السجلات والتقارير','Records & reports']},
   {id:'audit',group:'monitor',icon:History,label:['سجل العمليات','Audit log']},
   {id:'people',group:'school',icon:Users,label:['الحسابات وطلبات التسجيل','Accounts & enrollment'],short:['الحسابات','Accounts'],add:['إضافة حساب','Add account'],edit:'invite',search:true},
@@ -205,7 +206,6 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     if(rosterToday.has(student.id))circleEntries.set(student.circleId,(circleEntries.get(student.circleId)??0)+1)
   }
   const pendingCount=data.users.filter(user=>user.status==='pending').length
-  const pendingLinks=data.links.filter(link=>link.status==='pending').length
   const activeBadge=(account:User)=>account.duplicateOf?t('بانتظار تأكيد الإنهاء','Awaiting closure confirmation'):account.status==='pending'?t('بانتظار الاعتماد','Pending approval'):undefined
   const searchTitle=t('بحث في هذا القسم','Search this section')
   const primaryActive=mobileSections.some(section=>section.id===tab)
@@ -252,30 +252,10 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
             <option value="active">{t('نشطة','Active')}</option><option value="disabled">{t('موقوفة','Suspended')}</option>
           </select>}
         </div>}
-        {tab==='overview'&&<>
-          <div className="summary-grid admin-metrics">
-            {([
-              ['circles',BookOpen,data.circles.length,t('الحلقات','Circles')],
-              ['students',GraduationCap,data.students.length,t('الطلاب','Students')],
-              ['people',Users,pendingCount,t('طلبات التسجيل','Registration requests')],
-              ['links',Link2,pendingLinks,t('طلبات الربط','Family link requests')],
-              ['records',ClipboardList,data.daily.length,t('سجلات التسميع','Recitation records')],
-            ] as const).map(([id,Icon,count,label])=><button type="button" className="record-tile admin-metric" key={id} onClick={()=>{
-              openTab(id)
-              if(id==='people')setAccountFilter('pending')
-            }}>
-              <span className="stat-icon tint-green"><Icon size={18}/></span><strong className="big-number">{count}</strong><span>{label}</span>
-            </button>)}
-          </div>
-          <div className="more-list">{([
-            [ClipboardList,'records',t('الحفظ والمراجعة والحضور والتقارير','Recitation, attendance and reports')],
-            [CalendarDays,'exams',t('إدارة الاختبارات','Manage assessments')],
-            [UserCheck,'leaves',t('إدارة الاستئذانات','Manage leave')],
-            [MessageCircle,'chats',t('الإشراف على المحادثات','Oversee conversations')],
-          ] as const).map(([Icon,page,label])=><button className="more-row" type="button" key={page} onClick={()=>openTab(page)}>
-            <span className="stat-icon tint-green"><Icon size={17}/></span><strong>{label}</strong>
-          </button>)}</div>
-        </>}
+        {tab==='overview'&&<AdminOverview open={id=>{
+          openTab(id)
+          if(id==='people')setAccountFilter('pending')
+        }}/>}
         {tab==='live'&&<AdminLive status={liveRecords} online={online}/>}
         {tab==='duplicates'&&<DuplicateAccounts/>}
         {tab==='records'&&<Records embedded/>}

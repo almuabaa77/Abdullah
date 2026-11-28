@@ -393,3 +393,26 @@ body:has(.live-register-expanded) {overflow:hidden}
     max-height:max(215px,calc(100dvh - var(--header-size) - 255px - env(safe-area-inset-bottom)));
   }
 }
+
+.admin-overview,.admin-overview-columns>section {display:grid;gap:12px;min-width:0}
+.admin-overview .admin-metrics {margin:0}
+.admin-overview-filters,.admin-overview-period,.admin-overview-links {display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+.admin-overview-filters {justify-content:space-between}
+.admin-overview-filters label {min-width:min(100%,190px)}
+.admin-overview-period button[aria-pressed=true] {background:var(--role-tint);border-color:var(--role-edge);color:var(--role-ink)}
+.admin-overview-columns {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:10px;align-items:start}
+.admin-overview-columns>section {padding:clamp(10px,2vw,16px);border:1px solid var(--border);background:var(--surface);border-radius:14px;align-content:start}
+.admin-overview-columns h3 {display:flex;align-items:center;gap:7px;font-size:1rem;color:var(--role-ink)}
+.admin-overview-columns p {font-size:.85rem;color:var(--muted)}
+.admin-overview-columns progress {width:100%;height:10px;accent-color:var(--role-edge)}
+.admin-overview-columns button {justify-self:start}
+.admin-overview-trend,.admin-overview-students {display:grid;gap:7px;list-style:none;margin:0;padding:0}
+.admin-overview-trend li {display:grid;grid-template-columns:minmax(55px,auto) minmax(40px,1fr) 5ch;gap:6px;align-items:center;font-size:.82rem}
+.admin-overview-trend meter {width:100%;height:12px;accent-color:var(--role-edge)}
+.admin-overview-students {max-height:320px;overflow:auto}
+.admin-overview-students li {display:flex;justify-content:space-between;align-items:start;gap:4px 9px;flex-wrap:wrap;border-block-start:1px solid var(--border);padding-block:7px;font-size:.84rem}
+.admin-overview-links button bdi {font-weight:750;color:var(--role-ink)}
+@media(max-width:850px) {
+  .admin-bottom-nav {grid-template-columns:repeat(6,minmax(0,1fr))}
+  .admin-bottom-nav button {font-size:clamp(.61rem,2.7vw,.72rem)}
+}

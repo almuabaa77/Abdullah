@@ -5,7 +5,7 @@ export function scheduleAssessment(state:State,student:Student,circle?:Circle):N
   if(!student.active||!circle||!rule)return
   const previous=state.exams.filter(exam=>exam.autoThreshold!==undefined&&exam.studentIds.includes(student.id))
   if(previous.some(exam=>!exam.results[student.id]||exam.autoThreshold!>=rule.threshold))return
-  if(completedVerses(state.daily.filter(record=>record.studentId===student.id))<rule.threshold)return
+  if(completedVerses(state.daily.filter(record=>record.studentId===student.id&&!record.historicalImport))<rule.threshold)return
   const earliest=dayOffset(dateKey(),rule.leadDays)
   let date=earliest
   if(!circleMeets(earliest,circle)) {

@@ -137,7 +137,7 @@ function scanStudent(state:State,student:Student,records:Daily[],now:number,all:
   if(!student.active||!records.length)return false
   const policy=policyFor(state,student)
   if(!policy.active)return false
-  const coverage=assessmentCoverage(records)
+  const coverage=assessmentCoverage(records.filter(record=>!record.historicalImport))
   const completed=new Set(coverage.parts)
   if(!completed.size)return false
   const today=riyadh(now)

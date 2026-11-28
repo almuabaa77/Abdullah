@@ -10,7 +10,9 @@
     "start": "node start.cjs",
     "package:hostinger": "npm run build && node scripts/package-hostinger.mjs",
     "test:lessons": "node scripts/test-lessons.mjs",
-    "test:assessments": "node scripts/test-lessons.mjs tests/assessments.test.ts"
+    "test:assessments": "node scripts/test-lessons.mjs tests/assessments.test.ts",
+    "migration:base44": "node scripts/base44-migration.mjs",
+    "test:base44": "node --test tests/base44-archive.test.mjs && node scripts/test-lessons.mjs tests/base44-mapping.test.ts"
   },
   "dependencies": {
     "@js-temporal/polyfill": "0.5.1",
