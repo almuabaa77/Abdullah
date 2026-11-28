@@ -91,10 +91,14 @@
 }
 @media print {
   body:has(.assessment-cert-document) #root * {visibility:hidden}
-  body:has(.assessment-cert-document) .assessment-cert-document,
-  body:has(.assessment-cert-document) .assessment-cert-document * {visibility:visible}
-  .assessment-cert-document,.assessment-printable-report {position:absolute;inset:0;width:100%;border-radius:0}
-  .assessment-certificate-dialog,.assessment-certificate-dialog .modal-body {overflow:visible;position:static}
+  body:has(.assessment-cert-document) #root .assessment-cert-document,
+  body:has(.assessment-cert-document) #root .assessment-cert-document * {visibility:visible}
+  body:has(.assessment-cert-document) {overflow:visible!important}
+  .modal-backdrop:has(.assessment-cert-document) {display:block;overflow:visible;padding:0}
+  .assessment-certificate-dialog,.assessment-certificate-dialog .modal-body {overflow:visible;width:100%;max-height:none}
+  .assessment-cert-document {position:absolute;inset:0 0 auto;width:100%;border-radius:0;print-color-adjust:exact}
+  .assessment-printable-report {width:100%;border-radius:0}
+  .assessment-printable-report article {break-inside:avoid}
   body:has(.assessment-printable-report) .admin-hero,
   body:has(.assessment-printable-report) .admin-section-head,
   body:has(.assessment-printable-report) .assessment-heading,

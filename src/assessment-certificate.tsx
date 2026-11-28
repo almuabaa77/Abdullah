@@ -50,7 +50,7 @@ export function AssessmentCertificateDialog({item,close}:{item:AssessmentView;cl
     <div className="modal-foot">
       <a href={link} className="btn btn-outline compact" target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>{t('رابط التحقق','Verification link')}</a>
       <button className="btn btn-outline compact" type="button" onClick={()=>void share()}><Share2 size={16}/>{t('مشاركة رابط التحقق','Share verification')}</button>
-      <button className="btn btn-primary compact" type="button" onClick={()=>window.print()} disabled={Boolean(certificate.revokedAt)}><Printer size={16}/>{t('طباعة أو حفظ PDF','Print or save PDF')}</button>
+      <button className="btn btn-primary compact" type="button" onClick={()=>window.print()} disabled={Boolean(certificate.revokedAt)||!qr&&!qrError}><Printer size={16}/>{t('طباعة أو حفظ PDF','Print or save PDF')}</button>
     </div>
   </Modal>
 }
