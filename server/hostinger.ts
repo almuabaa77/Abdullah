@@ -1,3 +1,4 @@
+import { runAssessmentSchedule } from './assessment-workflow'
 import { createIconGenerator } from './appearance'
 import { brandIconUrl } from '../src/appearance'
 import { agoraAppIdOnly, agoraConfig, agoraPresence, createAgoraStatusCheck, issueAgora, revokeAgora } from './agora'
@@ -119,6 +120,7 @@ const agora=agoraConfig(env)
 const encryptedAppId=agoraAppIdOnly(env)
 const agoraStatus=createAgoraStatusCheck(env)
 let publishing=false
+let assessmentRunAt=0
 const scheduleTimer=setInterval(async()=>{
   if(publishing||databaseStatus!=='ready')return
   publishing=true
@@ -131,11 +133,19 @@ const scheduleTimer=setInterval(async()=>{
       const now=Date.now()
       const previousNotices=state.notices.length
       const scheduledLessons=runLessonSchedule(state,now)
-      const lessonNotices=state.notices.slice(0,state.notices.length-previousNotices)
+      const assessNow=now-assessmentRunAt>=60_000
+      const scheduledAssessments=assessNow&&runAssessmentSchedule(state,now)
+      const newNotices=state.notices.slice(0,state.notices.length-previousNotices)
       const notices=state.notices.filter(notice=>notice.kind==='announcement'||noticeExpiresAt(notice)>now)
-      if(!scheduledLessons&&!due.length&&notices.length===state.notices.length)break
+      if(!scheduledLessons&&!scheduledAssessments&&!due.length&&notices.length===state.notices.length){
+        if(assessNow)assessmentRunAt=now
+        break
+      }
       state.notices=notices
-      if(await repository.write('school',current.revision,state,[...due,...lessonNotices]))break
+      if(await repository.write('school',current.revision,state,[...due,...newNotices])){
+        if(assessNow)assessmentRunAt=now
+        break
+      }
     }
   } catch(error) {
     console.error('Scheduled workspace maintenance failed',error instanceof Error?error.name:'UnknownError')

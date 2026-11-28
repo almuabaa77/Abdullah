@@ -14,7 +14,7 @@ import { Dashboard, StudentHome } from './dashboard'
 import { EntryWizard } from './wizard'
 import { Assistant } from './assistant'
 import { Records } from './records'
-import { Exams, Leaves, More, Store } from './features'
+import { Leaves, More, Store } from './features'
 import { ChatPage } from './chat'
 import { DevicePermissions } from './device-permissions'
 import { disableDevicePush } from './device-push'
@@ -40,6 +40,8 @@ const emptyData:View = {
 }
 const PhoneSignIn = lazy(()=>import('./phone').then(m=>({default:m.PhoneSignIn})))
 const Admin = lazy(()=>import('./admin').then(m=>({default:m.Admin})))
+const Assessments = lazy(()=>import('./assessments').then(m=>({default:m.Assessments})))
+const PublicAssessmentCertificate = lazy(()=>import('./assessment-certificate').then(m=>({default:m.PublicAssessmentCertificate})))
 class WorkspaceError extends Error {
   constructor(message:string, readonly status:number) {super(message)}
 }
@@ -349,7 +351,14 @@ function App() {
         window.dispatchEvent(new PopStateEvent('popstate'))
       }
     }
-    if(notice.kind==='exam'&&workspaceVisible)go('exams')
+    if(notice.kind==='exam'){
+      if(notice.assessmentId)sessionStorage.setItem('halaqat-assessment',notice.assessmentId)
+      if(adminAccess){
+        history.pushState(null,'','/admin?section=exams'+(notice.assessmentId?'&assessment='+encodeURIComponent(notice.assessmentId):''))
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      }else if(workspaceVisible)go('exams')
+      window.dispatchEvent(new Event('halt-open-assessment'))
+    }
     if(notice.kind==='link'&&data.user?.role==='parent')go('more')
     if(!notice.readBy.includes(data.user?.id||''))void post('notice-read',{id:notice.id}).catch(e=>tell(e.message,true))
   }
@@ -527,7 +536,7 @@ function App() {
             catch(error){tell((error as Error).message,true)}
             finally{setRegistering(false)}
           }}/>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone} install={canInstall?openInstall:undefined}/>:
-          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={screenKey+role}>{assistantOpen?<Assistant initialCircle={teacherCircle||data.circles[0]?.id}/>:isLearner&&(page==='achievements'||page==='records')?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={canInstall?openInstall:undefined} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard rosterOnly={rosterPage} circleId={teacherCircle} selectCircle={setTeacherCircle}/>:<StudentHome/>}</div>}
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={screenKey+role}>{assistantOpen?<Assistant initialCircle={teacherCircle||data.circles[0]?.id}/>:isLearner&&(page==='achievements'||page==='records')?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={canInstall?openInstall:undefined} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Suspense fallback={<Starting/>}><Assessments/></Suspense>:page==='leaves'?<Leaves/>:teacher?<Dashboard rosterOnly={rosterPage} circleId={teacherCircle} selectCircle={setTeacherCircle}/>:<StudentHome/>}</div>}
         </main>
       </div>
       {teacherNavigation&&<nav className="teacher-bottom-nav" aria-label={t('قائمة المحفّظ السفلية','Teacher bottom navigation')}>
@@ -547,4 +556,5 @@ function App() {
     {toast&&<div className={'toast '+(toast.error?'toast-error':'')} role={toast.error?'alert':'status'}>{toast.error?<CircleAlert size={19}/>:<Check size={19}/>}<span>{toast.text}</span><button className="icon-button mini" onClick={()=>setToast(undefined)} aria-label={t('إغلاق','Close')}><X size={16}/></button></div>}
   </Context.Provider>
 }
-createRoot(document.getElementById('root')!).render(<App/>)
+const certificateSerial=new URLSearchParams(location.search).get('certificate')
+createRoot(document.getElementById('root')!).render(certificateSerial?<Suspense fallback={<main className="starting-screen" role="status">جارٍ التحقق…</main>}><PublicAssessmentCertificate serial={certificateSerial}/></Suspense>:<App/>)

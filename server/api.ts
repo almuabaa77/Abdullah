@@ -1,3 +1,4 @@
+import { applyAssessmentAction, assessmentNoticeAllowed, evaluateAssessmentEligibility, projectAssessments, publicAssessmentCertificate } from './assessment-workflow'
 import { iconContentLimit, readablePalette, readPalette } from '../src/appearance'
 import { webpBytes, type IconGenerator } from './appearance'
 import type { AgoraEnvironment } from './agora'
@@ -140,7 +141,7 @@ function matchesReminderCircle(notice:Notice,state:State) {
 }
 export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:string) {
   if(user.status!=='active'||user.duplicateOf||user.role==='admin'&&user.id!==adminUid)return false
-  if(notice.announcement&&user.role==='admin'||noticeExpiresAt(notice)<=Date.now()||!lessonNoticeAllowed(state,notice,user))return false
+  if(notice.announcement&&user.role==='admin'||noticeExpiresAt(notice)<=Date.now()||!lessonNoticeAllowed(state,notice,user)||!assessmentNoticeAllowed(state,user,notice))return false
   const students=notice.announcement||notice.recordReminder||notice.studentId&&!notice.users?scope(state,user):[]
   const ids=new Set(students.map(student=>student.id))
   if(notice.chatInvitationId) {
@@ -151,7 +152,7 @@ export function noticeRecipient(state:State,user:User,notice:Notice,adminUid?:st
 }
 function project(state: State, user: User | null, revision: number, phoneEnabled: boolean, adminUid?:string,rtcConfigured=false,encrypted=false): View {
   if (!user || user.status !== 'active') {
-    const { operations: _discardEmpty, appearanceIcon: _icon, closedAccounts: _closedAccounts, lessons:_lessons, lessonSeries:_lessonSeries, lessonRestrictions:_lessonRestrictions, lessonHealth:_lessonHealth, ...emptyView } = createState()
+    const { operations: _discardEmpty, appearanceIcon: _icon, closedAccounts: _closedAccounts, assessments:_assessments, lessons:_lessons, lessonSeries:_lessonSeries, lessonRestrictions:_lessonRestrictions, lessonHealth:_lessonHealth, ...emptyView } = createState()
     return { ...emptyView, appearance:state.appearance, user, revision, phoneEnabled, date: dateKey() }
   }
   const students = scope(state, user)
@@ -189,7 +190,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
       .map(notice=>({...notice.recordReminder!,teacherId:notice.users![0],time:notice.time})):undefined,
     calls:state.calls?.filter(call=>call.from===user.id||call.to===user.id).slice(0,50).map(call=>currentCall(state,call)),
     notices: state.notices.filter(notice => (notice.kind==='announcement'||noticeExpiresAt(notice)>Date.now()) && announcementVisible(notice,state,user,students)&&noticeVisible(notice,user,ids)&&matchesReminderCircle(notice,state)
-      &&(!notice.chatInvitationId||invitations.some(invitation=>invitation.id===notice.chatInvitationId))&&lessonNoticeAllowed(state,notice,user))
+      &&(!notice.chatInvitationId||invitations.some(invitation=>invitation.id===notice.chatInvitationId))&&lessonNoticeAllowed(state,notice,user)&&assessmentNoticeAllowed(state,user,notice))
       .map(notice=>{
         if(isAdmin||notice.kind!=='announcement')return notice
         const meta=notice.announcement
@@ -201,6 +202,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
       return isAdmin||link.status==='accepted'?link:{...link,studentId:''}
     }),
     prizes: state.prizes.filter(p => isAdmin || p.active), orders: state.orders.filter(o => isAdmin || user.role === 'student' && ids.has(o.studentId)),
+    assessmentDashboard:projectAssessments(state,user,students),
     exams: state.exams.filter(e => e.studentIds.some(id => ids.has(id))).map(e => ({ ...e, studentIds: e.studentIds.filter(id => ids.has(id)), results: Object.fromEntries(Object.entries(e.results).filter(([id]) => ids.has(id))),
       extensions:e.extensions&&Object.fromEntries(Object.entries(e.extensions).filter(([id])=>ids.has(id))) })),
     leaves: state.leaves.filter(l => ids.has(l.studentId)), rules: state.rules, audit: isAdmin ? state.audit.slice(-160).reverse() : [],
@@ -273,6 +275,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
   if (!user || user.status !== 'active') throw new ApiError('الحساب بانتظار التفعيل', 403)
   const u = user
   if(lessonActions.has(action))return applyLessonAction(state,u,action,p,op)
+  if(action.startsWith('assessment-'))return applyAssessmentAction(state,u,action,p)
   const visible = scope(state, u)
   const ids = new Set(visible.map(x => x.id))
   const student = () => { const s = visible.find(x => x.id === p.studentId && x.active); if (!s) throw new ApiError('الطالب خارج نطاق صلاحيتك', 403); return s }
@@ -293,6 +296,7 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
     state.recordEvents = [{id:idFor(),studentId:d.studentId,circleId:student.circleId,date:d.date,actorId:u.id,time,changes},...(state.recordEvents ?? [])].slice(0,160)
     const assessment=scheduleAssessment(state,student,circleOf(student))
     if(assessment)state.notices.unshift(assessment)
+    if(changes.includes('memorization'))evaluateAssessmentEligibility(state,student)
     if (previous.points !== d.points) state.audit.push({ time, actor: u.name, action: 'تحديث النقاط', target: d.studentId, before:previous.points, after:d.points })
     return true
   }
@@ -862,6 +866,12 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       if(!bytes||!state?.appearance?.iconVersion)return new Response(null,{status:302,headers:{...headers,Location:'/assets/icon-192.png'}})
       return new Response(bytes,{headers:{'Content-Type':'image/webp','X-Content-Type-Options':'nosniff',
         'Cache-Control':url.searchParams.get('v')===state.appearance.iconVersion?'public, max-age=86400':'no-store'}})
+    }
+    if(url.pathname==='/api/assessment/certificate'&&request.method==='GET') {
+      const serial=url.searchParams.get('id')??''
+      if(!/^[0-9a-f-]{36}$/i.test(serial))return Response.json({status:'missing'},{headers})
+      const entry=await repo.read('school')
+      return Response.json(entry?publicAssessmentCertificate(JSON.parse(entry.data) as State,serial):{status:'missing'},{headers})
     }
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)

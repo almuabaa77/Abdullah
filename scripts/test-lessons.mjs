@@ -7,7 +7,7 @@ import { build } from 'esbuild'
 const directory=await mkdtemp(join(tmpdir(),'halaqat-lessons-'))
 try {
   const bundle=join(directory,'lessons.test.cjs')
-  await build({entryPoints:['tests/lessons.test.ts'],outfile:bundle,bundle:true,platform:'node',format:'cjs',target:'node22'})
+  await build({entryPoints:[process.argv[2]??'tests/lessons.test.ts'],outfile:bundle,bundle:true,platform:'node',format:'cjs',target:'node22'})
   const result=spawnSync(process.execPath,['--test',bundle],{stdio:'inherit'})
   process.exitCode=result.status??1
 } finally {

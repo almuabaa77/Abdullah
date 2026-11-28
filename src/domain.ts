@@ -1,3 +1,4 @@
+import type { AssessmentDashboard, AssessmentState } from './assessment-model'
 import type { Appearance } from './appearance'
 import type { Lesson, LessonHealth, LessonNotice, LessonRestriction, LessonSeries, LessonView } from './lessons'
 export type Role = 'teacher' | 'student' | 'parent' | 'admin'
@@ -26,7 +27,7 @@ export type SentReminder = RecordReminder & { teacherId:string; time:string }
 export const announcementAudiences = ['all','circle','student','parent'] as const
 export const announcementSources = ['administration','circles','student-affairs'] as const
 export type Announcement = { audience:typeof announcementAudiences[number]; source:typeof announcementSources[number]; targetId?:string; publishAt:string; publishedAt?:string; withdrawn?:boolean; dismissedBy?:string[] }
-export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; chatInvitationId?:string; lesson?:LessonNotice; announcement?:Announcement; readBy: string[] }
+export type Notice = { id: string; kind: string; title: string; en?: string; body: string; bodyEn?: string; time: string; users?: string[]; studentId?: string; recordReminder?:RecordReminder; chatInvitationId?:string; assessmentId?:string; lesson?:LessonNotice; announcement?:Announcement; readBy: string[] }
 export const noticeLifetime=24*60*60_000
 export const noticeExpiresAt=(notice:Notice)=>Date.parse(notice.announcement?.publishedAt??notice.time)+noticeLifetime
 
@@ -60,6 +61,7 @@ export const communicationKeys = ['studentDirect','guardianDirect','circleChat',
 export type Communication = Record<typeof communicationKeys[number],boolean>
 export const defaultCommunication:Communication = {studentDirect:true,guardianDirect:true,circleChat:true,audio:true,video:true,staffDirect:true,adminDirect:true}
 export type State = {
+  assessments?:AssessmentState;
   appearance?:Appearance; appearanceIcon?:string;
   lessons?:Lesson[]; lessonSeries?:LessonSeries[]; lessonRestrictions?:LessonRestriction[]; lessonHealth?:Omit<LessonHealth,'rtcConfigured'>; lessonTeacherScheduling?:boolean;
   sample: boolean; users: User[]; circles: Circle[]; students: Student[]; daily: Daily[]; closed: string[]
@@ -67,7 +69,7 @@ export type State = {
   rules: { memorization: number; review: number; attendance: number; chat: boolean; communication?:Communication }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'appearanceIcon' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'assessments' | 'appearanceIcon' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { assessmentDashboard?:AssessmentDashboard; users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 export function examDateFor(exam:Exam,studentId:string) {
   const request=exam.extensions?.[studentId]

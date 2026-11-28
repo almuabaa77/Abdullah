@@ -11,7 +11,8 @@ import { AdminLive } from './admin-live'
 import { LessonCenter } from './lesson-center'
 import { ChatPage } from './chat'
 import { AdminChats } from './admin-chats'
-import { Exams, Leaves } from './features'
+import { Leaves } from './features'
+import { Assessments } from './assessments'
 import { Records } from './records'
 import type { RecordStreamStatus } from './live-records'
 import { normalizeMobile } from './phone-number'
@@ -278,7 +279,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         {tab==='live'&&<AdminLive status={liveRecords} online={online}/>}
         {tab==='duplicates'&&<DuplicateAccounts/>}
         {tab==='records'&&<Records embedded/>}
-        {tab==='exams'&&<Exams embedded/>}
+        {tab==='exams'&&<Assessments embedded/>}
         {tab==='leaves'&&<Leaves embedded/>}
         {tab==='lessons'&&<LessonCenter management/>}
         {tab==='chats'&&<>

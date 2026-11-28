@@ -53,6 +53,7 @@ function subscriptionFor(input:unknown):webPush.PushSubscription {
 
 function target(user:User,notice?:Notice) {
   const kind=notice?.kind
+  if(notice?.assessmentId)return user.role==='admin'?'/admin?section=exams&assessment='+encodeURIComponent(notice.assessmentId):'/?assessment='+encodeURIComponent(notice.assessmentId)+'#exams'
   if(notice?.lesson)return user.role==='admin'?'/admin?section=lessons&lesson='+encodeURIComponent(notice.lesson.id):'/?lesson='+encodeURIComponent(notice.lesson.id)+'#lessons'
   if(user.role==='teacher'&&notice?.recordReminder)return '/?reminder='+encodeURIComponent(notice.id)+'#records'
   if(user.role==='admin') {
