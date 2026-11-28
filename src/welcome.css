@@ -181,3 +181,10 @@
   .welcome-login .welcome-arrow {transition:none}
   .welcome-login:hover .welcome-arrow {transform:none}
 }
+.welcome-install {
+  display:flex;align-items:center;justify-content:center;justify-self:start;gap:7px;
+  min-height:42px;padding:5px 11px;border:1px solid var(--control-border);border-radius:10px;
+  background:var(--paper);color:var(--green);font-size:.84rem;font-weight:650;
+}
+.welcome-install:hover {background:var(--soft)}
+@media(max-width:820px) and (orientation:portrait) {.welcome-install {justify-self:center}}

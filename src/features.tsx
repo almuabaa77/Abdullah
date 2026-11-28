@@ -115,10 +115,8 @@ export function Exams({embedded=false}:{embedded?:boolean}={}) {
   </section>
 }
 
-type InstallEvent = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
-export function More({ changeLanguage, switchRole, currentRole, install,showPermissions }: {changeLanguage:()=>void; switchRole:(role:string)=>void; currentRole:string;install:InstallEvent|null;showPermissions:()=>void}) {
+export function More({ changeLanguage, switchRole, currentRole, install,showPermissions }: {changeLanguage:()=>void; switchRole:(role:string)=>void; currentRole:string;install?:()=>void;showPermissions:()=>void}) {
   const {data,t,go} = useWorkspace()
-  const [modal,setModal] = useState<'install'|''>('')
   const parent = data.user?.role === 'parent'
   const services = [
     [Video,t('جلسات التسميع','Live sessions'),()=>go('lessons')],
@@ -127,7 +125,7 @@ export function More({ changeLanguage, switchRole, currentRole, install,showPerm
   ] as const
   const preferences = [
     [Globe,t('English','العربية'),changeLanguage],
-    [Smartphone,t('تثبيت التطبيق','Install application'),()=>{if(install)void install.prompt();else setModal('install')}],
+    ...(install?[[Smartphone,t('تثبيت التطبيق','Install application'),install]] as const:[]),
     [Bell,t('الأذونات والتنبيهات','Permissions & notifications'),showPermissions],
   ] as const
   return <section className="panel section-panel account-more">
@@ -144,7 +142,6 @@ export function More({ changeLanguage, switchRole, currentRole, install,showPerm
     </section>)}</div>
     {parent&&<ParentLinks/>}
     {data.sample&&<div className="demo-settings"><div><strong>{t('مساحة المعاينة','Preview workspace')}</strong><p>{t('بيانات توضيحية خاصة بك. يمكنك تجربة الواجهات بالأدوار المختلفة.','Private sample data. Explore the interface from each role.')}</p></div><label>{t('عرض الحساب','Account view')}<select value={currentRole} onChange={e=>switchRole(e.target.value)}><option value="admin">{t('لوحة المحفّظ والإدارة','Teacher dashboard & administration')}</option><option value="teacher">{t('المحفّظ','Teacher')}</option><option value="student">{t('الطالب','Student')}</option><option value="parent">{t('ولي الأمر','Guardian')}</option></select></label></div>}
-    {modal==='install'&&<Modal title={t('تثبيت التطبيق','Install application')} close={()=>setModal('')}><div className="modal-body"><div className="hint-line"><Smartphone size={18}/>{t('على iPhone أو iPad من Safari، اضغط مشاركة ثم إضافة إلى الشاشة الرئيسية.','On iPhone or iPad in Safari, tap Share and then Add to Home Screen.')}</div><p>{t('على Android أو الكمبيوتر، افتح قائمة المتصفح واختر تثبيت التطبيق إذا ظهر الخيار.','On Android or desktop, open the browser menu and select Install app when offered.')}</p></div></Modal>}
   </section>
 }
 

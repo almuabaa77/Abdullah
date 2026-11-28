@@ -1,3 +1,4 @@
+import { InstallGuide, useAppInstall } from './app-install'
 import { brandIconUrl, defaultPalette, paletteKeys, paletteVariables, type Appearance, type GeneratedIcon, type Palette } from './appearance'
 import { protectAppText } from './app-interactions'
 import { activeNotices, NotificationList, useNoticeTime } from './notifications'
@@ -26,7 +27,6 @@ import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
 
-type InstallEvent = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
 const pages = ['home','assistant','students','achievements','records','chat','more','admin','store','exams','leaves','lessons']
 const currentPage = ():Page => {
   if (location.pathname === '/admin' || location.pathname === '/admin/') return 'admin'
@@ -106,7 +106,7 @@ function App() {
   const [reminderId,setReminderId] = useState(requestedReminder)
   const [online,setOnline] = useState(navigator.onLine)
   const [permissions,setPermissions] = useState(false)
-  const [install,setInstall] = useState<InstallEvent|null>(null)
+  const {canInstall,guide,openInstall,closeInstall}=useAppInstall()
   const [registering,setRegistering] = useState(false)
   const [recheck,setRecheck] = useState(0)
   const [unregistered,setUnregistered] = useState(false)
@@ -194,10 +194,8 @@ function App() {
     }
     nav()
     const change=()=>setOnline(navigator.onLine)
-    const capture=(e:Event)=>{e.preventDefault();setInstall(e as InstallEvent)}
     window.addEventListener('hashchange',nav);window.addEventListener('popstate',nav);window.addEventListener('online',change);window.addEventListener('offline',change)
-    window.addEventListener('beforeinstallprompt',capture)
-    return ()=>{window.removeEventListener('hashchange',nav);window.removeEventListener('popstate',nav);window.removeEventListener('online',change);window.removeEventListener('offline',change);window.removeEventListener('beforeinstallprompt',capture)}
+    return ()=>{window.removeEventListener('hashchange',nav);window.removeEventListener('popstate',nav);window.removeEventListener('online',change);window.removeEventListener('offline',change)}
   },[])
   useEffect(()=>{
     let active=true
@@ -480,7 +478,7 @@ function App() {
           {extras.map(([p,Icon,label])=><button key={p} onClick={()=>go(p)} className={'nav-item '+(p===page?'active':'')} aria-current={p===page?'page':undefined}><Icon size={19} strokeWidth={1.8}/><span>{label}</span></button>)}
         </nav>
         <div className="sidebar-bottom">
-          <button className="install-tile" onClick={()=>{if(install)void install.prompt();else go('more')}}><span><ArrowDownToLine size={18}/></span><div><strong>{t('تثبيت التطبيق','Install app')}</strong><small>{t('وصول أسرع من جهازك','Quick access from your device')}</small></div></button>
+          {canInstall&&<button className="install-tile" type="button" onClick={openInstall}><span><ArrowDownToLine size={18}/></span><div><strong>{t('تثبيت التطبيق','Install app')}</strong><small>{t('وصول أسرع من جهازك','Quick access from your device')}</small></div></button>}
           <div className="sidebar-divider"/>
           <div className="sidebar-profile"><span className="profile-avatar">{en?'A':'ع'}</span><div><strong>{userName}</strong><small><RoleName role={data.sample&&role==='admin'?'teacher':data.user?.role||''}/></small></div><button className="icon-button mini" aria-label={t('إعدادات الحساب','Account settings')} onClick={()=>go('more')}><Ellipsis size={18}/></button></div>
         </div>
@@ -506,7 +504,7 @@ function App() {
                 permissions={token?()=>{setOpenPanel('');setPermissions(true)}:undefined}/>}</div>
               <div className="relative"><button className="profile-trigger" onClick={()=>setOpenPanel(openPanel==='profile'?'':'profile')} aria-expanded={openPanel==='profile'} aria-label={t('الحساب','Account')}><span className="profile-avatar">{en?'A':'ع'}</span><ChevronDown size={15}/></button>
               {openPanel==='profile'&&<div className="popover profile-pop"><strong>{userName}</strong><small><RoleName role={data.user?.role||''}/></small>{adminAccess&&!adminPage&&<button onClick={()=>go('admin')}><ShieldCheck size={16}/>{t('لوحة الإدارة','Administration')}</button>}{adminPage?<button onClick={()=>{setOpenPanel('');setPermissions(true)}}><Bell size={16}/>{t('أذونات وتنبيهات الجهاز','Device permissions and alerts')}</button>
-                :<button onClick={()=>go('more')}>{t('إعدادات الحساب','Account settings')}</button>}{token?<button onClick={()=>void exit()}><LogOut size={16}/>{t('تسجيل الخروج','Sign out')}</button>:<button onClick={()=>{setOpenPanel('');openPhone()}}><LogIn size={16}/>{t('الدخول بالجوال','Mobile sign-in')}</button>}</div>}
+                :<button onClick={()=>go('more')}>{t('إعدادات الحساب','Account settings')}</button>}{canInstall&&<button type="button" onClick={()=>{setOpenPanel('');openInstall()}}><ArrowDownToLine size={16}/>{t('تثبيت التطبيق','Install app')}</button>}{token?<button onClick={()=>void exit()}><LogOut size={16}/>{t('تسجيل الخروج','Sign out')}</button>:<button onClick={()=>{setOpenPanel('');openPhone()}}><LogIn size={16}/>{t('الدخول بالجوال','Mobile sign-in')}</button>}</div>}
               </div>
             </>}
           </div>
@@ -528,8 +526,8 @@ function App() {
             try{await post('register',Object.fromEntries(new FormData(event.currentTarget)))}
             catch(error){tell((error as Error).message,true)}
             finally{setRegistering(false)}
-          }}/>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone}/>:
-          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={screenKey+role}>{assistantOpen?<Assistant initialCircle={teacherCircle||data.circles[0]?.id}/>:isLearner&&(page==='achievements'||page==='records')?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={install} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard rosterOnly={rosterPage} circleId={teacherCircle} selectCircle={setTeacherCircle}/>:<StudentHome/>}</div>}
+          }}/>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone} install={canInstall?openInstall:undefined}/>:
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={screenKey+role}>{assistantOpen?<Assistant initialCircle={teacherCircle||data.circles[0]?.id}/>:isLearner&&(page==='achievements'||page==='records')?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={canInstall?openInstall:undefined} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Exams/>:page==='leaves'?<Leaves/>:teacher?<Dashboard rosterOnly={rosterPage} circleId={teacherCircle} selectCircle={setTeacherCircle}/>:<StudentHome/>}</div>}
         </main>
       </div>
       {teacherNavigation&&<nav className="teacher-bottom-nav" aria-label={t('قائمة المحفّظ السفلية','Teacher bottom navigation')}>
@@ -542,6 +540,7 @@ function App() {
       </button>}
       {workspaceVisible&&openPanel==='navigation'&&<Modal title={t('القائمة الرئيسية','Main navigation')} close={()=>setOpenPanel('')} appearance="mobile-menu"><nav className="modal-body mobile-menu-links">{[...nav,...extras].map(([p,Icon,title])=><button type="button" key={p} aria-current={p===page?'page':undefined} onClick={()=>go(p)}><Icon size={19}/>{title}</button>)}</nav></Modal>}
     </div>
+    {guide&&<InstallGuide close={closeInstall}/>}
     {permissions&&show&&token&&<DevicePermissions token={token} close={()=>setPermissions(false)}/>}
     {wizard&&teacher&&(workspaceVisible||adminPage&&adminAccess)&&<EntryWizard {...wizard} close={()=>setWizard(undefined)}/>}
     {phone&&!token&&<Suspense fallback={null}><PhoneSignIn {...phoneProps} close={()=>changePhone(false)}/></Suspense>}

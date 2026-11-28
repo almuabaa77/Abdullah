@@ -3,7 +3,7 @@ import { AnnouncementFields, AnnouncementRow } from './announcements'
 import { AssessmentPolicyFields, PolicySettings } from './admin-policies'
 import { ManageFamilyLinks } from './family-links'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Activity, Bell, BookOpen, CalendarDays, ChevronLeft, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Palette, Plus, Search, Settings, ShieldAlert, ShieldCheck, Table2, UserCheck, Users } from 'lucide-react'
+import { Activity, ArrowRight, Bell, BookOpen, CalendarDays, ChevronLeft, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Palette, Plus, Search, Settings, ShieldAlert, ShieldCheck, Table2, UserCheck, Users } from 'lucide-react'
 import { circleMeets, type Circle, type Prize, type Student, type User } from './domain'
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
@@ -60,6 +60,12 @@ function readTab():Tab {
   return sections.find(section=>section.id===value)?.id ?? 'live'
 }
 
+const registerSection='monitoring-table'
+function readRegister() {
+  const params=new URLSearchParams(location.search)
+  if(params.get('section')===registerSection||params.has('circle'))return params.get('circle')??''
+}
+
 function AdminList<T>({items,render,empty,filtered=false,grid=false}:{items:T[];render:(item:T,index:number)=>ReactNode;empty:string;filtered?:boolean;grid?:boolean}) {
   const {t} = useWorkspace()
   const [limit,setLimit] = useState(rosterPage)
@@ -83,10 +89,20 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const [busy,setBusy] = useState(false)
   const [menu,setMenu] = useState(false)
   const [menuQuery,setMenuQuery] = useState('')
-  const [register,setRegister] = useState(()=>new URLSearchParams(location.search).get('circle')??undefined)
+  const [register,setRegister] = useState(readRegister)
+  const backToAdmin=useRef<HTMLButtonElement>(null)
+  const registerTrigger=useRef<HTMLButtonElement>(null)
+  const restoreTrigger=useRef(false)
+  useEffect(()=>{
+    if(register!==undefined)backToAdmin.current?.focus({preventScroll:true})
+    else if(restoreTrigger.current){
+      restoreTrigger.current=false
+      registerTrigger.current?.focus({preventScroll:true})
+    }
+  },[register])
   const writing = useRef(false)
   useEffect(()=>{
-    const restore=()=>{setTab(readTab());setInbox(new URLSearchParams(location.search).get('inbox')==='1');setQuery('');setAccountFilter('');setMenu(false);setEdit(undefined);setRegister(new URLSearchParams(location.search).get('circle')??undefined)}
+    const restore=()=>{setTab(readTab());setInbox(new URLSearchParams(location.search).get('inbox')==='1');setQuery('');setAccountFilter('');setMenu(false);setEdit(undefined);setRegister(readRegister())}
     window.addEventListener('popstate',restore)
     return ()=>window.removeEventListener('popstate',restore)
   },[])
@@ -107,13 +123,24 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     }
     setMenu(false)
   }
-  function closeRegister() {
-    setRegister(undefined)
+  function openRegister(circleId='') {
     const url=new URL(location.href)
-    if(url.searchParams.has('circle')){
-      url.searchParams.delete('circle')
-      history.replaceState(history.state,'',url)
-    }
+    url.searchParams.set('section',registerSection)
+    if(circleId)url.searchParams.set('circle',circleId)
+    else url.searchParams.delete('circle')
+    history.pushState({halaqatRegister:true},'',url)
+    setRegister(circleId)
+    setMenu(false)
+    restoreTrigger.current=true
+    window.scrollTo({top:0,behavior:'instant'})
+  }
+  function closeRegister() {
+    if(history.state?.halaqatRegister){history.back();return}
+    const url=new URL(location.href)
+    if(url.searchParams.get('section')===registerSection)url.searchParams.delete('section')
+    url.searchParams.delete('circle')
+    history.replaceState(history.state,'',url)
+    setRegister(undefined)
   }
   async function submit(action:string,payload:Record<string,unknown>) {
     if(writing.current)return false
@@ -146,6 +173,18 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
     if(edit.kind==='assessment')values.enabled=fields.has('enabled')
     if(await submit(edit.kind==='enrollment'?'account':edit.kind==='assessment'?'circle-assessment':edit.kind,values))setEdit(undefined)
   }
+
+  if(register!==undefined)return <section className="admin-register-page" aria-labelledby="admin-register-title">
+    <header className="admin-register-page-head">
+      <div className="admin-register-page-title"><span className="stat-icon tint-green"><Table2 size={23} aria-hidden="true"/></span>
+        <h1 id="admin-register-title">{t('جدول المتابعة','Monitoring table')}</h1>
+      </div>
+      <button className="btn btn-outline compact admin-register-back" type="button" ref={backToAdmin} onClick={closeRegister}>
+        <ArrowRight size={17} aria-hidden="true"/>{t('العودة إلى لوحة الإدارة','Back to administration')}
+      </button>
+    </header>
+    <AdminLive key={register} register initialCircle={register} status={liveRecords} online={online}/>
+  </section>
 
   const current:Section=sections.find(section=>section.id===tab) ?? sections[0]
   const search=query.trim().toLowerCase()
@@ -281,7 +320,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
                 <div><dt>{t('سجلات اليوم','Records today')}</dt><dd>{entered} / {total}</dd></div></dl>
               <div className="chip-row">{weekDays.map(([ar,english],day)=>circle.days.includes(day)&&<span key={day} className="count-pill">{t(ar,english)}</span>)}</div>
               <div className="admin-circle-actions">
-                <button className="btn btn-primary compact" type="button" onClick={()=>setRegister(circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
+                <button className="btn btn-primary compact" type="button" onClick={()=>openRegister(circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'assessment',item:circle})}>{t('الاختبار الآلي','Automatic assessment')}</button>
               </div>
@@ -329,17 +368,12 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         <Ellipsis size={21}/><span>{t('المزيد','More')}</span>
       </button>
     </nav>
-    <button className="admin-register-fab" type="button" aria-haspopup="dialog" aria-expanded={register!==undefined}
-      onClick={()=>setRegister('')}>
+    <button className="admin-register-fab" type="button" ref={registerTrigger}
+      onClick={()=>openRegister()}>
       <span className="admin-register-fab-icon"><Table2 size={22} aria-hidden="true"/></span>
       <span>{t('جدول المتابعة','Monitoring table')}</span>
       <i aria-hidden="true" data-live={liveRecords==='live'&&online}/>
     </button>
-    {register!==undefined&&<Modal title={t('جدول المتابعة','Monitoring table')} close={closeRegister} appearance="admin-register-dialog">
-      <div className="modal-body">
-        <AdminLive key={register} register initialCircle={register} status={liveRecords} online={online}/>
-      </div>
-    </Modal>}
     {menu&&<Modal title={t('المزيد','More')} close={()=>setMenu(false)} appearance="admin-more-dialog">
       <div className="admin-more-search"><label className="search"><Search size={18}/><input type="search" aria-label={t('بحث في أقسام الإدارة','Search administration sections')}
         placeholder={t('ابحث عن قسم…','Find a section…')} value={menuQuery} onChange={event=>setMenuQuery(event.target.value)}/></label></div>

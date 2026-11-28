@@ -1,0 +1,11 @@
+.install-guide {width:min(100%,480px)}
+.install-guide-intro {display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);border-radius:13px;background:var(--soft)}
+.install-guide-intro img {border-radius:13px;flex:none}
+.install-guide-intro p {display:flex;align-items:center;gap:5px;font-size:.78rem;line-height:1.55}
+.install-steps {display:grid;gap:8px;padding:0;margin:0;list-style:none}
+.install-steps li {display:flex;align-items:flex-start;gap:9px;padding:8px;border:1px solid var(--border);border-radius:10px}
+.install-step-icon {display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:8px;background:var(--surface);color:var(--green)}
+.install-steps strong {font-size:.88rem}
+.install-steps p {font-size:.8rem;line-height:1.6}
+.install-guide .modal-foot {flex-wrap:wrap}
+.install-link-status {font-size:.78rem;color:var(--success)}

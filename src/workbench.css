@@ -597,7 +597,12 @@ html,body,.app-shell {touch-action:pan-x pan-y}
 .app-shell {-webkit-user-select:none;user-select:none}
 .app-shell :is(input,textarea,[contenteditable]:not([contenteditable="false"]),[data-allow-copy]) {-webkit-user-select:text;user-select:text}
 .topbar {background:var(--paper)}
-.topbar-actions .refresh-app {color:var(--role-ink);background:var(--role-tint);border:1px solid var(--role-edge);flex:none}
+.topbar .topbar-actions .refresh-app {position:relative;isolation:isolate;color:var(--role-ink);background:transparent;border:0;flex:none}
+.topbar .topbar-actions .refresh-app::before {
+  content:"";position:absolute;inset:3px;z-index:-1;border:1px solid var(--role-edge);border-radius:9px;background:var(--role-tint);
+}
+.topbar .topbar-actions .refresh-app:hover::before {background:var(--surface-strong)}
+.topbar .topbar-actions .refresh-app>svg {width:16px;height:16px}
 .refresh-app[aria-busy=true] svg {animation:app-refresh-spin .8s linear infinite}
 @keyframes app-refresh-spin {to {transform:rotate(1turn)}}
 @media(prefers-reduced-motion:reduce){.refresh-app[aria-busy=true] svg {animation:none}}
@@ -612,7 +617,6 @@ html[data-custom-appearance] .brand img {object-fit:cover;border-radius:24%}
 @media(max-width:420px){
   .topbar-title {min-width:0}
   .topbar-actions {gap:4px}
-  .topbar .refresh-app {width:34px;height:36px}
 }
 html[data-custom-appearance] .nav-item.active i,
 html[data-custom-appearance] .notification-trigger i {background:var(--gold)}

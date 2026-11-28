@@ -1,9 +1,9 @@
 import { brandIconUrl } from './appearance'
-import { ArrowLeft, BookOpen, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
+import { ArrowDownToLine, ArrowLeft, BookOpen, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react'
 import { useWorkspace } from './ui'
 import './welcome.css'
 
-export function Welcome({signIn}:{signIn:()=>void}) {
+export function Welcome({signIn,install}:{signIn:()=>void;install?:()=>void}) {
   const {t} = useWorkspace()
   return <section className="welcome-screen" aria-labelledby="welcome-heading">
     <div className="welcome-content">
@@ -17,6 +17,9 @@ export function Welcome({signIn}:{signIn:()=>void}) {
           <ArrowLeft className="welcome-arrow" size={20} aria-hidden="true"/>
         </button>
         <p className="welcome-verify"><ShieldCheck size={16} aria-hidden="true"/>{t('يُرسل رمز التحقق عبر رسالة نصية.','Your verification code arrives by text message.')}</p>
+        {install&&<button className="welcome-install" type="button" onClick={install}>
+          <ArrowDownToLine size={17} aria-hidden="true"/>{t('تثبيت التطبيق','Install app')}
+        </button>}
       </div>
     </div>
     <figure className="welcome-visual" aria-hidden="true">

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, Bell, ChevronDown, ChevronUp, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
+import { Activity, Bell, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
 import { circleMeets, recordedAssignment, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
 import { Avatar, Badge, dateLabel, Empty, matches, Modal, nameFor, useWorkspace } from './ui'
 import type { RecordStreamStatus } from './live-records'
@@ -32,13 +32,6 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
   const expandButton = useRef<HTMLButtonElement>(null)
   const exitButton = useRef<HTMLButtonElement>(null)
   const tableScroll = useRef<HTMLDivElement>(null)
-  const [scrollEnds,setScrollEnds] = useState({top:true,bottom:false})
-  const updateScrollEnds = () => {
-    const box=tableScroll.current
-    if(!box)return
-    const top=box.scrollTop<2,bottom=box.scrollTop+box.clientHeight>=box.scrollHeight-2
-    setScrollEnds(previous=>previous.top===top&&previous.bottom===bottom?previous:{top,bottom})
-  }
   const date=selectedDate||data.date
   const records = new Map<string,Daily>()
   const incoming = new Map<string,Daily[]>()
@@ -64,32 +57,7 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
     ['absent',rows.filter(row=>row.record?.attendance==='absent').length,t('غياب','Absent')],
   ] as const
   const visibleRows=rows.filter(row=>filter==='all'||filter==='recorded'&&row.record||filter==='pending'&&!row.record||filter==='absent'&&row.record?.attendance==='absent')
-  const firstRows=visibleRows.slice(0,4).map(row=>row.student.id).join(',')
-  useEffect(()=>{
-    const box=tableScroll.current
-    if(!box||expanded||visibleRows.length<=4)return
-    const head=box.querySelector('thead')
-    const rows=[...box.querySelectorAll('tbody tr')].slice(0,4)
-    const measure=()=>{
-      if(!head)return
-      const scrollbar=box.offsetHeight-box.clientHeight
-      const height=head.getBoundingClientRect().height+rows.reduce((sum,row)=>sum+row.getBoundingClientRect().height,0)
-      box.style.setProperty('--visible-register-height',`${Math.ceil(height)+scrollbar}px`)
-      updateScrollEnds()
-    }
-    const observer=new ResizeObserver(measure)
-    if(head)observer.observe(head)
-    rows.forEach(row=>observer.observe(row))
-    measure()
-    return ()=>{observer.disconnect();box.style.removeProperty('--visible-register-height')}
-  },[expanded,firstRows,visibleRows.length])
   useEffect(()=>{if(tableScroll.current)tableScroll.current.scrollTop=0},[date,circleId,query,filter])
-  function stepTable(direction:number) {
-    const box=tableScroll.current
-    if(!box)return
-    const row=box.querySelector('tbody tr')
-    box.scrollBy({top:direction*(row?.getBoundingClientRect().height??44),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})
-  }
   const timeFormat = new Intl.DateTimeFormat(en?'en-GB':'ar-SA-u-nu-latn',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Riyadh'})
   const label = (kind:RecordSection) => kind==='memorization'?t('الحفظ الجديد','New memorization'):t(...sectionNames[kind])
   const connectionLabel = !online?t('دون اتصال','Offline')
@@ -235,8 +203,11 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
         <button ref={exitButton} className="btn btn-outline compact" type="button" onClick={()=>void toggleExpanded()}>
           <Minimize size={17}/>{t('خروج من ملء الشاشة','Exit full screen')}
         </button>
-      </div>:<p className="live-scroll-hint">{t('مرّر عموديًا لعرض بقية الطلاب وأفقيًا لعرض المزيد من الأعمدة.','Scroll down for more students and across for more columns.')}</p>}
-      <div className="live-table-window"><div ref={tableScroll} className={'live-table-scroll'+(!expanded&&visibleRows.length>4?' live-table-four':'')} onScroll={updateScrollEnds} tabIndex={0} role="region" aria-label={t('جدول المتابعة قابل للتمرير','Scrollable monitoring table')}>
+      </div>:<div className="live-table-caption">
+        <span>{t(`عرض ${visibleRows.length} من ${rows.length} طلاب`,`Showing ${visibleRows.length} of ${rows.length} students`)}</span>
+        <p className="live-scroll-hint">{t('مرّر أفقيًا لعرض بقية الأعمدة.','Scroll sideways for more columns.')}</p>
+      </div>}
+      <div ref={tableScroll} className="live-table-scroll" tabIndex={0} role="region" aria-label={t('جدول المتابعة قابل للتمرير','Scrollable monitoring table')}>
         <table className="live-table">
           <thead><tr>
             <th scope="col">{t('الطالب','Student')}</th><th scope="col">{t('التاريخ','Date')}</th>
@@ -274,12 +245,6 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
           })}</tbody>
         </table>
         {!visibleRows.length&&<Empty title={t('لا توجد سجلات مطابقة','No matching records')}/>}
-      </div>
-      {!expanded&&visibleRows.length>4&&<div className="live-table-rail" aria-label={t('تمرير الطلاب','Scroll through students')}>
-        <button type="button" disabled={scrollEnds.top} aria-label={t('تمرير لأعلى','Scroll up')} onClick={()=>stepTable(-1)}><ChevronUp size={17}/></button>
-        <span aria-hidden="true">{visibleRows.length}</span>
-        <button type="button" disabled={scrollEnds.bottom} aria-label={t('تمرير لأسفل','Scroll down')} onClick={()=>stepTable(1)}><ChevronDown size={17}/></button>
-      </div>}
       </div>
     </section>}
 
