@@ -49,6 +49,7 @@ test('resumes previously captured pages and checks source count with read-only r
       assert.equal(options.redirect,'error')
       assert.equal(options.headers.Authorization,'Bearer read-only-fixture')
       assert.equal(options.method,undefined)
+      if(!url.pathname.includes('/entities/'))return new Response(null,{status:403})
       requests.push(url.pathname)
       if(url.pathname.endsWith('/count'))return Response.json({count:2})
       assert.equal(url.searchParams.get('cursor'),'cursor-2')
@@ -59,4 +60,40 @@ test('resumes previously captured pages and checks source count with read-only r
     assert.equal(result.tables.find(table=>table.name==='Student').sourceCount,2)
     assert.equal((await tablesFrom(root,await verifyArchive(root))).Student.length,2)
   }finally{await rm(folder,{recursive:true,force:true})}
+})
+
+test('discovers the app without an uploaded spec and copies public library bytes without forwarding the token',async t=>{
+  const folder=await mkdtemp(join(tmpdir(),'halaqat-base44-api-'))
+  try {
+    const root=join(folder,'backup'),publicUrl='https://media.base44.com/files/public/'+appId+'/lesson.pdf'
+    const requested=[]
+    t.mock.method(globalThis,'fetch',async(url,options)=>{
+      requested.push(url.href)
+      if(url.origin==='https://media.base44.com'){
+        assert.equal(options.headers.Authorization,undefined)
+        assert.equal(url.href,publicUrl)
+        return new Response('archived file bytes',{headers:{'content-type':'application/pdf'}})
+      }
+      assert.equal(url.origin,'https://app.base44.com')
+      assert.equal(options.headers.Authorization,'Bearer fixture-key')
+      assert.equal(options.method,undefined)
+      if(url.pathname.endsWith('/openapi-spec'))return Response.json({openapi:'3.0.3',paths:{'/entities/LibraryItem':{get:{}},'/functions/pointsEngineSimulate':{post:{}}}})
+      if(url.pathname.endsWith('/entity-schemas'))return Response.json({schemas:[{entity_name:'LibraryItem',entity_schema:{type:'object'}}]})
+      if(url.pathname.endsWith('/assets'))return Response.json([{id:'asset-id',file_url:publicUrl}])
+      if(url.pathname.endsWith('/workflows'))return Response.json([{id:'old-workflow'}])
+      if(url.pathname.endsWith('/workflows/old-workflow'))return Response.json({id:'old-workflow',definition:{}})
+      if(url.pathname.endsWith('/coding/export-to-zip'))return new Response(Buffer.from('504b0506'+'00'.repeat(18),'hex'),{headers:{'content-type':'application/zip'}})
+      if(url.pathname.includes('/entities/User/'))return url.pathname.endsWith('/count')?Response.json({count:0}):Response.json({items:[],has_more:false,next_cursor:null})
+      if(url.pathname.endsWith('/count'))return Response.json({count:1})
+      return Response.json({items:[{id:'item',url:publicUrl,file_uri:'private/unavailable.pdf'}],has_more:false,next_cursor:null})
+    })
+    const result=await captureArchive(root,{appId,token:'fixture-key'})
+    assert.equal(result.hasOpenApi,true)
+    assert.equal(result.assets.files,1)
+    assert.equal(result.assets.unlisted,1)
+    assert.equal(result.metadata.definitions,1)
+    assert.equal(result.metadata.code,true)
+    assert.equal(requested.filter(url=>url===publicUrl).length,1)
+    assert.ok((await verifyArchive(root)).files.some(file=>file.path.startsWith('files/')&&file.path.endsWith('.pdf')))
+  } finally {await rm(folder,{recursive:true,force:true})}
 })

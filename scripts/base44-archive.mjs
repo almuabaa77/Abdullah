@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, copyFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 
 const repo=fileURLToPath(new URL('../',import.meta.url))
 const entityPattern=/^[A-Za-z][A-Za-z0-9_]{0,80}$/
@@ -130,17 +132,123 @@ function inventory(spec) {
   return {tables:[...tables].sort(),functions:[...functions].sort()}
 }
 
-async function getJson(url,token) {
+async function getResponse(url,token,accept='application/json') {
   for(let attempt=0;attempt<4;attempt++){
     let response
-    try {response=await fetch(url,{headers:{Authorization:'Bearer '+token,Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(45_000)})}
+    const headers=token?{Authorization:'Bearer '+token,Accept:accept}:{Accept:accept}
+    try {response=await fetch(url,{headers,redirect:'error',signal:AbortSignal.timeout(120_000)})}
     catch {if(attempt===3)throw new Error('Connection to the Base44 API failed. Re-run capture to resume.')}
-    if(response?.ok)return response.json()
+    if(response?.ok)return response
+    await response?.body?.cancel()
     if(response&&response.status!==429&&response.status<500)throw new Error('Base44 returned HTTP '+response.status)
     if(attempt===3)throw new Error('Base44 returned HTTP '+response?.status+'. Re-run capture to resume.')
     const requested=response?.headers.get('Retry-After')
     await delay(Math.min(30_000,Math.max(1000*2**attempt,(Number(requested)||0)*1000)))
   }
+}
+
+const getJson=async(url,token)=>(await getResponse(url,token)).json()
+const unavailable=error=>/HTTP (403|404|405|409|410|413)$/.test(error.message)
+const optionalJson=path=>readJson(path).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error))
+const optionalFile=path=>lstat(path).then(file=>file.isFile()).catch(error=>error.code==='ENOENT'?false:Promise.reject(error))
+const apiUrl=(appId,route)=>new URL('https://app.base44.com/api/apps/'+appId+'/'+route)
+
+async function cachedJson(path,url,token){
+  const existing=await optionalJson(path)
+  if(existing!==undefined||!token)return existing
+  try{
+    const result=await getJson(url,token)
+    await writeJson(path,result)
+    return result
+  }catch(error){if(!unavailable(error))throw error}
+}
+
+async function saveDownload(path,url,{token,zip=false}={}){
+  if(await lstat(path).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error)))return true
+  const temp=path+'.'+randomUUID()+'.tmp'
+  try{
+    const response=await getResponse(url,token,zip?'application/zip':'*/*')
+    const type=response.headers.get('content-type')?.split(';')[0]
+    if(!response.body||type==='text/html'||zip&&!['application/zip','application/x-zip-compressed','application/octet-stream'].includes(type)){
+      await response.body?.cancel()
+      return false
+    }
+    let bytes=0
+    const maximum=512*1024*1024
+    const sizeLimit=new Transform({transform(chunk,encoding,callback){
+      bytes+=chunk.length
+      if(bytes>maximum)callback(new Error('Attachment exceeds the automatic download limit.'))
+      else callback(null,chunk)
+    }})
+    await pipeline(Readable.fromWeb(response.body),sizeLimit,createWriteStream(temp,{mode:0o600,flags:'wx'}))
+    if(!bytes)return false
+    if(zip){
+      const fd=await open(temp,'r')
+      try{
+        const prefix=Buffer.alloc(4)
+        await fd.read(prefix,0,4,0)
+        if(!['504b0304','504b0506'].includes(prefix.toString('hex')))return false
+      }finally{await fd.close()}
+    }
+    await link(temp,path)
+    return true
+  }catch(error){
+    if(unavailable(error)||(!token&&!error.code))return false
+    throw error
+  }finally{await rm(temp,{force:true})}
+}
+
+async function captureMetadata(root,appId,token){
+  const dir=join(root,'metadata')
+  await privateDir(dir)
+  const [spec,schemas,library]=await Promise.all([
+    cachedJson(join(dir,'openapi.json'),apiUrl(appId,'openapi-spec'),token),
+    cachedJson(join(dir,'schemas.json'),apiUrl(appId,'entity-schemas'),token),
+    cachedJson(join(dir,'assets.json'),apiUrl(appId,'assets'),token),
+  ])
+  let libraryCapped=library?.length===500
+  const assets=Array.isArray(library)?[...library]:[]
+  if(libraryCapped){
+    const groups=await Promise.all(['upload','generated'].map(kind=>{
+      const url=apiUrl(appId,'assets')
+      url.searchParams.set('source_type',kind)
+      return cachedJson(join(dir,'assets-'+kind+'.json'),url,token)
+    }))
+    for(const group of groups)if(Array.isArray(group))assets.push(...group)
+    libraryCapped=groups.some(group=>!Array.isArray(group)||group.length>=500)
+  }
+  const workflows=[]
+  let workflowCatalog=false
+  for(let offset=0;offset<100_000;offset+=200){
+    const url=apiUrl(appId,'workflows')
+    url.searchParams.set('include_archived','true')
+    url.searchParams.set('limit','200')
+    url.searchParams.set('offset',String(offset))
+    const page=await cachedJson(join(dir,'workflows-'+offset+'.json'),url,token)
+    if(!Array.isArray(page))break
+    workflows.push(...page)
+    if(page.length<200){workflowCatalog=true;break}
+  }
+  let definitions=0
+  const ids=new Set(workflows.map(workflow=>workflow?.id).filter(id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(id)))
+  for(const id of ids){
+    const definition=await cachedJson(join(dir,'workflow-'+id+'.json'),apiUrl(appId,'workflows/'+id),token)
+    if(definition)definitions++
+  }
+  const zip=join(dir,'source.zip')
+  const code=token?await saveDownload(zip,apiUrl(appId,'coding/export-to-zip'),{token,zip:true}):
+    Boolean(await lstat(zip).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error)))
+  return {spec,schemas,assets,summary:{assetCatalog:Array.isArray(library),libraryCapped,workflows:workflows.length,workflowCatalog,definitions,code}}
+}
+
+function mediaUrl(value,appId){
+  try {
+    const url=new URL(value,'https://media.base44.com')
+    if(url.origin!=='https://media.base44.com'||url.username||url.password||
+      !url.pathname.startsWith('/files/public/'+appId+'/'))return
+    url.hash=''
+    return url
+  }catch{}
 }
 
 async function captureTable(root,appId,name,token) {
@@ -174,7 +282,7 @@ async function captureTable(root,appId,name,token) {
         catch(error){if(!/HTTP (403|404|405)$/.test(error.message))throw error}
       }
       if(count!==undefined){
-        if(!Number.isSafeInteger(count)||count!==ids.size)throw new Error('Source count changed or the capture is incomplete for '+name+'.')
+        if(!Number.isSafeInteger(count)||count<0||count!==ids.size&&name!=='User')throw new Error('Source count changed or the capture is incomplete for '+name+'.')
         await writeJson(countFile,{count},{overwrite:true})
       }
       return {pages:page,count:ids.size,sourceCount:count}
@@ -212,7 +320,8 @@ export function attachmentCandidates(tables) {
       try{collect(JSON.parse(value),table,field);return}catch{}
     }
     const assetField=/(?:attachment|file|media|image|photo|avatar|audio|video|document|picture|thumbnail)/i.test(field)
-    const assetUri=/^(?:base44|storage|file):\/\//i.test(value)||/^https:\/\/[^/]*base44[^/]*\/(?:api\/)?(?:files|storage)\//i.test(value)
+    const assetUri=/^(?:base44|storage|file):\/\//i.test(value)||/^\/files\/(?:public|private)\//i.test(value)||
+      /^https:\/\/[^/]*base44[^/]*\/(?:api\/)?(?:files|storage)\//i.test(value)
     const looksLikeFile=/^https?:\/\/[^\s]+\.(?:png|jpe?g|webp|svg|gif|pdf|docx?|xlsx?|mp3|ogg|m4a|mp4|webm|wav|zip)(?:[?#].*)?$/i.test(value)
     if(!assetUri&&!looksLikeFile&&!(assetField&&/^(?:https?:\/\/|private\/|public\/)[^\s]+$/i.test(value)))return
     const entry=references.get(value)??new Set()
@@ -233,8 +342,13 @@ export async function captureArchive(root,{appId,input,token,draft=false}) {
   if(capture&&capture.appId!==appId)throw new Error('This directory belongs to a different Base44 app.')
   if(!capture)await writeJson(setup,{appId,startedAt:new Date().toISOString()})
   if(input)await copyInput(input,join(root,'inputs'))
-  const spec=await readJson(join(root,'inputs','openapi.json')).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error))
-  const expected=inventory(spec)
+  const supplied=await optionalJson(join(root,'inputs','openapi.json'))
+  const metadata=(token||await lstat(join(root,'metadata')).catch(error=>error.code==='ENOENT'?undefined:Promise.reject(error)))?
+    await captureMetadata(root,appId,token):undefined
+  const suppliedInventory=inventory(supplied),apiInventory=inventory(metadata?.spec)
+  const schemaNames=(metadata?.schemas?.schemas??[]).map(schema=>schema.entity_name).filter(name=>typeof name==='string'&&entityPattern.test(name))
+  const expected={tables:[...new Set([...suppliedInventory.tables,...apiInventory.tables,...schemaNames])],
+    functions:[...new Set([...suppliedInventory.functions,...apiInventory.functions])].sort()}
   const exports=await readdir(join(root,'inputs','tables')).catch(error=>error.code==='ENOENT'?[]:Promise.reject(error))
   const sources=new Map()
   for(const name of exports){
@@ -275,17 +389,46 @@ export async function captureArchive(root,{appId,input,token,draft=false}) {
     inventoried.add(item.sourceUri)
   }
   const candidates=attachmentCandidates(await tablesFrom(root,{tables}))
-  const unlisted=candidates.filter(item=>!inventoried.has(item.sourceUri))
-  await writeJson(join(root,'asset-references.json'),{candidates,unlisted},{overwrite:true})
+  const libraryUris=new Set()
+  let uncataloguedLibraryFiles=0
+  for(const asset of metadata?.assets??[]){
+    const sourceUri=asset?.file_url
+    if(typeof sourceUri!=='string'||!sourceUri){uncataloguedLibraryFiles++;continue}
+    if(libraryUris.has(sourceUri))continue
+    libraryUris.add(sourceUri)
+  }
+  const indexed=new Map(candidates.map(item=>[item.sourceUri,item]))
+  for(const sourceUri of libraryUris)if(!indexed.has(sourceUri))indexed.set(sourceUri,{sourceUri,fields:['Base44 media library']})
+  const downloads=[]
+  const path=join(root,'files')
+  if(token||indexed.size){
+    await privateDir(path)
+    for(const sourceUri of indexed.keys()){
+      if(inventoried.has(sourceUri))continue
+      const url=mediaUrl(sourceUri,appId)
+      if(!url)continue
+      const extension=url.pathname.match(/\.[a-z0-9]{1,10}$/i)?.[0].toLowerCase()??'.bin'
+      const file=sha256(url.href)+extension
+      if(token?await saveDownload(join(path,file),url):await optionalFile(join(path,file))){
+        inventoried.add(sourceUri)
+        downloads.push({sourceUri,file:'files/'+file})
+      }
+    }
+  }
+  const unlisted=[...indexed.values()].filter(item=>!inventoried.has(item.sourceUri))
+  await writeJson(join(root,'asset-references.json'),{candidates,downloaded:downloads,unlisted},{overwrite:true})
   const listing=[]
   for(const path of await filesUnder(root)){
     if(path.endsWith('.tmp'))throw new Error('An interrupted temporary file remains. Move it to a private location before sealing.')
     const full=join(root,path)
     listing.push({path,size:(await stat(full)).size,sha256:await hashFile(full)})
   }
-  const manifest={format:1,appId,capturedAt:new Date().toISOString(),hasOpenApi:Boolean(spec),tables,functions:expected.functions,assets:{
-    inventory:Boolean(assetRecords),listed:assetRecords?.length??0,missing:missingAssets,unlisted:unlisted.length,files:availableAssets.size
-  },files:listing}
+  const manifest={format:1,appId,capturedAt:new Date().toISOString(),hasOpenApi:Boolean(supplied??metadata?.spec),tables,functions:expected.functions,
+    metadata:metadata?.summary,assets:{
+      inventory:Boolean(assetRecords)||Boolean(metadata?.summary.assetCatalog&&!metadata.summary.libraryCapped),
+      listed:(assetRecords?.length??0)+downloads.length,missing:missingAssets+uncataloguedLibraryFiles,
+      unlisted:unlisted.length,files:availableAssets.size+new Set(downloads.map(item=>item.file)).size
+    },files:listing}
   if(!draft)await writeJson(manifestFile,manifest)
   return manifest
 }

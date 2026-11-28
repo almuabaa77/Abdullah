@@ -1,6 +1,9 @@
 import { parseArgs } from 'node:util'
-import { readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { createReadStream } from 'node:fs'
+import { link, open, readFile, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { dirname, join, relative, resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { build } from 'esbuild'
 import { createConnection } from 'mysql2/promise'
 import { captureArchive, jsonText, privateDir, readJson, sha256, tablesFrom, verifyArchive, verifyPrivatePath, writeJson } from './base44-archive.mjs'
@@ -61,10 +64,27 @@ async function execute(){
   if(action==='capture'){
     const root=await outPath()
     const results=await captureArchive(root,{appId:required('app'),input:values.input,token:process.env.BASE44_PERSONAL_ACCESS_TOKEN,draft:values.draft})
-    console.log(JSON.stringify({sealed:!values.draft,tables:results.tables,assets:results.assets,functions:results.functions},null,2))
+    console.log(JSON.stringify({sealed:!values.draft,tables:results.tables,assets:results.assets,functions:results.functions,metadata:results.metadata},null,2))
   }else if(action==='verify'){
     const {manifest,digest}=await inspect(await verifyPrivatePath(required('archive')))
-    console.log(JSON.stringify({sha256:digest,tables:manifest.tables,assets:manifest.assets},null,2))
+    console.log(JSON.stringify({sha256:digest,tables:manifest.tables,assets:manifest.assets,metadata:manifest.metadata},null,2))
+  }else if(action==='pack'){
+    const archive=await verifyPrivatePath(required('archive')), output=await verifyPrivatePath(required('out'))
+    const inner=relative(archive,output)
+    if(!output.endsWith('.tar.gz')||!(inner==='..'||inner.startsWith('../')))throw new Error('Choose a .tar.gz file outside the archive directory.')
+    await privateDir(dirname(output))
+    await inspect(archive)
+    const temp=output+'.'+randomUUID()+'.tmp'
+    const fd=await open(temp,'wx',0o600)
+    try {
+      const run=spawnSync('tar',['--format=posix','-czf','-','-C',archive,'.'],{stdio:['ignore',fd.fd,'ignore']})
+      if(run.status!==0)throw new Error('Could not package the verified archive. The tar command is required.')
+      await fd.sync()
+      await link(temp,output)
+    }finally{await fd.close();await rm(temp,{force:true})}
+    const hash=createHash('sha256')
+    for await(const block of createReadStream(output))hash.update(block)
+    console.log(JSON.stringify({file:output,sha256:hash.digest('hex')}))
   }else if(action==='snapshot'){
     const directory=await outPath()
     const before=await database(current)
@@ -83,6 +103,7 @@ async function execute(){
     const gates=[]
     if(!manifest.hasOpenApi)gates.push('source-inventory-missing')
     if(manifest.tables.some(table=>table.source==='missing'))gates.push('source-tables-missing')
+    if(manifest.tables.some(table=>table.sourceCount!==undefined&&table.count!==table.sourceCount))gates.push('source-counts-require-review')
     if(!manifest.assets.inventory||manifest.assets.missing||manifest.assets.unlisted)gates.push('asset-inventory-or-files-missing')
     if(result.counts.conflict)gates.push('unresolved-record-conflicts')
     if(!result.counts.proposed)gates.push('no-records-proposed')
@@ -91,7 +112,7 @@ async function execute(){
       additions:result.additions,gates,archived:result.counts.archived,archivedFields,sourceFunctions:manifest.functions}
     const approval=sha256(jsonText(plan))
     const brief={appId:manifest.appId,revision:before.revision,approval,counts:result.counts,gates,archivedFields,
-      tables:manifest.tables,assets:manifest.assets,functions:manifest.functions}
+      tables:manifest.tables,assets:manifest.assets,functions:manifest.functions,metadata:manifest.metadata}
     await writeJson(join(dir,'report.json'),{...brief,inventory:result.inventory,decisions:result.decisions})
     await writeJson(join(dir,'plan.json'),plan)
     console.log(JSON.stringify(brief,null,2))
@@ -137,7 +158,7 @@ async function execute(){
         console.log('Rolled back migration at revision '+(live.revision+1))
       })
     }
-  }else throw new Error('Commands: capture, verify, snapshot, preview, apply, rollback')
+  }else throw new Error('Commands: capture, verify, pack, snapshot, preview, apply, rollback')
 }
 
 try {await execute()}catch(error) {
