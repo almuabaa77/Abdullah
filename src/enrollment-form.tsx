@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import type { Circle, Student } from './domain'
+import type { CircleOption, Student } from './domain'
 import { threePartName } from './enrollment'
-import { useWorkspace } from './ui'
+import { circleTimeText, useWorkspace } from './ui'
 
 type EnrollmentRole='teacher'|'student'|'parent'
 
@@ -19,14 +19,14 @@ export function EnrollmentName({three,value,label}:{three:boolean;value?:string;
     {three&&<small className={error?'error-text':'muted'}>{t('ثلاث كلمات بالحروف فقط، دون أرقام أو رموز.','Exactly three words, with letters only.')}</small>}
   </label>
 }
-export function CircleField({circles,value}:{circles:Pick<Circle,'id'|'name'>[];value?:string}) {
+export function CircleField({circles,value}:{circles:CircleOption[];value?:string}) {
   const {t}=useWorkspace()
   return <label>{t('الحلقة المسندة','Assigned circle')}<select name="circleId" defaultValue={value ?? ''} required>
     <option value="">{t('اختر الحلقة','Select a circle')}</option>
-    {circles.map(circle=><option value={circle.id} key={circle.id}>{circle.name}</option>)}
+    {circles.map(circle=><option value={circle.id} key={circle.id}>{circle.name}{circleTimeText(circle,t)?' · '+circleTimeText(circle,t):''}</option>)}
   </select>{!circles.length&&<small className="muted">{t('لا توجد حلقات متاحة حاليًا.','There are no circles available currently.')}</small>}</label>
 }
-export function StudentFields({student,circles}:{student?:Student;circles:Pick<Circle,'id'|'name'>[]}) {
+export function StudentFields({student,circles}:{student?:Student;circles:CircleOption[]}) {
   const {t}=useWorkspace()
   return <>
     <CircleField circles={circles} value={student?.circleId}/>

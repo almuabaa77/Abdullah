@@ -78,6 +78,22 @@ const revisions = revisionStream(async () => {
   return rows[0]?.revision
 })
 const repository:Repository = {
+  async legacy(dataset,input){
+    const headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}
+    if('file' in input){
+      const [rows]=await query<(RowDataPacket & {file_name:string;contents:Buffer})[]>(
+        'SELECT file_name,contents FROM halaqat_legacy_files WHERE dataset=? AND file_id=?',[dataset,input.file])
+      if(!rows[0])throw new ApiError('الملف غير متاح',404)
+      const file=rows[0]
+      return new Response(new Uint8Array(file.contents),{headers:{...headers,'Content-Type':'application/octet-stream',
+        'Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(file.file_name)}})
+    }
+    const size=20
+    const [rows]=await query<(RowDataPacket & {source_id:string;payload:string})[]>(
+      'SELECT source_id,payload FROM halaqat_legacy_records WHERE dataset=? AND entity=? AND deleted=? ORDER BY source_id LIMIT ? OFFSET ?',
+      [dataset,input.entity,input.deleted?1:0,size,input.page*size])
+    return Response.json({records:rows.map(row=>({id:row.source_id,data:JSON.parse(row.payload)})),page:input.page,size},{headers})
+  },
   async read(id) {
     const [rows] = await query<(RowDataPacket & {revision:number;data:string})[]>('SELECT revision,data FROM halaqat_workspaces WHERE id=?',[id])
     return rows[0] ?? null

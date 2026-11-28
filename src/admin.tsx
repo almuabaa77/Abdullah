@@ -4,10 +4,11 @@ import { AssessmentPolicyFields, PolicySettings } from './admin-policies'
 import { ManageFamilyLinks } from './family-links'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Activity, ArrowRight, Bell, BookOpen, CalendarDays, ChevronLeft, ClipboardList, Ellipsis, Flag, Gift, GraduationCap, History, LayoutGrid, Link2, MessageCircle, Palette, Plus, Search, Settings, ShieldAlert, ShieldCheck, Table2, UserCheck, Users } from 'lucide-react'
-import { circleMeets, type Circle, type Prize, type Student, type User } from './domain'
+import { circleMeets, circlePeriods, type Circle, type Prize, type Student, type User } from './domain'
 import { ChildField, CircleField, EnrollmentFields, EnrollmentName, StudentFields } from './enrollment-form'
 import { DuplicateAccounts } from './duplicate-accounts'
 import { AdminLive } from './admin-live'
+import { AdminLegacy } from './admin-legacy'
 import { AdminOverview } from './admin-overview'
 import { LessonCenter } from './lesson-center'
 import { ChatPage } from './chat'
@@ -17,7 +18,7 @@ import { Assessments } from './assessments'
 import { Records } from './records'
 import type { RecordStreamStatus } from './live-records'
 import { normalizeMobile } from './phone-number'
-import { Avatar, Badge, dateLabel, Empty, Modal, nameFor, normal, RoleName, useWorkspace } from './ui'
+import { Avatar, Badge, circlePeriodText, circleTimeText, dateLabel, Empty, Modal, nameFor, normal, RoleName, useWorkspace } from './ui'
 import './admin.css'
 
 type Edit = {kind:'student';item?:Student}|{kind:'circle';item?:Circle}|{kind:'prize';item?:Prize}|{kind:'announcement'}|{kind:'invite'}|{kind:'enrollment';item:User}|{kind:'assessment';item:Circle}
@@ -28,6 +29,7 @@ const sections = [
   {id:'overview',group:'monitor',icon:LayoutGrid,label:['نظرة عامة','Overview'],short:['نظرة عامة','Overview']},
   {id:'live',group:'monitor',icon:Activity,label:['المتابعة المباشرة','Live monitoring'],short:['المتابعة','Live']},
   {id:'records',group:'monitor',icon:ClipboardList,label:['السجلات والتقارير','Records & reports']},
+  {id:'legacy',group:'monitor',icon:History,label:['الأرشيف السابق','Legacy archive']},
   {id:'audit',group:'monitor',icon:History,label:['سجل العمليات','Audit log']},
   {id:'people',group:'school',icon:Users,label:['الحسابات وطلبات التسجيل','Accounts & enrollment'],short:['الحسابات','Accounts'],add:['إضافة حساب','Add account'],edit:'invite',search:true},
   {id:'students',group:'school',icon:GraduationCap,label:['الطلاب','Students'],short:['الطلاب','Students'],add:['إضافة طالب','Add student'],edit:'student',search:true},
@@ -259,6 +261,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         {tab==='live'&&<AdminLive status={liveRecords} online={online}/>}
         {tab==='duplicates'&&<DuplicateAccounts/>}
         {tab==='records'&&<Records embedded/>}
+        {tab==='legacy'&&<AdminLegacy/>}
         {tab==='exams'&&<Assessments embedded/>}
         {tab==='leaves'&&<Leaves embedded/>}
         {tab==='lessons'&&<LessonCenter management/>}
@@ -288,7 +291,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
             <div className="chip-row"><Badge status={student.active?'active':'disabled'}/><button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'student',item:student})}>{t('تعديل','Edit')}</button></div>
           </div>}/>}
         {tab==='circles'&&<AdminList grid key={query} empty={t('لا توجد حلقات','No circles')} filtered={Boolean(search)}
-          items={data.circles.filter(circle=>includes(circle.name,userNames.get(circle.teacherId))).sort((a,b)=>a.name.localeCompare(b.name,en?'en':'ar'))}
+          items={data.circles.filter(circle=>includes(circle.name,userNames.get(circle.teacherId),circleTimeText(circle,t))).sort((a,b)=>a.name.localeCompare(b.name,en?'en':'ar'))}
           render={circle=>{
             const teacher=data.users.find(user=>user.id===circle.teacherId)
             const meets=circleMeets(data.date,circle)
@@ -299,7 +302,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
                 <span className="admin-circle-state" data-active={meets}>{meets?t('تنعقد اليوم','Meets today'):t('لا تنعقد اليوم','No session today')}</span></header>
               <dl><div><dt>{t('الطلاب النشطون','Active students')}</dt><dd>{total}</dd></div>
                 <div><dt>{t('سجلات اليوم','Records today')}</dt><dd>{entered} / {total}</dd></div></dl>
-              <div className="chip-row">{weekDays.map(([ar,english],day)=>circle.days.includes(day)&&<span key={day} className="count-pill">{t(ar,english)}</span>)}</div>
+              <div className="chip-row">{circleTimeText(circle,t)&&<span className="count-pill"><bdi>{circleTimeText(circle,t)}</bdi></span>}{weekDays.map(([ar,english],day)=>circle.days.includes(day)&&<span key={day} className="count-pill">{t(ar,english)}</span>)}</div>
               <div className="admin-circle-actions">
                 <button className="btn btn-primary compact" type="button" onClick={()=>openRegister(circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
@@ -368,7 +371,12 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
           <label>{t('جوال الطالب (اختياري لسجل بلا حساب)','Student mobile (optional for a roster-only record)')}<input name="phone" type="tel" dir="ltr" defaultValue={edit.item?.phone} placeholder="05X XXX XXXX" readOnly={Boolean(edit.item&&data.users.some(user=>user.studentId===edit.item?.id))}/></label>
           <label className="check-line"><input type="checkbox" name="active" defaultChecked={edit.item?.active??true}/>{t('طالب نشط','Active student')}</label>
         </>}
-        {edit.kind==='circle'&&<><label>{t('اسم الحلقة','Circle name')}<input name="name" required defaultValue={edit.item?.name}/></label><label>{t('المحفّظ','Teacher')}<select name="teacherId" defaultValue={edit.item?.teacherId} required>{data.users.filter(u=>(u.role==='teacher'||u.role==='admin')&&u.status==='active').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label><fieldset className="day-select"><legend>{t('أيام الحلقة','Circle days')}</legend>{weekDays.map(([ar,english],i)=><label key={english} className="check-line"><input name="days" type="checkbox" value={i} defaultChecked={edit.item?.days.includes(i)??i<5}/>{t(ar,english)}</label>)}</fieldset><label>{t('تواريخ الإجازات (YYYY-MM-DD)','Holidays (YYYY-MM-DD)')}<textarea name="holidays" defaultValue={edit.item?.holidays.join('\n')}/></label></>}
+        {edit.kind==='circle'&&<><label>{t('اسم الحلقة','Circle name')}<input name="name" required defaultValue={edit.item?.name}/></label><label>{t('المحفّظ','Teacher')}<select name="teacherId" defaultValue={edit.item?.teacherId??''} required><option value="">{t('اختر المحفّظ','Select teacher')}</option>{data.users.filter(u=>(u.role==='teacher'||u.role==='admin')&&u.status==='active').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label><div className="field-pair">
+          <label>{t('فترة الحلقة','Circle period')}<select name="period" defaultValue={edit.item?.period??''}>
+            <option value="">{t('غير محددة','Unspecified')}</option>{circlePeriods.map(period=><option key={period} value={period}>{t(...circlePeriodText[period])}</option>)}
+          </select></label>
+          <label>{t('وقت البدء بتوقيت الرياض','Start time in Riyadh')}<input type="time" name="meetingTime" defaultValue={edit.item?.meetingTime??''}/></label>
+        </div><fieldset className="day-select"><legend>{t('أيام الحلقة','Circle days')}</legend>{weekDays.map(([ar,english],i)=><label key={english} className="check-line"><input name="days" type="checkbox" value={i} defaultChecked={edit.item?.days.includes(i)??i<5}/>{t(ar,english)}</label>)}</fieldset><label>{t('تواريخ الإجازات (YYYY-MM-DD)','Holidays (YYYY-MM-DD)')}<textarea name="holidays" defaultValue={edit.item?.holidays.join('\n')}/></label></>}
         {edit.kind==='prize'&&<><label>{t('اسم الجائزة','Reward name')}<input name="name" defaultValue={edit.item?.name} required/></label><label>{t('الوصف','Description')}<textarea name="description" defaultValue={edit.item?.description} required/></label><label>{t('رابط الصورة','Image URL')}<input name="image" type="url" defaultValue={edit.item?.image}/></label><div className="field-pair"><label>{t('السعر بالنقاط','Points price')}<input name="price" type="number" min={1} defaultValue={edit.item?.price} required/></label><label>{t('الكمية','Stock')}<input name="stock" type="number" min={0} defaultValue={edit.item?.stock} required/></label></div><label className="check-line"><input name="active" type="checkbox" defaultChecked={edit.item?.active??true}/>{t('متاح للطلاب','Visible to students')}</label></>}
         {edit.kind==='announcement'&&<AnnouncementFields scheduled={scheduled} setScheduled={setScheduled}/>}
         {edit.kind==='assessment'&&<AssessmentPolicyFields circle={edit.item}/>}

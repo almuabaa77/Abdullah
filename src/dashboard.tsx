@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Award, BookOpen, CalendarDays, Check, ChevronDown, CircleCheck, Clock3, Ellipsis, ListFilter, Plus, Search, Sparkles, UserCheck, Users } from 'lucide-react'
 import { balanceFor, circleMeets, isRecitationDue, recitationStatus, segmentLabel, statusFor, surahs, type RecitationStatus } from './domain'
 import { RecitationBadge } from './recitation-roster'
-import { Avatar, Badge, Empty, StudentIndicators, dateLabel, matches, nameFor, useWorkspace } from './ui'
+import { Avatar, Badge, Empty, StudentIndicators, circleTimeText, dateLabel, matches, nameFor, useWorkspace } from './ui'
 
 type RosterFilter = 'all' | 'due' | 'present' | 'incomplete' | RecitationStatus
 const recitationOrder: Record<RecitationStatus,number> = {awaiting:0,partial:1,complete:2,absent:3,leave:4}
@@ -50,6 +50,7 @@ export function Dashboard({rosterOnly,circleId,selectCircle}:{rosterOnly:boolean
           <p className="teacher-date"><CalendarDays size={15}/>{dateLabel(data.date,en,true)}</p>
           <h1>{rosterOnly?t('طلاب الحلقة','Circle students'):t('حلقة اليوم','Today’s circle')}</h1>
           {name&&<p className="muted">{name}</p>}
+          {circle&&circleTimeText(circle,t)&&<p className="teacher-date"><Clock3 size={15}/><bdi>{circleTimeText(circle,t)}</bdi></p>}
         </div>
         <label className="circle-picker"><BookOpen size={16}/><select aria-label={t('الحلقة','Circle')} value={circle?.id||''} onChange={event=>{selectCircle(event.target.value);setQuery('');changeFilter('all')}}>
           {!data.circles.length&&<option value="">{t('لا توجد حلقات','No circles')}</option>}

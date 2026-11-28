@@ -11,12 +11,13 @@ import { announcementVisible } from './announcements'
 import { scheduleAssessment } from './assessment'
 import { asciiDigits, groupAccountsByPhone, normalizeMobile } from '../src/phone-number'
 import { enrollmentNameKey, threePartName } from '../src/enrollment'
-import { announcementAudiences, announcementSources, communicationKeys, defaultCommunication, examDateFor, balanceFor, callPeer, callState, circleMeets, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, noticeExpiresAt, pointsFor, resolveAttendance, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type ChildRequest, type Daily, type Communication, type Exam, type Notice, type Role, type State, type Student, type StudentDetails, type User, type View } from '../src/domain'
+import { announcementAudiences, announcementSources, communicationKeys, defaultCommunication, examDateFor, balanceFor, callPeer, callState, circleMeets, circlePeriods, dateKey, emptyDaily, idFor, needsRecordReminder, nextCircleDate, noticeExpiresAt, pointsFor, resolveAttendance, recordReminderMessage, reminderCooldown, reminderFields, validateSegments, type Attendance, type Chat, type ChatCall, type ChildRequest, type Daily, type Communication, type Exam, type Notice, type Role, type State, type Student, type StudentDetails, type User, type View } from '../src/domain'
 import { createState } from './seed'
 import { accountFingerprint, hasSharedPhone, removeDuplicateAccount, retainedAccount } from './account-phones'
 import { memorizationChanged, recordChanges, reviewChanged } from './record-changes'
 
 export type Repository = {
+  legacy?(archiveId:string,request:{entity:string;deleted:boolean;page:number}|{file:string}):Promise<Response>
   read(id: string): Promise<{ revision: number; data: string } | null>
   create(id: string, state: State): Promise<void>
   write(id: string, revision: number, state: State, notices?: Notice[]): Promise<boolean>
@@ -178,7 +179,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
   const isAdmin = user.role === 'admin'
   return {
     user, revision, phoneEnabled, appearance:state.appearance, lessons:projectLessons(state,user,Date.now(),encrypted),lessonTeacherScheduling:state.lessonTeacherScheduling,
-    lessonHealth:{rtcConfigured,encryptedMode:encrypted,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, date: dateKey(), students: students.map(publicStudent),
+    lessonHealth:{rtcConfigured,encryptedMode:encrypted,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, legacyArchive:isAdmin?state.legacyArchive:undefined, date: dateKey(), students: students.map(publicStudent),
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
@@ -741,7 +742,11 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if (!days.length) throw new ApiError('اختر أيام انعقاد الحلقة')
       const id=clean(p.id)||op
       const idx=state.circles.findIndex(x=>x.id===id)
-      const circle = { id, name:required(p.name),teacherId,days,holidays:Array.isArray(p.holidays) ? [...new Set(p.holidays.map(validDate))] : [],autoExam:state.circles[idx]?.autoExam }
+      const previous=state.circles[idx]
+      const period=p.period===undefined?previous?.period:p.period===''?undefined:choice(p.period,circlePeriods)
+      const meetingTime=p.meetingTime===undefined?previous?.meetingTime:p.meetingTime===''?undefined:required(p.meetingTime,6)
+      if(meetingTime&&!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(meetingTime))throw new ApiError('أدخل وقتًا صالحًا بتوقيت الرياض')
+      const circle = { id, name:required(p.name),teacherId,days,holidays:Array.isArray(p.holidays) ? [...new Set(p.holidays.map(validDate))] : [],period,meetingTime,autoExam:previous?.autoExam }
       if (idx < 0) state.circles.push(circle); else state.circles[idx] = circle
       const group = state.chats.find(c => c.circleId === circle.id&&!c.group)
       if (group) {group.title=circle.name;group.members=[teacherId]}
@@ -854,6 +859,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
   try {
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
+    const legacyRoute=url.pathname==='/api/legacy'
     const pushRoute = url.pathname === '/api/push'
     const iconRoute = url.pathname === '/api/appearance/generate'
     const rtcRoute = url.pathname === '/api/lesson-rtc'
@@ -878,13 +884,13 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
     }
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && (request.method !== 'GET' || events || pushRoute || specialRoute)) throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events || pushRoute || specialRoute || legacyRoute)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
     const rtcConfigured=Boolean((rtc||rtcAppId)&&identity.workspace==='school')
     const encrypted=Boolean(rtcAppId&&identity.workspace==='school')
-    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !specialRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !specialRoute && !legacyRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
-    if (events && !get || specialRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
+    if ((events||legacyRoute) && !get || specialRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
     if (!get && request.headers.get('sec-fetch-site') === 'cross-site') deny()
     const raw = get ? '' : await request.text()
@@ -903,7 +909,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       let user = state.users.find(x => x.id === identity.id) ?? null
       if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
-        if (events || pushRoute || specialRoute) return deny()
+        if (events || pushRoute || specialRoute || legacyRoute) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
       }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
@@ -1039,6 +1045,20 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         if(!push||identity.workspace!=='school')throw new ApiError('تنبيهات الخلفية غير متاحة في هذا الإصدار',503)
         return await push(request,user,payload)
       }
+      if(legacyRoute){
+        if(!user||user.role!=='admin'||user.status!=='active'||user.duplicateOf||identity.workspace!=='school')return deny()
+        const archive=state.legacyArchive
+        if(!archive||!repo.legacy)throw new ApiError('الأرشيف غير متاح',404)
+        const file=url.searchParams.get('file')
+        if(file){
+          if(!archive.files.some(item=>item.id===file))throw new ApiError('الملف غير متاح',404)
+          return repo.legacy(archive.id,{file})
+        }
+        const entity=url.searchParams.get('entity')??''
+        if(!archive.tables.some(item=>item.entity===entity))throw new ApiError('الجدول غير متاح',404)
+        const page=integer(url.searchParams.get('page')??0,0,10000)
+        return repo.legacy(archive.id,{entity,page,deleted:url.searchParams.get('deleted')==='1'})
+      }
       if (events) {
         if (url.searchParams.get('scope')==='reminders'&&user?.role==='teacher'&&user.status==='active') {
           return Response.json({revision:current.revision,recipient:user.id},{headers})
@@ -1054,7 +1074,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         const view=project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted)
         if(!user&&identity.phone) {
           view.verifiedPhone=identity.phone
-          view.enrollmentCircles=state.circles.map(({id,name})=>({id,name}))
+          view.enrollmentCircles=state.circles.map(({id,name,period,meetingTime})=>({id,name,period,meetingTime}))
         }
         return Response.json(view,{headers})
       }

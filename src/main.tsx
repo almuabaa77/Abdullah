@@ -118,7 +118,7 @@ function App() {
   const lastWorkspaceSync = useRef(0)
   const refreshWorkspace = useRef<()=>void>(()=>{})
   const refreshedUid = useRef('')
-  const t:Tr = (ar,english)=>en?english:ar
+  const t:Tr = useCallback((ar,english)=>en?english:ar,[en])
   const go = useCallback((p:Page,replace=false) => {
     const url = p==='admin' ? '/admin' : p==='home' ? '/' : '/#'+p
     if (location.pathname+location.hash!==url||phoneRequested()) {
@@ -454,7 +454,16 @@ function App() {
     if(!response.ok||!value.image||!value.mimeType)throw new Error(value.error??t('تعذّر توليد الأيقونة.','Could not generate an icon.'))
     return {image:value.image,mimeType:value.mimeType}
   }
-  const workspace = {data:appearance===data.appearance?data:{...data,appearance},en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,
+  const readLegacy=useCallback(async (query:URLSearchParams,signal?:AbortSignal)=>{
+    if(!token)throw new Error(t('سجّل الدخول أولًا','Sign in first'))
+    const response=await fetch('/api/legacy?'+query,{headers:{Authorization:'Bearer '+token},cache:'no-store',signal})
+    if(!response.ok){
+      const error=await response.json().catch(()=>null)
+      throw new Error(error?.error??t('تعذرت قراءة الأرشيف','The archive could not be read'))
+    }
+    return response
+  },[token,t])
+  const workspace = {readLegacy,data:appearance===data.appearance?data:{...data,appearance},en,t,post,go,tell,open,lessonRtc,lessonRtcStatus,
     lessonRtcPresence,iconGeneration:Boolean(publicAppearance.iconGeneration),generateIcon,refresh:()=>refreshWorkspace.current()}
   const signOut = useCallback(async () => {
     if(!auth)return

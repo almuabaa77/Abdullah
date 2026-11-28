@@ -2,14 +2,21 @@ import { brandIconUrl, type GeneratedIcon, type Palette } from './appearance'
 import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, Check, CircleCheck, CircleMinus, CircleX, Clock3, Star, X } from 'lucide-react'
 import type { LessonCredentials, LessonRtcStatus } from './lessons'
-import { segmentLabel, statusFor, type Daily, type ReminderField, type Student, type View } from './domain'
+import { segmentLabel, statusFor, type CircleOption, type CirclePeriod, type Daily, type ReminderField, type Student, type View } from './domain'
 
 export type Tr = (ar: string, en: string) => string
+export const circlePeriodText:Record<CirclePeriod, [string,string]> = {
+  fajr:['الفجر','Fajr'],dhuhr:['الظهر','Dhuhr'],asr:['العصر','Asr'],maghrib:['المغرب','Maghrib'],isha:['العشاء','Isha'],
+}
+export const circleTimeText = (circle:Pick<CircleOption,'period'|'meetingTime'>,t:Tr) => [
+  circle.period?t(...circlePeriodText[circle.period]):'',circle.meetingTime??'',
+].filter(Boolean).join(' · ')
 export type Action = (action: string, values?: Record<string, unknown>, op?: string) => Promise<View>
 export type Page = 'home' | 'assistant' | 'students' | 'achievements' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves' | 'lessons'
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;
+  readLegacy:(query:URLSearchParams,signal?:AbortSignal)=>Promise<Response>;
   refresh:()=>void; iconGeneration:boolean; generateIcon:(description:string,palette:Palette)=>Promise<GeneratedIcon>; lessonRtc:(id:string)=>Promise<LessonCredentials>; lessonRtcStatus:()=>Promise<LessonRtcStatus>;
   lessonRtcPresence:(id:string,uid:number,version:number)=>Promise<boolean>;
   open: (student?:Student,mode?:WizardMode,preset?:Partial<Daily>,circleId?:string,focus?:ReminderField) => void

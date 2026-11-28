@@ -10,7 +10,10 @@ export type StudentDetails = { age?:number; schoolStage?:string; guardianPhone?:
 export type ChildRequest = { name:string; phone:string }
 export type User = { id: string; name: string; phone?: string; role: Role; status: 'active' | 'pending' | 'disabled'; studentId?: string; duplicateOf?: string; address?:string; enrollmentCircleId?:string; studentDetails?:StudentDetails; childRequest?:ChildRequest }
 export type AutoExam = { threshold:number; leadDays:number; time:string; place:string }
-export type Circle = { id: string; name: string; teacherId: string; days: number[]; holidays: string[]; autoExam?:AutoExam }
+export const circlePeriods = ['fajr','dhuhr','asr','maghrib','isha'] as const
+export type CirclePeriod = typeof circlePeriods[number]
+export type Circle = { id: string; name: string; teacherId: string; days: number[]; holidays: string[]; period?:CirclePeriod; meetingTime?:string; autoExam?:AutoExam }
+export type CircleOption = Pick<Circle,'id'|'name'|'period'|'meetingTime'>
 export type Student = StudentDetails & { id: string; name: string; latin?: string; circleId: string; phone?: string; color: number; startingPoints: number; active: boolean }
 export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
@@ -60,7 +63,12 @@ export function callPeer(chat:Chat,userId:string) {
 export const communicationKeys = ['studentDirect','guardianDirect','circleChat','audio','video','staffDirect','adminDirect'] as const
 export type Communication = Record<typeof communicationKeys[number],boolean>
 export const defaultCommunication:Communication = {studentDirect:true,guardianDirect:true,circleChat:true,audio:true,video:true,staffDirect:true,adminDirect:true}
+export type LegacyArchive = {
+  id:string; capturedAt:string; tables:{entity:string;active:number;deleted:number}[];
+  files:{id:string;name:string;bytes:number}[]; report:{native:number;review:number};
+}
 export type State = {
+  legacyArchive?:LegacyArchive;
   assessments?:AssessmentState;
   appearance?:Appearance; appearanceIcon?:string;
   lessons?:Lesson[]; lessonSeries?:LessonSeries[]; lessonRestrictions?:LessonRestriction[]; lessonHealth?:Omit<LessonHealth,'rtcConfigured'>; lessonTeacherScheduling?:boolean;
@@ -69,7 +77,7 @@ export type State = {
   rules: { memorization: number; review: number; attendance: number; chat: boolean; communication?:Communication }; chats: Chat[]; audit: Audit[]
   operations: string[]; closedAccounts?: string[]; recordEvents?: RecordEvent[]; calls?:ChatCall[]
 }
-export type View = Omit<State, 'operations' | 'assessments' | 'appearanceIcon' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { assessmentDashboard?:AssessmentDashboard; users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:Pick<Circle,'id'|'name'>[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
+export type View = Omit<State, 'operations' | 'assessments' | 'appearanceIcon' | 'closedAccounts' | 'users' | 'lessons' | 'lessonSeries' | 'lessonRestrictions' | 'lessonHealth'> & { assessmentDashboard?:AssessmentDashboard; users: User[]; lessons?:LessonView[]; lessonHealth?:LessonHealth; user: User | null; date: string; revision: number; phoneEnabled: boolean; clockOffsetMs?:number; recordReminders?:SentReminder[]; chatContacts?:ChatContact[]; chatInvitations?:ChatInvitation[]; verifiedPhone?:string; enrollmentCircles?:CircleOption[]; circleEnrollments?:{id:string;name:string;circleId:string}[]; accountAccess?: 'duplicate' | 'closure-pending' | 'closed' }
 
 export function examDateFor(exam:Exam,studentId:string) {
   const request=exam.extensions?.[studentId]
@@ -166,7 +174,7 @@ export function suggestNext(segments: Segment[]) {
 }
 export function emptyDaily(studentId: string, date: string, circle?: Circle): Daily {
   return { studentId, date, memorization: [], review: [], nextMemorization: [], nextReview: [],
-    memorizationStatus: 'none', reviewStatus: 'none', nextDate: nextCircleDate(date, circle), attendance: 'pending', points: 0, bonus: 0, note: '' }
+    memorizationStatus: 'none', reviewStatus: 'none', nextDate: circle?.days.length===0?dayOffset(date,1):nextCircleDate(date, circle), attendance: 'pending', points: 0, bonus: 0, note: '' }
 }
 export function assignmentFor(records: Daily[], studentId: string, date: string) {
   const sources=records.filter(record=>record.studentId===studentId&&record.date<date&&record.nextDate===date
