@@ -12,7 +12,7 @@ export const circleTimeText = (circle:Pick<CircleOption,'period'|'meetingTime'>,
   circle.period?t(...circlePeriodText[circle.period]):'',circle.meetingTime??'',
 ].filter(Boolean).join(' · ')
 export type Action = (action: string, values?: Record<string, unknown>, op?: string) => Promise<View>
-export type Page = 'home' | 'assistant' | 'students' | 'achievements' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves' | 'lessons'
+export type Page = 'home' | 'assistant' | 'students' | 'achievements' | 'records' | 'chat' | 'more' | 'admin' | 'store' | 'exams' | 'leaves' | 'lessons' | 'library'
 export type WizardMode = 'recite' | 'review' | 'attendance' | 'schedule' | 'points' | 'edit'
 export type Workspace = {
   data: View; en: boolean; t: Tr; post: Action; go: (page:Page) => void; tell: (message:string, error?:boolean) => void;

@@ -19,7 +19,7 @@ export type Daily = {
   studentId: string; date: DateKey; memorization: Segment[]; review: Segment[]
   memorizationStatus: Result; reviewStatus: Result; nextMemorization: Segment[]; nextReview: Segment[]
   nextDate: string; clearedAssignment?:('nextMemorization'|'nextReview')[]; attendance: Attendance; attendanceSource?:'automatic'|'manual'; points: number; bonus: number; note: string
-  version?: number; updatedAt?: string; historicalImport?: true
+  version?: number; updatedAt?: string; historicalImport?: true; legacyPoints?: number; historicalCircleId?: string
 }
 export type RecordSection = 'memorization' | 'review' | 'nextMemorization' | 'nextReview' | 'attendance' | 'points' | 'note'
 export type RecordEvent = { id: string; studentId: string; circleId: string; date: string; actorId: string; time: string; changes: RecordSection[] }
@@ -67,7 +67,10 @@ export type LegacyArchive = {
   id:string; capturedAt:string; tables:{entity:string;active:number;deleted:number}[];
   files:{id:string;name:string;bytes:number}[]; report:{native:number;review:number};
 }
+export type LegacyPointReview = {studentId:string;stored:number;ledger:number;movements:number;decision?:{credit:number;reason:string;time:string;actor:string}}
+export type LibraryMaterial = { id:string;title:string;description:string;category:string;file?:string;url?:string }
 export type State = {
+  legacyPointReviews?:LegacyPointReview[]; materials?:LibraryMaterial[];
   legacyArchive?:LegacyArchive;
   assessments?:AssessmentState;
   appearance?:Appearance; appearanceIcon?:string;

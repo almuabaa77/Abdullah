@@ -422,3 +422,12 @@ body:has(.live-register-expanded) {overflow:hidden}
 .admin-legacy-entry pre {max-height:320px;overflow:auto;padding:9px;margin-block:8px 0;border-radius:8px;background:var(--paper);font-size:.83rem;white-space:pre-wrap;overflow-wrap:anywhere}
 .admin-legacy-entry .admin-list {margin-block-start:10px;align-items:start}
 .admin-legacy-entry .admin-list button {min-width:0;overflow-wrap:anywhere}
+.overview-banner {display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:clamp(12px,3vw,24px);border-radius:15px;border:1px solid var(--border);background:linear-gradient(130deg,var(--role-tint),var(--paper));min-width:0}
+.overview-banner h3 {font-size:clamp(1.1rem,3vw,1.6rem);color:var(--role-ink)}
+.overview-banner p {font-size:.85rem;color:var(--muted)}
+.admin-overview .summary-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr))}
+.live-history-shortcuts {display:flex;flex-wrap:wrap;gap:6px}
+.live-history-shortcuts [aria-pressed=true] {background:var(--role-tint);color:var(--role-ink)}
+.live-points small {display:block;font-weight:500}
+.school-library .summary-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))}
+.danger-text {color:#a12828}

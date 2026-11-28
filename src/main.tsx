@@ -1,3 +1,4 @@
+import { SchoolLibrary } from './school-library'
 import { InstallGuide, useAppInstall } from './app-install'
 import { brandIconUrl, defaultPalette, paletteKeys, paletteVariables, type Appearance, type GeneratedIcon, type Palette } from './appearance'
 import { protectAppText } from './app-interactions'
@@ -27,7 +28,7 @@ import type { PhoneAuth, PhoneAvailability } from './phone'
 import './styles.css'
 import './workbench.css'
 
-const pages = ['home','assistant','students','achievements','records','chat','more','admin','store','exams','leaves','lessons']
+const pages = ['home','assistant','students','achievements','records','chat','more','admin','store','exams','leaves','lessons','library']
 const currentPage = ():Page => {
   if (location.pathname === '/admin' || location.pathname === '/admin/') return 'admin'
   const fragment = location.hash.slice(1)
@@ -427,7 +428,7 @@ function App() {
     const timer=window.setInterval(()=>refreshWorkspace.current(),1750)
     return ()=>window.clearInterval(timer)
   },[activeChatCall])
-  const label=assistantOpen?t('المساعد الذكي','Smart assistant'):[...nav,...extras].find(([p])=>p===page)?.[2]||t('الرئيسية','Home')
+  const label=assistantOpen?t('المساعد الذكي','Smart assistant'):[...nav,...extras].find(([p])=>p===page)?.[2]||(page==='library'?t('المكتبة','Library'):t('الرئيسية','Home'))
   const rosterPage=teacher&&(page==='students'||page==='records'||page==='achievements')
   const screenKey=teacher&&(page==='home'||rosterPage)?'teacher-circle':page
   const userName=data.sample&&en?({admin:'Abdulrahman Al-Sarhan',teacher:'Abdulrahman Al-Sarhan',student:'Abdullah Al-Shehri',parent:'Student guardian'} as Record<string,string>)[role]:data.user?.name
@@ -456,7 +457,7 @@ function App() {
   }
   const readLegacy=useCallback(async (query:URLSearchParams,signal?:AbortSignal)=>{
     if(!token)throw new Error(t('سجّل الدخول أولًا','Sign in first'))
-    const response=await fetch('/api/legacy?'+query,{headers:{Authorization:'Bearer '+token},cache:'no-store',signal})
+    const response=await fetch((query.has('id')?'/api/material?':'/api/legacy?')+query,{headers:{Authorization:'Bearer '+token},cache:'no-store',signal})
     if(!response.ok){
       const error=await response.json().catch(()=>null)
       throw new Error(error?.error??t('تعذرت قراءة الأرشيف','The archive could not be read'))
@@ -545,7 +546,7 @@ function App() {
             catch(error){tell((error as Error).message,true)}
             finally{setRegistering(false)}
           }}/>:data.user?.status==='pending'||data.user?.status==='disabled'?<div className="panel"><Empty title={data.user.status==='pending'?t('طلبك بانتظار الاعتماد','Registration is pending') : t('الحساب موقوف','Account suspended')} body={t('تواصل مع إدارة الحلقات للاستفسار.','Contact the circle administration for details.')} action={<button className="btn btn-outline" onClick={()=>void exit()}>{t('تسجيل الخروج','Sign out')}</button>}/></div>:!show?<Welcome signIn={openPhone} install={canInstall?openInstall:undefined}/>:
-          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={screenKey+role}>{assistantOpen?<Assistant initialCircle={teacherCircle||data.circles[0]?.id}/>:isLearner&&(page==='achievements'||page==='records')?<Records/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={canInstall?openInstall:undefined} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Suspense fallback={<Starting/>}><Assessments/></Suspense>:page==='leaves'?<Leaves/>:teacher?<Dashboard rosterOnly={rosterPage} circleId={teacherCircle} selectCircle={setTeacherCircle}/>:<StudentHome/>}</div>}
+          <div className={'screen'+(assistantOpen?' assistant-screen':'')+(chatOpen?' chat-screen':'')} key={screenKey+role}>{assistantOpen?<Assistant initialCircle={teacherCircle||data.circles[0]?.id}/>:isLearner&&(page==='achievements'||page==='records')?<Records/>:page==='library'?<SchoolLibrary/>:page==='chat'?<ChatPage showPermissions={token?()=>setPermissions(true):undefined}/>:page==='more'?<More showPermissions={()=>setPermissions(true)} changeLanguage={changeLanguage} install={canInstall?openInstall:undefined} currentRole={role} switchRole={r=>{setRole(r);go('home')}}/>:page==='store'&&student?<Store/>:page==='lessons'?<LessonCenter/>:page==='exams'?<Suspense fallback={<Starting/>}><Assessments/></Suspense>:page==='leaves'?<Leaves/>:teacher?<Dashboard rosterOnly={rosterPage} circleId={teacherCircle} selectCircle={setTeacherCircle}/>:<StudentHome/>}</div>}
         </main>
       </div>
       {teacherNavigation&&<nav className="teacher-bottom-nav" aria-label={t('قائمة المحفّظ السفلية','Teacher bottom navigation')}>

@@ -1,3 +1,5 @@
+import { AdminPointsReview } from './admin-points-review'
+import { SchoolLibrary } from './school-library'
 import { AdminAppearance } from './admin-appearance'
 import { AnnouncementFields, AnnouncementRow } from './announcements'
 import { AssessmentPolicyFields, PolicySettings } from './admin-policies'
@@ -29,6 +31,8 @@ const sections = [
   {id:'overview',group:'monitor',icon:LayoutGrid,label:['نظرة عامة','Overview'],short:['نظرة عامة','Overview']},
   {id:'live',group:'monitor',icon:Activity,label:['المتابعة المباشرة','Live monitoring'],short:['المتابعة','Live']},
   {id:'records',group:'monitor',icon:ClipboardList,label:['السجلات والتقارير','Records & reports']},
+  {id:'library',group:'services',icon:BookOpen,label:['المكتبة','Library']},
+  {id:'points-review',group:'monitor',icon:ClipboardList,label:['تسوية النقاط','Points reconciliation']},
   {id:'legacy',group:'monitor',icon:History,label:['الأرشيف السابق','Legacy archive']},
   {id:'audit',group:'monitor',icon:History,label:['سجل العمليات','Audit log']},
   {id:'people',group:'school',icon:Users,label:['الحسابات وطلبات التسجيل','Accounts & enrollment'],short:['الحسابات','Accounts'],add:['إضافة حساب','Add account'],edit:'invite',search:true},
@@ -86,6 +90,9 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
   const {data,t,en,post,tell} = useWorkspace()
   const [tab,setTab] = useState(readTab)
   const [inbox,setInbox] = useState(()=>new URLSearchParams(location.search).get('inbox')==='1')
+  const [remove,setRemove]=useState<{kind:'student'|'parent'|'circle';id:string;name:string}>()
+  const [confirmation,setConfirmation]=useState('')
+  const askRemove=(kind:'student'|'parent'|'circle',item:{id:string;name:string})=>{setConfirmation('');setRemove({kind,...item})}
   const [edit,setEdit] = useState<Edit>()
   const [scheduled,setScheduled] = useState(false)
   const [query,setQuery] = useState('')
@@ -262,6 +269,8 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
         {tab==='duplicates'&&<DuplicateAccounts/>}
         {tab==='records'&&<Records embedded/>}
         {tab==='legacy'&&<AdminLegacy/>}
+        {tab==='points-review'&&<AdminPointsReview/>}
+        {tab==='library'&&<SchoolLibrary/>}
         {tab==='exams'&&<Assessments embedded/>}
         {tab==='leaves'&&<Leaves embedded/>}
         {tab==='lessons'&&<LessonCenter management/>}
@@ -279,6 +288,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
             <div><strong>{user.name}</strong><p><RoleName role={user.role}/> {user.phone&&<bdi> · {user.phone}</bdi>}{user.enrollmentCircleId&&' · '+circleNames.get(user.enrollmentCircleId)}</p></div>
             <div className="chip-row"><Badge status={user.duplicateOf?'disabled':user.status} label={activeBadge(user)}/>
               {user.id!==data.user?.id&&!user.duplicateOf&&(user.status==='pending'||user.childRequest&&user.status==='active')&&<button className="btn btn-primary compact" type="button" disabled={busy} onClick={()=>setEdit({kind:'enrollment',item:user})}>{user.status==='pending'?t('مراجعة الطلب','Review request'):t('ربط الابن','Link child')}</button>}
+              {user.role==='parent'&&<button className="btn btn-outline compact danger-text" type="button" onClick={()=>askRemove('parent',user)}>{t('حذف نهائي','Delete permanently')}</button>}
               {user.id!==data.user?.id&&!user.duplicateOf&&user.status!=='pending'&&<button className="btn btn-outline compact" type="button" disabled={busy} onClick={()=>void submit('account',{id:user.id,status:user.status==='active'?'disabled':'active'})}>
                 {user.status==='active'?t('إيقاف','Suspend'):t('تفعيل','Activate')}
               </button>}
@@ -288,7 +298,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
           items={data.students.filter(student=>includes(student.name,student.latin,student.phone)||!!phone&&normalizeMobile(student.phone??'')===phone)}
           render={student=><div className="entity-row" key={student.id}>
             <div className="name-line"><Avatar student={student}/><div><strong>{studentNames.get(student.id)}</strong><p>{circleNames.get(student.circleId)}</p></div></div>
-            <div className="chip-row"><Badge status={student.active?'active':'disabled'}/><button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'student',item:student})}>{t('تعديل','Edit')}</button></div>
+            <div className="chip-row"><Badge status={student.active?'active':'disabled'}/><button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'student',item:student})}>{t('تعديل','Edit')}</button><button className="btn btn-outline compact danger-text" type="button" onClick={()=>askRemove('student',student)}>{t('حذف نهائي','Delete permanently')}</button></div>
           </div>}/>}
         {tab==='circles'&&<AdminList grid key={query} empty={t('لا توجد حلقات','No circles')} filtered={Boolean(search)}
           items={data.circles.filter(circle=>includes(circle.name,userNames.get(circle.teacherId),circleTimeText(circle,t))).sort((a,b)=>a.name.localeCompare(b.name,en?'en':'ar'))}
@@ -305,6 +315,7 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
               <div className="chip-row">{circleTimeText(circle,t)&&<span className="count-pill"><bdi>{circleTimeText(circle,t)}</bdi></span>}{weekDays.map(([ar,english],day)=>circle.days.includes(day)&&<span key={day} className="count-pill">{t(ar,english)}</span>)}</div>
               <div className="admin-circle-actions">
                 <button className="btn btn-primary compact" type="button" onClick={()=>openRegister(circle.id)}><Activity size={15}/>{t('متابعة الحلقة','Monitor circle')}</button>
+                <button className="btn btn-outline compact danger-text" type="button" onClick={()=>askRemove('circle',circle)}>{t('حذف الحلقة','Delete circle')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'circle',item:circle})}>{t('تعديل','Edit')}</button>
                 <button className="btn btn-outline compact" type="button" onClick={()=>setEdit({kind:'assessment',item:circle})}>{t('الاختبار الآلي','Automatic assessment')}</button>
               </div>
@@ -362,6 +373,19 @@ export function Admin({liveRecords,online}:{liveRecords:RecordStreamStatus;onlin
       <div className="admin-more-search"><label className="search"><Search size={18}/><input type="search" aria-label={t('بحث في أقسام الإدارة','Search administration sections')}
         placeholder={t('ابحث عن قسم…','Find a section…')} value={menuQuery} onChange={event=>setMenuQuery(event.target.value)}/></label></div>
       <nav className="modal-body admin-more-links" aria-label={t('أقسام الإدارة','Administration sections')}>{sectionLinks(true)}</nav>
+    </Modal>}
+    {remove&&<Modal title={t('تأكيد الحذف الدائم','Confirm permanent deletion')} close={()=>{if(!busy)setRemove(undefined)}}>
+      <form onSubmit={async event=>{
+        event.preventDefault()
+        const form=new FormData(event.currentTarget)
+        if(await submit('school-delete',{id:remove.id,kind:remove.kind,confirmation,reason:form.get('reason')}))setRemove(undefined)
+      }}>
+        <div className="modal-body"><p>{t('يُزال السجل وروابطه من التطبيق، وتبقى نسخة المصدر في الأرشيف الأصلي.','The live record and its links are removed. The source copy stays in the original archive.')}</p>
+        {remove.kind==='circle'&&<p>{t('انقل الطلاب وطلبات التسجيل إلى حلقة أخرى أولًا.','Transfer students and enrollment requests to another circle first.')}</p>}
+        <label>{t('اكتب الاسم كاملًا للتأكيد','Type the full name to confirm')}<strong>{remove.name}</strong><input required autoComplete="off" value={confirmation} onChange={event=>setConfirmation(event.target.value)}/></label>
+        <label>{t('سبب الحذف','Reason for deletion')}<textarea name="reason" required maxLength={240}/></label></div>
+        <div className="modal-foot"><button className="btn btn-outline danger-text" disabled={busy||confirmation.trim()!==remove.name.trim()}>{t('حذف نهائي','Delete permanently')}</button></div>
+      </form>
     </Modal>}
     {edit&&<Modal title={({student:t('بيانات الطالب','Student details'),circle:t('بيانات الحلقة','Circle details'),prize:t('بيانات الجائزة','Reward details'),announcement:t('إعلان جديد','New announcement'),invite:t('إضافة حساب','Add account'),enrollment:t('مراجعة طلب الحساب','Review account request'),assessment:t('الاختبار الآلي للحلقة','Automatic circle assessment')})[edit.kind]} close={()=>{if(!busy)setEdit(undefined)}}>
       <form onSubmit={form}><div className="modal-body">

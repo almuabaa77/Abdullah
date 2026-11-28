@@ -4,7 +4,7 @@ import { quranVerses } from './assessment-model'
 import { completedVerses, dayOffset } from './domain'
 import { dateLabel, Empty, useWorkspace } from './ui'
 
-type OverviewPage='circles'|'students'|'people'|'links'|'records'|'exams'
+type OverviewPage='circles'|'students'|'people'|'links'|'records'|'exams'|'points-review'|'legacy'
 const percentage=(total:number,count:number)=>count?Math.round(100*total/count):null
 
 export function AdminOverview({open}:{open:(page:OverviewPage)=>void}) {
@@ -65,7 +65,14 @@ export function AdminOverview({open}:{open:(page:OverviewPage)=>void}) {
   const accounts=data.users.filter(user=>user.status==='pending'&&!user.duplicateOf&&(!circle||user.enrollmentCircleId===circle)).length
   const relevantIds=new Set(data.students.filter(student=>!circle||student.circleId===circle).map(student=>student.id))
   const links=data.links.filter(link=>link.status==='pending'&&(!circle||relevantIds.has(link.studentId))).length
+  const reviewCount=data.legacyPointReviews?.filter(item=>!item.decision).length??0
   return <div className="admin-overview">
+    <div className="overview-banner">
+      <div><p>{dateLabel(data.date,en,true)}</p><h3>{t('أهلًا بك','Welcome')}{data.user?.name?'، '+data.user.name:''}</h3>
+        <p>{t('الحضور والحفظ والاختبارات خلال الفترة المحددة','Attendance, memorization and assessments for the selected period')}</p></div>
+      <div className="chip-row"><button type="button" className="btn btn-outline compact" onClick={()=>open('points-review')}>{t('تسوية النقاط','Points reconciliation')} <bdi>{fmt(reviewCount)}</bdi></button>
+        {data.legacyArchive&&<button type="button" className="btn btn-outline compact" onClick={()=>open('legacy')}>{t('الأرشيف السابق','Legacy archive')}</button>}</div>
+    </div>
     <div className="admin-overview-filters">
       <label>{t('الحلقة','Circle')}<select value={circle} onChange={event=>{setCircle(event.target.value);setDetail(false)}}>
         <option value="">{t('جميع الحلقات','All circles')}</option>

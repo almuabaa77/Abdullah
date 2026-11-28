@@ -1,3 +1,5 @@
+import { approveLegacyPoints } from './legacy-points'
+import { removeSchoolEntry } from './admin-removal'
 import { applyAssessmentAction, assessmentNoticeAllowed, evaluateAssessmentEligibility, projectAssessments, publicAssessmentCertificate } from './assessment-workflow'
 import { iconContentLimit, readablePalette, readPalette } from '../src/appearance'
 import { webpBytes, type IconGenerator } from './appearance'
@@ -179,7 +181,7 @@ function project(state: State, user: User | null, revision: number, phoneEnabled
   const isAdmin = user.role === 'admin'
   return {
     user, revision, phoneEnabled, appearance:state.appearance, lessons:projectLessons(state,user,Date.now(),encrypted),lessonTeacherScheduling:state.lessonTeacherScheduling,
-    lessonHealth:{rtcConfigured,encryptedMode:encrypted,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, legacyArchive:isAdmin?state.legacyArchive:undefined, date: dateKey(), students: students.map(publicStudent),
+    lessonHealth:{rtcConfigured,encryptedMode:encrypted,...(isAdmin?state.lessonHealth:undefined),pendingRestrictions:isAdmin?state.lessonRestrictions?.length:undefined},chatContacts:contacts, chatInvitations:invitations, sample: state.sample, legacyArchive:isAdmin?state.legacyArchive:undefined, legacyPointReviews:isAdmin?state.legacyPointReviews:undefined, materials:state.materials, date: dateKey(), students: students.map(publicStudent),
     users: isAdmin ? state.users : state.users.filter(u => participants.has(u.id)).map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status })),
     circles: state.circles.filter(c => isAdmin || c.teacherId === user.id || students.some(s => s.circleId === c.id)),
     daily: state.daily.filter(d => ids.has(d.studentId)), closed: state.closed.filter(key => isAdmin || state.circles.some(c => c.id === key.split('/')[0] && c.teacherId === user.id)),
@@ -242,7 +244,7 @@ async function identify(request: Request, env: Env): Promise<Identity | null> {
       const claims=JSON.parse(atob(part))
       if(claims.aud!==config.projectId||claims.sub!==id||claims.firebase?.sign_in_provider!=='phone')throw new Error()
     } catch {throw new ApiError('سجّل الدخول بواسطة رمز الجوال للمتابعة',401)}
-    return { id, phone, workspace: 'school', bootstrap: id === env.BOOTSTRAP_UID ? { id, phone, name: 'إدارة جامع الخير', role: 'admin', status: 'active' } : undefined }
+    return { id, phone, workspace: 'school', bootstrap: id === env.BOOTSTRAP_UID ? { id, phone, name: 'أبو حسام', role: 'admin', status: 'active' } : undefined }
   }
   const id = request.headers.get('oai-authenticated-user-id')
   if (!id) return null
@@ -451,6 +453,10 @@ function apply(state: State, identity: Identity, user: User | null, action: stri
       if(guardian?.childRequest&&(link.claim?.phone===guardian.childRequest.phone||childByIdentity(state,guardian.childRequest)?.id===link.studentId))delete guardian.childRequest
       notify(state,'link','تمت مراجعة طلب ربط الطالب',status === 'accepted' ? 'يمكن الآن متابعة الطالب.' : 'تعذر اعتماد الطلب.',{users:[link.parentId]})
       break
+    }
+    case 'legacy-points-approve': {
+      admin()
+      return approveLegacyPoints(state,required(p.id,160),integer(p.credit,0,1_000_000),required(p.reason,240),u.name)
     }
     case 'redeem': {
       if (u.role !== 'student') deny()
@@ -860,6 +866,8 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
     const url = new URL(request.url)
     const events = url.pathname === '/api/workspace/events'
     const legacyRoute=url.pathname==='/api/legacy'
+    const materialRoute=url.pathname==='/api/material'
+    const archiveRoutes=legacyRoute||materialRoute
     const pushRoute = url.pathname === '/api/push'
     const iconRoute = url.pathname === '/api/appearance/generate'
     const rtcRoute = url.pathname === '/api/lesson-rtc'
@@ -884,13 +892,13 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
     }
     if (url.pathname === '/api/config' && request.method === 'GET') return Response.json({firebase:firebaseConfig(env)},{headers})
     const identity = await identify(request, env)
-    if (!identity && (request.method !== 'GET' || events || pushRoute || specialRoute || legacyRoute)) throw new ApiError('سجّل الدخول أولًا',401)
+    if (!identity && (request.method !== 'GET' || events || pushRoute || specialRoute || archiveRoutes)) throw new ApiError('سجّل الدخول أولًا',401)
     if (!identity) return Response.json(project(createState(),null,0,phoneEnabled),{headers})
     const rtcConfigured=Boolean((rtc||rtcAppId)&&identity.workspace==='school')
     const encrypted=Boolean(rtcAppId&&identity.workspace==='school')
-    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !specialRoute && !legacyRoute) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
+    if (url.pathname !== '/api/workspace' && !events && !pushRoute && !specialRoute && !archiveRoutes) return Response.json({ error:'الصفحة غير موجودة' },{status:404,headers})
     const get = request.method === 'GET'
-    if ((events||legacyRoute) && !get || specialRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
+    if ((events||archiveRoutes) && !get || specialRoute && get) return Response.json({ error:'الطريقة غير مسموحة' },{status:405,headers})
     if (!get && request.method !== 'POST') throw new ApiError('الطريقة غير مسموحة',405)
     if (!get && request.headers.get('sec-fetch-site') === 'cross-site') deny()
     const raw = get ? '' : await request.text()
@@ -909,7 +917,7 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
       let user = state.users.find(x => x.id === identity.id) ?? null
       if (identity.workspace==='school' && user?.role==='admin' && identity.id!==env.BOOTSTRAP_UID) return deny('لوحة الإدارة مخصصة لحساب المدير المعتمد')
       const restricted = (accountAccess: NonNullable<View['accountAccess']>) => {
-        if (events || pushRoute || specialRoute || legacyRoute) return deny()
+        if (events || pushRoute || specialRoute || archiveRoutes) return deny()
         return Response.json({ ...project(state,null,current.revision,phoneEnabled),accountAccess },{headers})
       }
       const fingerprint = identity.phone && (state.closedAccounts?.length || action==='duplicate-close') ? await accountFingerprint(identity.id) : undefined
@@ -1045,6 +1053,12 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         if(!push||identity.workspace!=='school')throw new ApiError('تنبيهات الخلفية غير متاحة في هذا الإصدار',503)
         return await push(request,user,payload)
       }
+      if(materialRoute){
+        if(!user||user.status!=='active'||user.duplicateOf||identity.workspace!=='school')return deny()
+        const material=state.materials?.find(item=>item.id===url.searchParams.get('id'))
+        if(!material?.file||!state.legacyArchive||!repo.legacy)throw new ApiError('المادة غير متاحة',404)
+        return await repo.legacy(state.legacyArchive.id,{file:material.file})
+      }
       if(legacyRoute){
         if(!user||user.role!=='admin'||user.status!=='active'||user.duplicateOf||identity.workspace!=='school')return deny()
         const archive=state.legacyArchive
@@ -1052,12 +1066,12 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
         const file=url.searchParams.get('file')
         if(file){
           if(!archive.files.some(item=>item.id===file))throw new ApiError('الملف غير متاح',404)
-          return repo.legacy(archive.id,{file})
+          return await repo.legacy(archive.id,{file})
         }
         const entity=url.searchParams.get('entity')??''
         if(!archive.tables.some(item=>item.entity===entity))throw new ApiError('الجدول غير متاح',404)
         const page=integer(url.searchParams.get('page')??0,0,10000)
-        return repo.legacy(archive.id,{entity,page,deleted:url.searchParams.get('deleted')==='1'})
+        return await repo.legacy(archive.id,{entity,page,deleted:url.searchParams.get('deleted')==='1'})
       }
       if (events) {
         if (url.searchParams.get('scope')==='reminders'&&user?.role==='teacher'&&user.status==='active') {
@@ -1077,6 +1091,14 @@ export async function api(request: Request, repo: Repository, env: Env = {}, pus
           view.enrollmentCircles=state.circles.map(({id,name,period,meetingTime})=>({id,name,period,meetingTime}))
         }
         return Response.json(view,{headers})
+      }
+      if(action==='school-delete'){
+        if(user?.role!=='admin'||user.status!=='active'||identity.workspace!=='school')return deny()
+        const kind=choice(payload.kind,['student','parent','circle'] as const)
+        const changed=await removeSchoolEntry(state,kind,required(payload.id),required(payload.confirmation),required(payload.reason,240),user.name)
+        if(!changed)return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})
+        if(!(await repo.write(identity.workspace,current.revision,state)))continue
+        return Response.json(project(state,user,current.revision+1,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})
       }
       const previousNotices=state.notices.length
       if (apply(state,identity,user,action,payload,op,env.BOOTSTRAP_UID)===false) return Response.json(project(state,user,current.revision,phoneEnabled,env.BOOTSTRAP_UID,rtcConfigured,encrypted),{headers})

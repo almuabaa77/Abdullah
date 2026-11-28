@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Activity, Bell, Maximize, Minimize, Pencil, Radio, Search, Send } from 'lucide-react'
-import { circleMeets, recordedAssignment, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
+import { circleMeets, dayOffset, recordedAssignment, needsRecordReminder, recordReminderMessage, reminderCooldown, reminderFields, segmentLabel, statusFor, type Daily, type RecordReminder, type RecordSection, type Student } from './domain'
 import { Avatar, Badge, dateLabel, Empty, matches, Modal, nameFor, useWorkspace } from './ui'
 import type { RecordStreamStatus } from './live-records'
 
@@ -43,7 +43,16 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
       else incoming.set(record.studentId,[record])
     }
   }
-  const students = data.students.filter(student=>(student.active||records.has(student.id)) && (!circleId||student.circleId===circleId) && matches(student,query))
+  const students = data.students.filter(student=>(student.active||records.has(student.id)) &&
+    (!circleId||(records.get(student.id)?.historicalCircleId??student.circleId)===circleId) && matches(student,query))
+  const currentCircles=new Map(data.students.map(student=>[student.id,student.circleId]))
+  const lastRecorded=data.daily.reduce((last,record)=>record.date>last&&(!circleId||
+    (record.historicalCircleId??currentCircles.get(record.studentId))===circleId)?record.date:last,'')
+  function changeDate(value:string){
+    setDate(value===data.date?'':value)
+    setFilter(value===data.date?'all':'recorded')
+    setLimit(pageSize)
+  }
   const accounts = new Map(data.users.map(user=>[user.id,user]))
   const circles = new Map(data.circles.map(circle=>[circle.id,circle]))
   const studentsById = new Map(students.map(student=>[student.id,student]))
@@ -71,7 +80,7 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
   }
   function availableReminder(student:Student,record:Daily|undefined,field:RecordReminder['field']):RecordReminder|undefined {
     const circle=circles.get(student.circleId)
-    if(!student.active||!circle||!circleMeets(date,circle)||!needsRecordReminder(record,field))return undefined
+    if(date!==data.date||!student.active||!circle||!circleMeets(date,circle)||!needsRecordReminder(record,field))return undefined
     return {studentId:student.id,circleId:circle.id,date,field}
   }
   function teacherFor(target:RecordReminder) {
@@ -181,9 +190,13 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
     </header>
     <div className="live-register-toolbar">
       <label className="circle-picker"><select aria-label={t('تصفية الحلقات','Filter circles')} value={circleId} onChange={event=>{setCircleId(event.target.value);setLimit(pageSize)}}><option value="">{t('جميع الحلقات','All circles')}</option>{data.circles.map(circle=><option key={circle.id} value={circle.id}>{circle.name}</option>)}</select></label>
-      <label className="circle-picker"><input type="date" aria-label={t('تاريخ السجل','Record date')} max={data.date} value={date} onChange={event=>{if(event.target.value){setDate(event.target.value===data.date?'':event.target.value);setLimit(pageSize)}}}/></label>
-      {selectedDate&&<button className="btn btn-outline compact" type="button" onClick={()=>{setDate('');setLimit(pageSize)}}>{t('اليوم','Today')}</button>}
+      <label className="circle-picker"><input type="date" aria-label={t('تاريخ السجل','Record date')} max={data.date} value={date} onChange={event=>{if(event.target.value)changeDate(event.target.value)}}/></label>
+      {selectedDate&&<button className="btn btn-outline compact" type="button" onClick={()=>changeDate(data.date)}>{t('اليوم','Today')}</button>}
       <label className="search"><Search size={16}/><input type="search" aria-label={t('ابحث عن طالب','Search students')} placeholder={t('ابحث عن طالب','Search students')} value={query} onChange={event=>{setQuery(event.target.value);setLimit(pageSize)}}/></label>
+    </div>
+    <div className="live-history-shortcuts" role="group" aria-label={t('التواريخ السريعة','Quick dates')}>
+      {[15,20,30].map(days=><button key={days} className="btn btn-outline compact" aria-pressed={date===dayOffset(data.date,-days)} type="button" onClick={()=>changeDate(dayOffset(data.date,-days))}>{t(`قبل ${days} يومًا`,`${days} days ago`)}</button>)}
+      {lastRecorded&&<button className="btn btn-outline compact" type="button" onClick={()=>changeDate(lastRecorded)}>{t('آخر يوم مسجّل','Latest recorded day')} · {dateLabel(lastRecorded,en)}</button>}
     </div>
     <div className="admin-live-metrics" aria-label={t('ملخص السجلات','Record summary')}>
       {summaries.map(([id,count,title])=><button key={id} type="button" aria-pressed={filter===id} onClick={()=>{setFilter(id);setLimit(pageSize)}}>
@@ -221,7 +234,7 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
             const attendanceTarget=availableReminder(student,record,'attendance')
             const plan=recordedAssignment(incoming.get(student.id)??[],student.id,date,record)
             const scheduled=plan.nextDate
-            const circle=circles.get(student.circleId)
+            const circle=circles.get(record?.historicalCircleId??student.circleId)
             return <tr key={student.id}>
               <th scope="row">
                 <div className="live-student"><Avatar student={student}/><div><strong>{nameFor(student,en)}</strong><small>{circle?.name}</small></div>
@@ -239,7 +252,10 @@ export function AdminLive({status,online,register=false,initialCircle=''}:{statu
               <td className="live-attendance" data-attendance={attendance}>
                 {attendanceTarget?<div className="live-attendance-action"><Badge status={attendance}/>{reminderControl(attendanceTarget,student,t('تنبيه','Remind'))}</div>:<Badge status={attendance}/>}
               </td>
-              <td className="live-points">{record?.points ?? 0}</td>
+              <td className="live-points">
+                {record?.historicalImport?<>{record.legacyPoints===undefined?'—':<bdi>{record.legacyPoints}</bdi>}
+                  <small>{t('من سجل Base44','From Base44')}</small>{record.points!==0&&<small>{t('تعديل في التطبيق','Platform adjustment')} <bdi>{record.points}</bdi></small>}</>:record?.points??'—'}
+              </td>
               <td><Badge status={progress}/></td>
             </tr>
           })}</tbody>

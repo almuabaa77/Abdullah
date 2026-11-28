@@ -119,6 +119,7 @@ export function More({ changeLanguage, switchRole, currentRole, install,showPerm
   const {data,t,go} = useWorkspace()
   const parent = data.user?.role === 'parent'
   const services = [
+    [BookOpen,t('المكتبة','Library'),()=>go('library')],
     [Video,t('جلسات التسميع','Live sessions'),()=>go('lessons')],
     [CalendarDays,t('الاختبارات','Assessments'),()=>go('exams')],
     [UserCheck,t('الاستئذانات','Leave requests'),()=>go('leaves')],
